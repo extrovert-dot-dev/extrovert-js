@@ -28,7 +28,7 @@
   },
   "type": "module",
   "bin": {
-    "extrovert-mcp": "./dist/bin.js"
+    "extrovert-mcp": "dist/bin.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
