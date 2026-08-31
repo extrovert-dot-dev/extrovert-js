@@ -5,7 +5,7 @@
  * the same server is used over stdio (local hosts) and Streamable HTTP (hosted).
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 
 import { ExtrovertClient } from "./client.js";
 import { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from "./config.js";

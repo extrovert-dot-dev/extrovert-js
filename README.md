@@ -3,7 +3,7 @@
 Public prerelease source for Extrovert's JavaScript integration surfaces:
 
 - [`@extrovert.dev/sdk`](./packages/sdk) — typed TypeScript client for the Extrovert REST API.
-- [`@extrovert.dev/mcp`](./packages/mcp) — MCP server with stdio and self-hosted Streamable HTTP transports.
+- [`@extrovert.dev/mcp`](./packages/mcp) — MCP SDK v2 server with stdio and stateless Streamable HTTP transports.
 
 Both packages share one provisional contract version. Install the dogfood releases through the
 explicit `next` tag:
@@ -14,7 +14,8 @@ npx -y @extrovert.dev/mcp@next --help
 ```
 
 The MCP package installs the `extrovert-mcp` binary. Extrovert does not yet publish a separate
-general-purpose CLI, and does not currently operate a production hosted `/mcp` endpoint.
+general-purpose CLI. OAuth-capable clients can connect directly to the production protected resource
+at `https://mcp.extrovert.dev/mcp`; the browser flow avoids putting an Extrovert key in client config.
 
 Documentation: [docs.extrovert.dev](https://docs.extrovert.dev)
 

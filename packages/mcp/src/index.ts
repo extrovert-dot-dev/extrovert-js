@@ -7,7 +7,21 @@
 
 export { createExtrovertServer, type CreateExtrovertServerOptions } from "./server.js";
 export { runStdio } from "./stdio.js";
-export { runHttp, type HttpServerOptions } from "./http.js";
+export {
+  createHttpApp,
+  runHttp,
+  type CreateHttpAppOptions,
+  type HttpApp,
+  type HttpServerOptions,
+} from "./http.js";
+export {
+  createHostedTokenVerifier,
+  discoverOAuthMetadata,
+  ExtrovertTokenVerifier,
+  loadHostedAuthConfig,
+  type ExtrovertTokenVerifierOptions,
+  type HostedAuthConfig,
+} from "./auth.js";
 
 export {
   ExtrovertClient,

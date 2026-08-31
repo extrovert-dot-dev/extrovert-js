@@ -5,7 +5,7 @@
  * to stderr only; stdout is reserved for the JSON-RPC stream.
  */
 
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 import { createExtrovertServer } from "./server.js";
 

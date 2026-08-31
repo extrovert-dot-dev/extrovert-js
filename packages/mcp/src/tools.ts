@@ -13,9 +13,8 @@
  * single-use enrollment token for that scoped key at runtime.
  */
 
-import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
-import { z, type ZodRawShape } from "zod";
+import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
+import { z } from "zod/v4";
 
 import { ExtrovertApiError, type ExtrovertClient } from "./client.js";
 import type { ExtrovertConfig } from "./config.js";
@@ -65,6 +64,8 @@ interface ToolContext {
   config: ExtrovertConfig;
 }
 
+type ZodRawShape = Record<string, z.ZodType>;
+
 interface ToolResult {
   content: { type: "text"; text: string }[];
   structuredContent?: Record<string, unknown>;
@@ -78,7 +79,7 @@ interface ToolSpec<Shape extends ZodRawShape> {
   description: string;
   inputSchema: Shape;
   annotations: ToolAnnotations;
-  handler: (args: z.objectOutputType<Shape, z.ZodTypeAny>, ctx: ToolContext) => Promise<ToolResult>;
+  handler: (args: z.output<z.ZodObject<Shape>>, ctx: ToolContext) => Promise<ToolResult>;
 }
 
 /** A tool that knows how to register itself with its concrete arg type. */
@@ -96,24 +97,23 @@ function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): Registera
   return {
     name: spec.name,
     register(server, ctx) {
+      const inputSchema = z.object(spec.inputSchema);
       server.registerTool(
         spec.name,
         {
           title: spec.title,
           description: spec.description,
-          inputSchema: spec.inputSchema,
+          inputSchema,
           annotations: spec.annotations,
         },
-        // The SDK validates `args` against `inputSchema` before invoking us, so
-        // `args` already has the handler's input shape. Typed as the SDK's own
-        // `ToolCallback<Shape>` so the registration overload resolves cleanly.
-        (async (args: z.objectOutputType<Shape, z.ZodTypeAny>) => {
+        // The SDK validates `args` against `inputSchema` before invoking us.
+        async (args: z.output<z.ZodObject<Shape>>) => {
           try {
             return await spec.handler(args, ctx);
           } catch (err) {
             return toErrorResult(err);
           }
-        }) as unknown as ToolCallback<Shape>,
+        },
       );
     },
   };
@@ -156,7 +156,7 @@ const metadataValue = z.union([z.string().max(256), z.number(), z.boolean()]);
  * CreateInboxInput docstring + the SDK InboxMetadataPatch create shape).
  */
 const createMetadata = z
-  .record(metadataValue.nullable())
+  .record(z.string(), metadataValue.nullable())
   .describe(
     "Arbitrary key-value metadata to store on the inbox (string/number/boolean values; ≤256 keys, " +
       "≤256 chars per key/string value; nested objects/arrays rejected; a key with a null value is " +
@@ -168,7 +168,7 @@ const createMetadata = z
  * key, `null` DELETES that key, and a top-level `null` clears ALL metadata.
  */
 const updateMetadata = z
-  .record(metadataValue.nullable())
+  .record(z.string(), metadataValue.nullable())
   .nullable()
   .describe(
     "Patch the inbox's metadata with a shallow merge: an object merges in (a key whose value is null " +
@@ -1714,7 +1714,7 @@ const proposeGraduation = defineTool({
   inputSchema: {
     id: z.string().min(1).describe("Category id (cat_…)."),
     evidence: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .optional()
       .describe("Optional structured evidence for the human (e.g. {approvals: 20, last_edits: 0})."),
   },

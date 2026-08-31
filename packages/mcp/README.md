@@ -10,9 +10,8 @@ persistent inbox on a domain Extrovert owns: created in one tool call, sends and
 **scoped key that expires and revokes on its own**. The key is bound to a fixed org + project (call
 `whoami` to see them) — there is no project selector to manage.
 
-> **Prerelease status:** the package is published on npm under the `next` dist-tag. Extrovert does
-> not currently operate a hosted MCP endpoint; use the packaged stdio server or an HTTP deployment
-> you operate yourself.
+> **Prerelease status:** the package is published on npm under the `next` dist-tag. Extrovert also
+> operates `https://mcp.extrovert.dev/mcp` as a stateless Streamable HTTP endpoint with browser OAuth.
 
 The standout tool is **`wait_for_email`** — a blocking call that returns the next matching message
 with the **OTP code and verification link already extracted**. Trigger a sign-in elsewhere, then act
@@ -66,6 +65,21 @@ ever reaches the model host. Keep every model host on the narrowest scoped key i
 
 ---
 
+## Connect with hosted OAuth
+
+Give an OAuth-capable MCP client this URL:
+
+```text
+https://mcp.extrovert.dev/mcp
+```
+
+The endpoint publishes RFC 9728 protected-resource metadata and Clerk authorization-server
+discovery. Compatible clients open the browser sign-in and consent flow, then store and refresh the
+grant. Existing scoped `pk_agent_…` bearer keys also work when a client is configured explicitly.
+
+The hosted service runs MCP SDK v2's fresh-server-per-request handler: no process-local session map,
+sticky routing, or session teardown is required.
+
 ## Install and run the prerelease
 
 Use the explicit prerelease tag:
@@ -78,12 +92,12 @@ npx -y @extrovert.dev/mcp@next
 npx -y @extrovert.dev/mcp@next --help
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.3` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.4` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` binary; this is the only Extrovert CLI currently shipped.
 
 ## Build and run from source
 
-Requires Node ≥ 18.18. From this directory:
+Requires Node ≥ 20. From this directory:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -96,7 +110,7 @@ Two transports, one binary:
 # stdio — for local hosts (Claude Desktop, Claude Code, Cursor)
 node /absolute/path/to/extrovert/mcp/dist/bin.js
 
-# self-hosted Streamable HTTP at POST /mcp (default :8787)
+# self-hosted stateless Streamable HTTP at /mcp (default :8787)
 node /absolute/path/to/extrovert/mcp/dist/bin.js --http --port 8787
 ```
 
@@ -116,6 +130,9 @@ pnpm run dev -- --http  # tsx watch, HTTP
 | `EXTROVERT_MOCK` | *(off)* | Set `1` to force offline fixtures. |
 | `EXTROVERT_REQUEST_TIMEOUT_MS` | `30000` | Per-request timeout for non-blocking calls. |
 | `EXTROVERT_MAX_WAIT_MS` | `300000` | Upper bound the server allows `wait_for_email` to block. |
+| `EXTROVERT_MCP_OAUTH_ENABLED` | *(off)* | Require Clerk OAuth or an introspected agent key on HTTP. |
+| `EXTROVERT_MCP_OAUTH_ISSUER` | `https://clerk.extrovert.dev` | Clerk OAuth authorization-server issuer. |
+| `EXTROVERT_MCP_PUBLIC_URL` | `https://mcp.extrovert.dev/mcp` | Public RFC 9728 resource identifier. |
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | `--http` bind. |
 
 > **Offline fixtures are opt-in.** With no `EXTROVERT_API_KEY`, the server still talks to the live
@@ -225,23 +242,23 @@ continue. No polling, no separate "check the inbox" round-trips.
 
 ---
 
-## Self-hosted HTTP notes
+## Stateless HTTP notes
 
 `extrovert-mcp --http` speaks MCP Streamable HTTP:
 
-- `POST /mcp` — client→server messages (the first must be `initialize`); the SDK assigns an
-  `mcp-session-id` returned on the response.
-- `GET /mcp` — server→client SSE stream for an established session.
-- `DELETE /mcp` — tear a session down.
-- `GET /healthz` — liveness + mode (`mock`/`live`) + active session count.
+- `POST /mcp` — one authenticated client→server request, served by a fresh MCP server instance.
+- `GET /mcp` and `DELETE /mcp` — legacy stateless compatibility responses; no session is retained.
+- `GET /healthz` — liveness, version, transport, and authentication mode.
+- `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 protected-resource metadata when
+  OAuth is enabled.
 
-Each session gets an isolated server + client. A **per-request scoped key** may be supplied via
-`Authorization: Bearer …` (or `x-extrovert-api-key`), so one hosted deployment can serve many agents,
-each with their own scoped key — falling back to `EXTROVERT_API_KEY` when no header is present. This
-is how a single hosted endpoint stays multi-tenant without ever holding an org-wide key.
+Each request gets an isolated server + client and emits no `mcp-session-id`, so requests can land on
+any cluster node. Production requires `Authorization: Bearer …` with either a Clerk OAuth access
+token or an existing scoped `pk_agent_…` key. The OAuth principal and its fixed safe capabilities
+are enforced again by the Extrovert API; the raw bearer token is never persisted by MCP or API.
 
-Extrovert does not operate this transport as a public hosted endpoint. These notes apply only to a
-deployment you control.
+`EXTROVERT_API_KEY` and unauthenticated fixture mode remain local/self-hosting conveniences only;
+the production service refuses to start without OAuth enabled.
 
 ---
 
@@ -252,7 +269,8 @@ src/
   bin.ts        CLI entrypoint (--http | stdio)
   server.ts     McpServer factory + instructions
   stdio.ts      stdio transport
-  http.ts       Streamable HTTP transport (Express, per-session, bearer key)
+  http.ts       stateless Streamable HTTP transport (Express, OAuth + scoped keys)
+  auth.ts       Clerk OAuth verification, RFC discovery, and agent-key introspection
   tools.ts      manifest-driven tools — zod schemas, annotations, handlers, registration
   client.ts     thin typed Extrovert REST client (one method per /v1 endpoint)
   config.ts     env-driven configuration

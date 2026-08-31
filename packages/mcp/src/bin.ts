@@ -67,7 +67,9 @@ Environment:
   EXTROVERT_API_BASE_URL   Base URL of the Extrovert REST API (default https://api.extrovert.dev)
   EXTROVERT_API_KEY        Scoped agent key (pk_agent_…) or enrollment key (pk_enroll_…)
   EXTROVERT_MOCK           Set to 1 to force offline fixture mode
-  PORT / HOST            Override --http bind (also honored by hosting platforms)
+  EXTROVERT_MCP_OAUTH_ENABLED  Set to 1 to protect HTTP with Clerk OAuth + scoped agent keys
+  EXTROVERT_MCP_PUBLIC_URL     Public OAuth resource URL (default https://mcp.extrovert.dev/mcp)
+  PORT / HOST                 Override --http bind (also honored by hosting platforms)
 
 Tools: redeem_enrollment, create_inbox, list_inboxes, get_inbox, update_inbox, delete_inbox,
        send_email, reply_email, read_messages, list_threads, search, wait_for_email

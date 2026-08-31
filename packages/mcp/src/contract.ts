@@ -50,10 +50,10 @@ export type { ReviewIntent, ReviewFeedback, Rule, ReviewEvent } from "./types.js
 
 /**
  * The published version of the Extrovert Review-Loop open contract (D14).
- * `0.1.0-pre.3` — PROVISIONAL, pre-1.0; aligned to the SDK package version + the MCP
+ * `0.1.0-pre.4` — PROVISIONAL, pre-1.0; aligned to the SDK package version + the MCP
  * `SERVER_VERSION` + the openapi `info.version`.
  */
-export const CONTRACT_VERSION = "0.1.0-pre.3" as const;
+export const CONTRACT_VERSION = "0.1.0-pre.4" as const;
 
 /** The stability posture of a published contract version. */
 export type ContractStability = "provisional" | "stable";

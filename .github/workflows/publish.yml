@@ -48,4 +48,3 @@ jobs:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: test "$(node -p "require('./package.json').version")" = "$EXPECTED_VERSION"
       - run: npm publish --access public --tag "${{ inputs.dist_tag }}"
-
