@@ -1,12 +1,12 @@
 /**
- * @extrovert/sdk — TypeScript SDK for the Extrovert agent-email API.
+ * @extrovert.dev/sdk — TypeScript SDK for the Extrovert agent-email API.
  *
  * A real, persistent inbox for your agent, in one call. Behind a scoped key that expires and
  * revokes on its own. fetch-based, dependency-light, runs in Node 18+ and at the edge.
  *
  * Quickstart:
  * ```ts
- * import { Extrovert } from "@extrovert/sdk";
+ * import { Extrovert } from "@extrovert.dev/sdk";
  *
  * const extrovert = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY! });
  * const inbox = await extrovert.inboxes.create();

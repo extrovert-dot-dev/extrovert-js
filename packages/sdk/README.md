@@ -1,6 +1,6 @@
 <!-- // SCOPED EMAIL FOR AGENTS -->
 
-# @extrovert/sdk
+# @extrovert.dev/sdk
 
 **A real inbox for your agent, in one call.**
 
@@ -27,10 +27,10 @@ The SDK is published on npm under the `next` dist-tag so an unqualified install 
 for a stable release:
 
 ```bash
-npm install @extrovert/sdk@next
+npm install @extrovert.dev/sdk@next
 ```
 
-Pin `@extrovert/sdk@0.1.0-pre.3` when a dogfood test needs a reproducible contract snapshot.
+Pin `@extrovert.dev/sdk@0.1.0-pre.3` when a dogfood test needs a reproducible contract snapshot.
 Requires Node 18+ for global `fetch` and Web Crypto.
 
 ## Build and use from source
@@ -51,7 +51,7 @@ REST API and served OpenAPI document remain the underlying contract.
 ## Quickstart — inbox in one call
 
 ```ts
-import { Extrovert, isQueuedForReview } from "@extrovert/sdk";
+import { Extrovert, isQueuedForReview } from "@extrovert.dev/sdk";
 
 const extrovert = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY! });
 
@@ -131,7 +131,7 @@ Agents sign up for things. The high-value, time-boxed task is "wait for the veri
 read the code." Extrovert holds the request open, polls the mailbox server-side, and hands you the extracted code.
 
 ```ts
-import { Extrovert } from "@extrovert/sdk";
+import { Extrovert } from "@extrovert.dev/sdk";
 
 const extrovert = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY! });
 const inbox = await extrovert.inboxes.create({ username: "signup-agent" });
@@ -264,7 +264,7 @@ Register an HMAC-signed, timestamped webhook, then verify deliveries with Web Cr
 and at the edge, no dependency):
 
 ```ts
-import { Extrovert, verifyWebhookSignature } from "@extrovert/sdk";
+import { Extrovert, verifyWebhookSignature } from "@extrovert.dev/sdk";
 
 const extrovert = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY! });
 
@@ -337,7 +337,7 @@ import {
   RateLimitError,       // 429 — err.retryAfter (seconds)
   ConnectionError,      // network failure before a response
   TimeoutError,         // request timed out / aborted
-} from "@extrovert/sdk";
+} from "@extrovert.dev/sdk";
 
 try {
   await x.projects.inboxes.list("-");
@@ -440,7 +440,7 @@ are published here as a documented, **versioned open contract** — an SDK + ski
 a wire protocol (there is no `/v1/contract` endpoint).
 
 ```ts
-import { CONTRACT_VERSION, CONTRACT_MANIFEST } from "@extrovert/sdk";
+import { CONTRACT_VERSION, CONTRACT_MANIFEST } from "@extrovert.dev/sdk";
 
 CONTRACT_VERSION;            // "0.1.0-pre.3" — provisional, pre-1.0; pin it
 CONTRACT_MANIFEST.stability; // "provisional"

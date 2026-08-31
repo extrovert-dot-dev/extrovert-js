@@ -4,7 +4,7 @@
 
 **A real inbox for your agent, in one call.**
 
-`@extrovert/mcp` is the [Model Context Protocol](https://modelcontextprotocol.io) server for
+`@extrovert.dev/mcp` is the [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Extrovert](../README.md) — Message Science's agentic-email platform. It gives an AI agent a real,
 persistent inbox on a domain Extrovert owns: created in one tool call, sends and receives, behind a
 **scoped key that expires and revokes on its own**. The key is bound to a fixed org + project (call
@@ -72,13 +72,13 @@ Use the explicit prerelease tag:
 
 ```bash
 # stdio for an MCP host
-npx -y @extrovert/mcp@next
+npx -y @extrovert.dev/mcp@next
 
 # inspect the packaged CLI
-npx -y @extrovert/mcp@next --help
+npx -y @extrovert.dev/mcp@next --help
 ```
 
-Pin `@extrovert/mcp@0.1.0-pre.3` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.3` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` binary; this is the only Extrovert CLI currently shipped.
 
 ## Build and run from source
@@ -134,7 +134,7 @@ Point any stdio-capable host at the prerelease package:
   "mcpServers": {
     "extrovert": {
       "command": "npx",
-      "args": ["-y", "@extrovert/mcp@next"],
+      "args": ["-y", "@extrovert.dev/mcp@next"],
       "env": {
         "EXTROVERT_API_BASE_URL": "https://api.extrovert.dev",
         "EXTROVERT_API_KEY": "pk_agent_…"
@@ -150,7 +150,7 @@ For Claude Code, register that same local entrypoint:
 claude mcp add extrovert \
   --env EXTROVERT_API_BASE_URL=https://api.extrovert.dev \
   --env EXTROVERT_API_KEY=pk_agent_… \
-  -- npx -y @extrovert/mcp@next
+  -- npx -y @extrovert.dev/mcp@next
 ```
 
 > **Offline:** omit `EXTROVERT_API_KEY` and set `EXTROVERT_MOCK=1`; the packaged server uses

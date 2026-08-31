@@ -5,7 +5,7 @@
   // is how a bare-send sample survived the change set that made review the default.
   //
   // Separate from tsconfig.json because that one carries `rootDir: "src"` for the
-  // declaration build; examples live outside it. `@extrovert/sdk` is mapped to the
+  // declaration build; examples live outside it. `@extrovert.dev/sdk` is mapped to the
   // SOURCE entrypoint rather than `dist/`, so this runs on a clean checkout with
   // no build step ordering.
   "extends": "./tsconfig.json",
@@ -15,7 +15,7 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@extrovert/sdk": ["./src/index.ts"]
+      "@extrovert.dev/sdk": ["./src/index.ts"]
     }
   },
   "include": ["examples"],

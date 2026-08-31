@@ -2,7 +2,7 @@
  * ExtrovertClient — the entry point.
  *
  * ```ts
- * import { Extrovert } from "@extrovert/sdk";
+ * import { Extrovert } from "@extrovert.dev/sdk";
  * const extrovert = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY! });
  * const inbox = await extrovert.inboxes.create();        // a real inbox, in one call
  * const outcome = await inbox.send({

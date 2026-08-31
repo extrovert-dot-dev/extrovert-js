@@ -1,5 +1,5 @@
 /**
- * Public library surface for `@extrovert/mcp`.
+ * Public library surface for `@extrovert.dev/mcp`.
  *
  * Import this when embedding the Extrovert MCP server in another process, or to
  * reuse the typed client / extraction helpers directly.

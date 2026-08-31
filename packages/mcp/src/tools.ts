@@ -2867,7 +2867,7 @@ const streamInfo = defineTool({
   description:
     "Describe the real-time Server-Sent-Events (SSE) endpoints for watching inboxes live. MCP is request/response and " +
     "cannot hold an open stream, so this tool does NOT stream — it returns the endpoint URLs + how to consume them " +
-    "directly (curl / EventSource / the @extrovert/sdk `inbox.stream()` / `extrovert.stream()` helper). Each SSE event " +
+    "directly (curl / EventSource / the @extrovert.dev/sdk `inbox.stream()` / `extrovert.stream()` helper). Each SSE event " +
     "carries a monotonic `id:` (the resume token); reconnect with the `Last-Event-ID` header (or `?last_event_id=`) to " +
     "replay everything after it. Events use the same envelope a webhook delivers (e.g. message.received). To get pushed " +
     "deliveries inside an MCP-only setup, use register_webhook instead.",

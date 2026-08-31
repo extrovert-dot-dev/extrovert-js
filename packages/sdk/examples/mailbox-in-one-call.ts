@@ -16,7 +16,7 @@
  * for the other half of the loop.
  */
 
-import { Extrovert, isQueuedForReview, sentMessageIdOf } from "@extrovert/sdk";
+import { Extrovert, isQueuedForReview, sentMessageIdOf } from "@extrovert.dev/sdk";
 
 async function main() {
   // `transport: "mock"` (or EXTROVERT_API_BASE_URL=mock) runs entirely offline.

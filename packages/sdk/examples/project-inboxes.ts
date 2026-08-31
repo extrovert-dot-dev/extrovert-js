@@ -12,7 +12,7 @@
  *   EXTROVERT_API_KEY=pk_agent_proj_... npx tsx examples/project-inboxes.ts
  */
 
-import { Extrovert, BreadthRequiredError, ForbiddenScopeError } from "@extrovert/sdk";
+import { Extrovert, BreadthRequiredError, ForbiddenScopeError } from "@extrovert.dev/sdk";
 
 async function main() {
   const x = new Extrovert({ transport: process.env.EXTROVERT_API_KEY ? "http" : "mock" });

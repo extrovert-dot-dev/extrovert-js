@@ -7,7 +7,7 @@
  *   EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
  */
 
-import { Extrovert } from "@extrovert/sdk";
+import { Extrovert } from "@extrovert.dev/sdk";
 
 async function main() {
   const extrovert = new Extrovert({ transport: process.env.EXTROVERT_API_KEY ? "http" : "mock" });

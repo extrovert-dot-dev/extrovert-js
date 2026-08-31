@@ -1,5 +1,5 @@
 {
-  "name": "@extrovert/sdk",
+  "name": "@extrovert.dev/sdk",
   "version": "0.1.0-pre.3",
   "description": "TypeScript SDK for the Extrovert agent-email API \u2014 a real mailbox for your agent, in one call.",
   "keywords": [
