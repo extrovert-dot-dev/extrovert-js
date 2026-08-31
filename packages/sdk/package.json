@@ -1,0 +1,68 @@
+{
+  "name": "@extrovert/sdk",
+  "version": "0.1.0-pre.3",
+  "description": "TypeScript SDK for the Extrovert agent-email API \u2014 a real mailbox for your agent, in one call.",
+  "keywords": [
+    "extrovert",
+    "email",
+    "agent",
+    "mailbox",
+    "mcp",
+    "wait-for-email",
+    "otp"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/extrovert-dot-dev/extrovert-js.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://docs.extrovert.dev/sdk/typescript/",
+  "bugs": {
+    "url": "https://github.com/extrovert-dot-dev/extrovert-js/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.examples.json",
+    "typecheck:examples": "tsc -p tsconfig.examples.json",
+    "test": "tsx --test src/**/*.test.ts",
+    "prepublishOnly": "pnpm run typecheck && pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.10",
+    "tsup": "8.5.0",
+    "tsx": "4.20.3",
+    "typescript": "5.8.3"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+name: Publish npm prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version in both package.json files
+        required: true
+        type: string
+      dist_tag:
+        description: npm dist-tag
+        required: true
+        default: next
+        type: choice
+        options:
+          - next
+          - beta
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        package: [sdk, mcp]
+    defaults:
+      run:
+        working-directory: packages/${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.33.0 --activate
+      - run: npm install --global npm@11.17.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - name: Verify requested version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: test "$(node -p "require('./package.json').version")" = "$EXPECTED_VERSION"
+      - run: npm publish --access public --tag "${{ inputs.dist_tag }}"
+

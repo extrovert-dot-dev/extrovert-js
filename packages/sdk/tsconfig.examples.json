@@ -1,0 +1,23 @@
+{
+  // Typecheck the examples. They are the first code a new user runs, so a sample
+  // that does not compile — or that teaches a call the server now refuses — is a
+  // defect, not a cosmetic issue. Keeping `examples` out of the typecheck program
+  // is how a bare-send sample survived the change set that made review the default.
+  //
+  // Separate from tsconfig.json because that one carries `rootDir: "src"` for the
+  // declaration build; examples live outside it. `@extrovert/sdk` is mapped to the
+  // SOURCE entrypoint rather than `dist/`, so this runs on a clean checkout with
+  // no build step ordering.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@extrovert/sdk": ["./src/index.ts"]
+    }
+  },
+  "include": ["examples"],
+  "exclude": ["dist", "node_modules"]
+}

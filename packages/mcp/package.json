@@ -1,0 +1,72 @@
+{
+  "name": "@extrovert/mcp",
+  "version": "0.1.0-pre.3",
+  "description": "Extrovert MCP server — a real mailbox for your agent, in one call. Tools incl. a blocking wait_for_email with OTP/link extraction.",
+  "keywords": [
+    "extrovert",
+    "mcp",
+    "model-context-protocol",
+    "email",
+    "agent",
+    "mailbox",
+    "wait-for-email",
+    "otp"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/extrovert-dot-dev/extrovert-js.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://docs.extrovert.dev/mcp/overview/",
+  "bugs": {
+    "url": "https://github.com/extrovert-dot-dev/extrovert-js/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
+  },
+  "type": "module",
+  "bin": {
+    "extrovert-mcp": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx watch src/bin.ts",
+    "start": "node dist/bin.js",
+    "start:http": "node dist/bin.js --http",
+    "test": "tsx --test src/**/*.test.ts",
+    "prepublishOnly": "pnpm run typecheck && pnpm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "express": "5.2.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "24.0.10",
+    "tsx": "4.20.3",
+    "typescript": "5.8.3"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
