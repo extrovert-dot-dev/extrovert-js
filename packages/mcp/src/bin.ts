@@ -1,29 +1,53 @@
 #!/usr/bin/env node
 /**
- * Extrovert MCP server CLI entrypoint.
+ * Extrovert MCP + CLI entrypoint.
  *
- *   extrovert-mcp            # stdio transport (default; for local MCP hosts)
- *   extrovert-mcp --http     # hosted Streamable HTTP transport
- *   extrovert-mcp --http --port 9000
- *
- * Configuration is read from the environment (see config.ts):
- *   EXTROVERT_API_BASE_URL, EXTROVERT_API_KEY, EXTROVERT_MOCK, ...
+ *   extrovert-mcp                         # stdio transport for MCP hosts
+ *   extrovert-mcp --http --port 9000      # hosted Streamable HTTP
+ *   extrovert setup --host codex          # register the packaged stdio server
+ *   extrovert signup / verify / message…  # supported CLI fallback
  */
 
+import { CLI_HELP, runCli } from "./cli.js";
 import { runHttp } from "./http.js";
 import { runStdio } from "./stdio.js";
 
-interface CliArgs {
+interface TransportArgs {
   http: boolean;
   port?: number;
   host?: string;
-  help: boolean;
 }
 
-function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { http: false, help: false };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+const CLI_COMMANDS = new Set([
+  "setup",
+  "auth",
+  "signup",
+  "verify",
+  "whoami",
+  "inbox",
+  "message",
+  "review",
+  "send",
+  "help",
+]);
+
+const TRANSPORT_HELP = `
+MCP transports:
+  extrovert-mcp                  stdio (default for local hosts)
+  extrovert-mcp --http           Streamable HTTP at /mcp (default port 8787)
+  extrovert-mcp --http --port N  override the HTTP port
+
+Environment:
+  EXTROVERT_API_BASE_URL   API URL (default https://api.extrovert.dev)
+  EXTROVERT_API_KEY        scoped agent key; overrides the stored credential
+  EXTROVERT_CONFIG_DIR     override the permission-restricted credential directory
+  EXTROVERT_MOCK           set to 1 for offline fixtures
+`;
+
+function parseTransportArgs(argv: string[]): TransportArgs {
+  const args: TransportArgs = { http: false };
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
     switch (arg) {
       case "--http":
       case "--hosted":
@@ -33,65 +57,51 @@ function parseArgs(argv: string[]): CliArgs {
         args.http = false;
         break;
       case "--port": {
-        const next = argv[++i];
-        if (next) args.port = Number.parseInt(next, 10);
+        const next = argv[++index];
+        if (!next) throw new Error("--port requires a value");
+        const port = Number(next);
+        if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("--port must be from 1 to 65535");
+        args.port = port;
         break;
       }
       case "--host": {
-        const next = argv[++i];
-        if (next) args.host = next;
+        const next = argv[++index];
+        if (!next) throw new Error("--host requires a value");
+        args.host = next;
         break;
       }
-      case "-h":
-      case "--help":
-        args.help = true;
-        break;
       default:
-        // Ignore unknown flags so MCP hosts can pass extras harmlessly.
+        // Retain compatibility with MCP hosts that append harmless flags.
         break;
     }
   }
   return args;
 }
 
-const HELP = `extrovert-mcp — MCP server for Extrovert (a real mailbox for your agent, in one call)
-
-Usage:
-  extrovert-mcp [--http] [--port <n>] [--host <addr>]
-
-Transports:
-  (default)     stdio — for Claude Desktop, Claude Code, Cursor, and other local hosts
-  --http        hosted Streamable HTTP transport at POST /mcp (default port 8787)
-
-Environment:
-  EXTROVERT_API_BASE_URL   Base URL of the Extrovert REST API (default https://api.extrovert.dev)
-  EXTROVERT_API_KEY        Scoped agent key (pk_agent_…) or enrollment key (pk_enroll_…)
-  EXTROVERT_MOCK           Set to 1 to force offline fixture mode
-  EXTROVERT_MCP_OAUTH_ENABLED  Set to 1 to protect HTTP with Clerk OAuth + scoped agent keys
-  EXTROVERT_MCP_PUBLIC_URL     Public OAuth resource URL (default https://mcp.extrovert.dev/mcp)
-  PORT / HOST                 Override --http bind (also honored by hosting platforms)
-
-Tools: redeem_enrollment, create_inbox, list_inboxes, get_inbox, update_inbox, delete_inbox,
-       send_email, reply_email, read_messages, list_threads, search, wait_for_email
-`;
-
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.help) {
-    process.stdout.write(HELP);
+  const argv = process.argv.slice(2);
+  const first = argv[0];
+  if (first === "--help" || first === "-h") {
+    process.stdout.write(`${CLI_HELP}${TRANSPORT_HELP}`);
     return;
   }
-  if (args.http) {
-    const opts: { port?: number; host?: string } = {};
-    if (args.port !== undefined) opts.port = args.port;
-    if (args.host !== undefined) opts.host = args.host;
-    await runHttp(opts);
-  } else {
-    await runStdio();
+  if (first && CLI_COMMANDS.has(first)) {
+    process.exitCode = await runCli(argv);
+    return;
   }
+
+  const args = parseTransportArgs(argv);
+  if (args.http) {
+    const options: { port?: number; host?: string } = {};
+    if (args.port !== undefined) options.port = args.port;
+    if (args.host !== undefined) options.host = args.host;
+    await runHttp(options);
+    return;
+  }
+  await runStdio();
 }
 
-main().catch((err) => {
-  process.stderr.write(`extrovert-mcp: fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+main().catch((error) => {
+  process.stderr.write(`extrovert: fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exit(1);
 });

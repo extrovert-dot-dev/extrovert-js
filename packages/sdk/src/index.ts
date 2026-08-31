@@ -247,6 +247,8 @@ export type {
   SignUpRequest,
   SignUpResponse,
   VerifyRequest,
+  MailboxQuickstartCall,
+  MailboxQuickstart,
   VerifyResponse,
   WhoAmI,
 } from "./models.js";

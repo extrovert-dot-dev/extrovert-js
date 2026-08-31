@@ -206,6 +206,8 @@ export class ExtrovertClient {
   /**
    * Confirm the emailed signup code and receive a NEW full-scope agent key (shown
    * once). Must be called with the limited key from {@link signUp} as the bearer.
+   * The result repeats the ready inbox address and includes MCP-first list/read/wait
+   * calls; SDK callers can pass `address` directly to `inboxes` and `messages`.
    */
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {
     return this.transport.verify(req, signal);

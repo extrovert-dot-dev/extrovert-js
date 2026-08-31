@@ -128,6 +128,24 @@ function decodeMockCursor(cursor: string): number {
   }
 }
 
+function mailboxQuickstart(address: string): VerifyResponse["mailbox_quickstart"] {
+  return {
+    inbox: address,
+    list_mail: {
+      tool: "read_messages",
+      arguments: { inbox: address, limit: 20, unread_only: false },
+    },
+    read_message: {
+      tool: "get_message",
+      arguments: { id: "<message_id from read_messages>", format: "text", variant: "extracted" },
+    },
+    wait_for_mail: {
+      tool: "wait_for_email",
+      arguments: { inbox: address, since_now: true },
+    },
+  };
+}
+
 const SHARED_SUBDOMAIN = "smtp.extrovert.dev";
 
 /**
@@ -677,7 +695,9 @@ export class MockBackend {
     const agentId = existing?.agentId ?? rid("agt");
     const address =
       existing?.address ?? `${req.username ?? randomHandle()}@smtp.extrovert.dev`;
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    // Stable offline code keeps the full signup → mailbox handoff executable in
+    // examples and contract tests without ever weakening the live API's CSPRNG.
+    const otp = "492013";
     this.state.signupByEmail.set(email, { customerId, agentId, address, otp, verified: false });
     return {
       customer_id: customerId,
@@ -704,8 +724,11 @@ export class MockBackend {
           agent_key: `pk_agent_${s.agentId.slice(4)}_${rid("sk").slice(3)}`,
           key_prefix: `pk_agent_${s.agentId.slice(4, 8)}`,
           scopes: ["mailbox:create", "mailbox:read", "mailbox:send"],
+          address: s.address,
           verified: true,
-          message: "Verified. Use the new agent_key (full scopes).",
+          message:
+            "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
+          mailbox_quickstart: mailboxQuickstart(s.address),
         };
       }
     }

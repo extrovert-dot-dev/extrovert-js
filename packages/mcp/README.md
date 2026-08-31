@@ -12,6 +12,8 @@ persistent inbox on a domain Extrovert owns: created in one tool call, sends and
 
 > **Prerelease status:** the package is published on npm under the `next` dist-tag. Extrovert also
 > operates `https://mcp.extrovert.dev/mcp` as a stateless Streamable HTTP endpoint with browser OAuth.
+> The same package installs `extrovert-mcp` for transports and `extrovert` for supported setup,
+> authentication, mailbox, review-status, and reviewed-send commands.
 
 The standout tool is **`wait_for_email`** — a blocking call that returns the next matching message
 with the **OTP code and verification link already extracted**. Trigger a sign-in elsewhere, then act
@@ -90,10 +92,35 @@ npx -y @extrovert.dev/mcp@next
 
 # inspect the packaged CLI
 npx -y @extrovert.dev/mcp@next --help
+
+# register the stdio server in Codex or Claude Code
+npx -y @extrovert.dev/mcp@next setup --host codex
+npx -y @extrovert.dev/mcp@next setup --host claude
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.4` for a reproducible dogfood environment. The package installs the
-`extrovert-mcp` binary; this is the only Extrovert CLI currently shipped.
+Pin `@extrovert.dev/mcp@0.1.0-pre.5` for a reproducible dogfood environment. The package installs the
+`extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
+implementation to keep in sync.
+
+### CLI fallback
+
+The CLI uses the same typed client as MCP and prints ordinary message text without a `curl | jq`
+pipeline:
+
+```bash
+extrovert signup --human-email you@example.com --username support
+extrovert verify                         # prompts for the emailed code
+extrovert whoami
+extrovert inbox list
+extrovert message list --inbox support@smtp.extrovert.dev
+extrovert message get msg_…
+extrovert review status rr_…
+```
+
+`signup` stores the limited key only in `pending-signup.json`. `verify` atomically writes the full
+replacement to `credentials.json` and deletes the pending file. On Unix the directory is mode `0700`
+and both files are mode `0600`. The default is `~/.config/extrovert/`; use
+`EXTROVERT_CONFIG_DIR` for an isolated or managed runtime. `EXTROVERT_API_KEY` always wins when set.
 
 ## Build and run from source
 
@@ -127,6 +154,7 @@ pnpm run dev -- --http  # tsx watch, HTTP
 |---|---|---|
 | `EXTROVERT_API_BASE_URL` | `https://api.extrovert.dev` | Base URL of the Extrovert REST API. |
 | `EXTROVERT_API_KEY` | *(empty)* | Scoped agent key (`pk_agent_…`) or enrollment key (`pk_enroll_…`). |
+| `EXTROVERT_CONFIG_DIR` | platform config directory | Override the local credential directory. |
 | `EXTROVERT_MOCK` | *(off)* | Set `1` to force offline fixtures. |
 | `EXTROVERT_REQUEST_TIMEOUT_MS` | `30000` | Per-request timeout for non-blocking calls. |
 | `EXTROVERT_MAX_WAIT_MS` | `300000` | Upper bound the server allows `wait_for_email` to block. |
@@ -136,7 +164,8 @@ pnpm run dev -- --http  # tsx watch, HTTP
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | `--http` bind. |
 
 > **Offline fixtures are opt-in.** With no `EXTROVERT_API_KEY`, the server still talks to the live
-> API so an agent can start with `sign_up` and receive a limited key in-session. Set
+> API so an agent can start with `sign_up` and receive a short-lived limited key in-session. The
+> key expires with the OTP and is revoked when `verify_signup` returns its replacement. Set
 > `EXTROVERT_MOCK=1` to use deterministic in-memory fixtures; `create_inbox`, `send_email`, and
 > `wait_for_email` then operate on one coherent offline dataset.
 
@@ -151,23 +180,17 @@ Point any stdio-capable host at the prerelease package:
   "mcpServers": {
     "extrovert": {
       "command": "npx",
-      "args": ["-y", "@extrovert.dev/mcp@next"],
-      "env": {
-        "EXTROVERT_API_BASE_URL": "https://api.extrovert.dev",
-        "EXTROVERT_API_KEY": "pk_agent_…"
-      }
+      "args": ["-y", "@extrovert.dev/mcp@next"]
     }
   }
 }
 ```
 
-For Claude Code, register that same local entrypoint:
+For Codex or Claude Code, register that same local entrypoint:
 
 ```bash
-claude mcp add extrovert \
-  --env EXTROVERT_API_BASE_URL=https://api.extrovert.dev \
-  --env EXTROVERT_API_KEY=pk_agent_… \
-  -- npx -y @extrovert.dev/mcp@next
+npx -y @extrovert.dev/mcp@next setup --host codex
+npx -y @extrovert.dev/mcp@next setup --host claude
 ```
 
 > **Offline:** omit `EXTROVERT_API_KEY` and set `EXTROVERT_MOCK=1`; the packaged server uses
@@ -267,6 +290,8 @@ the production service refuses to start without OAuth enabled.
 ```text
 src/
   bin.ts        CLI entrypoint (--http | stdio)
+  cli.ts        setup/auth/signup/mailbox/review CLI using the typed client
+  credentials.ts permission-restricted, atomic local credential persistence
   server.ts     McpServer factory + instructions
   stdio.ts      stdio transport
   http.ts       stateless Streamable HTTP transport (Express, OAuth + scoped keys)

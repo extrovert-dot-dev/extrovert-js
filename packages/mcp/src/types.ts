@@ -816,14 +816,33 @@ export interface SignUpResult {
   message: string;
 }
 
-/** Result of confirming a signup OTP — a new full-scope key. */
+/** One copy-ready MCP operation in the post-verification mailbox handoff. */
+export interface MailboxQuickstartCall {
+  tool: "read_messages" | "get_message" | "wait_for_email";
+  arguments: Record<string, unknown>;
+}
+
+/** Safe first mailbox operations returned by signup verification. */
+export interface MailboxQuickstart {
+  inbox: string;
+  list_mail: MailboxQuickstartCall;
+  read_message: MailboxQuickstartCall;
+  wait_for_mail: MailboxQuickstartCall;
+}
+
+/** Result of confirming a signup OTP — a new full-scope key and ready inbox. */
 export interface VerifyResult {
   agent_id: string;
   agent_key: string;
   key_prefix: string;
   scopes: AgentScope[];
+  /** The signup inbox, repeated so the verified handoff is self-contained. */
+  address: string;
   verified: boolean;
   message: string;
+  mailbox_quickstart: MailboxQuickstart;
+  /** One-time email-bound owner claim for the human console, when freshly seeded. */
+  org_claim_token?: string;
 }
 
 /**

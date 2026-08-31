@@ -560,6 +560,7 @@ const redeemEnrollment = defineTool({
       agent_handle: args.agent_handle,
       client_id: args.client_id,
     });
+    const persistence = client.credentialPersistenceStatus();
     const text = [
       `Enrollment redeemed. Agent ${result.agent_id} is ready.`,
       `agent_key (shown once): ${result.agent_key}`,
@@ -568,7 +569,7 @@ const redeemEnrollment = defineTool({
       // whoami call — consistent with whoami's text.
       `org: ${result.org_id || "(none)"} · project: ${result.project_id || "(none)"} (fixed — bound to this key)`,
       `scopes: ${result.scopes.join(", ") || "(none)"}`,
-      "This MCP session will use the returned key. Store the complete returned agent_key as EXTROVERT_API_KEY for future sessions; it is not retrievable again.",
+      credentialPersistenceMessage(persistence),
     ].join("\n");
     return ok(text, result as unknown as Record<string, unknown>);
   },
@@ -580,8 +581,8 @@ const signUp = defineTool({
   description:
     "Grab a free Extrovert account in one call (no enrollment token needed). Provisions a tenant and a first inbox, then " +
     "emails a one-time verification code to your human_email. Returns a LIMITED (read-only) agent key that this " +
-    "MCP session keeps for verify_signup; store it as EXTROVERT_API_KEY for future sessions. Re-calling with the same " +
-    "human_email rotates the key and resends the code.",
+    "MCP session keeps only through verify_signup; it expires with the code and is revoked after verification. " +
+    "Re-calling with the same human_email rotates the bootstrap key and resends the code.",
   inputSchema: {
     human_email: emailAddress.describe("Your email — receives the one-time verification code."),
     username: z
@@ -599,7 +600,9 @@ const signUp = defineTool({
       `inbox: ${res.address}`,
       `agent_key (limited, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
-      `This MCP session will use the limited key. Call verify_signup with the code to unlock full scopes; store the key as EXTROVERT_API_KEY for future sessions if needed.`,
+      `expires: ${res.otp_expires_at}`,
+      `This MCP session will use the limited key until verify_signup atomically exchanges it for the durable key. Do not store this bootstrap key for long-term use.`,
+      `After verification, verify_signup repeats the inbox and returns exact read_messages / get_message / wait_for_email calls so mailbox use can continue without raw HTTP.`,
     ].join("\n");
     return ok(text, res as unknown as Record<string, unknown>);
   },
@@ -609,22 +612,42 @@ const verifySignup = defineTool({
   name: "verify_signup",
   title: "Verify signup code",
   description:
-    "Confirm the one-time code emailed by sign_up. On success you receive a NEW full-scope agent key (create/read/send) — " +
-    "this MCP session switches to it automatically. Store it as EXTROVERT_API_KEY for future sessions.",
+    "Confirm the one-time code emailed by sign_up. On success the bootstrap key is revoked and you receive a NEW " +
+    "full-scope agent key (create/read/send/webhooks). This MCP session switches to it automatically. The packaged " +
+    "local stdio server also stores it in its permission-restricted credential file for future sessions.",
   inputSchema: {
     otp: z.string().min(4).max(12).describe("The verification code from your signup email."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   handler: async (args, { client }) => {
     const res: VerifyResult = await client.verify({ otp: args.otp });
+    const quick = res.mailbox_quickstart;
+    const persistence = client.credentialPersistenceStatus();
     const text = [
       `Verified. ${res.message}`,
       `agent_key (full, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
+      credentialPersistenceMessage(persistence),
+      `mailbox ready: ${res.address}`,
+      `First call: ${quick.list_mail.tool} ${JSON.stringify(quick.list_mail.arguments)}`,
+      `Read one result: ${quick.read_message.tool} ${JSON.stringify(quick.read_message.arguments)}`,
+      `Wait for new mail: ${quick.wait_for_mail.tool} ${JSON.stringify(quick.wait_for_mail.arguments)}`,
+      `These tools return readable text plus structured message fields; do not download raw responses or invoke jq for ordinary mailbox work.`,
+      `For outbound mail, use send_email or reply_email through the review workflow; read get_inbox first to see the effective review policy.`,
     ].join("\n");
     return ok(text, res as unknown as Record<string, unknown>);
   },
 });
+
+function credentialPersistenceMessage(status: ReturnType<ExtrovertClient["credentialPersistenceStatus"]>): string {
+  if (status.persisted) {
+    return `Credential saved for future local sessions${status.location ? ` at ${status.location}` : ""}.`;
+  }
+  if (status.attempted) {
+    return `Automatic credential storage failed${status.error ? `: ${status.error}` : ""}. Store the complete returned agent_key now; it is not retrievable again.`;
+  }
+  return "This host did not provide durable credential storage. Store the complete returned agent_key now; it is not retrievable again.";
+}
 
 const whoami = defineTool({
   name: "whoami",

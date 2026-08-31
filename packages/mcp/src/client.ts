@@ -550,11 +550,36 @@ interface WaitWireResult {
   extracted: { otp: string | null; link: string | null };
 }
 
+export interface DurableCredentialPersistenceStatus {
+  attempted: boolean;
+  persisted: boolean;
+  location?: string;
+  error?: string;
+}
+
+export interface ExtrovertClientOptions {
+  /**
+   * Local-host hook for storing a newly issued full-scope key. Hosted HTTP leaves
+   * this unset because OAuth credentials belong to the MCP client, not the server.
+   */
+  onDurableAgentKey?: (
+    agentKey: string,
+    apiBaseUrl: string,
+  ) => { location?: string } | void;
+}
+
 export class ExtrovertClient {
   private readonly store?: FixtureStore;
   private apiKey: string;
+  private durableCredentialStatus: DurableCredentialPersistenceStatus = {
+    attempted: false,
+    persisted: false,
+  };
 
-  constructor(private readonly config: ExtrovertConfig) {
+  constructor(
+    private readonly config: ExtrovertConfig,
+    private readonly options: ExtrovertClientOptions = {},
+  ) {
     this.apiKey = config.apiKey;
     // The offline store enforces the SAME key-tier ceiling assertions as the live
     // choke-point, derived from the configured key prefix (redesign §3.1).
@@ -575,7 +600,7 @@ export class ExtrovertClient {
   async redeemEnrollment(input: RedeemEnrollmentInput): Promise<EnrollmentResult> {
     if (this.store) {
       const res = this.store.redeemEnrollment(input.enrollment_token, input.agent_handle);
-      this.setSessionKey(res.agent_key);
+      this.setSessionKey(res.agent_key, true);
       return res;
     }
     const res = await this.post<EnrollmentResult>(
@@ -588,7 +613,7 @@ export class ExtrovertClient {
       undefined,
       idempotencyHeader(input.client_id),
     );
-    this.setSessionKey(res.agent_key);
+    this.setSessionKey(res.agent_key, true);
     return res;
   }
 
@@ -613,12 +638,17 @@ export class ExtrovertClient {
   async verify(input: { otp: string }): Promise<VerifyResult> {
     if (this.store) {
       const res = this.store.verify(input.otp);
-      this.setSessionKey(res.agent_key);
+      this.setSessionKey(res.agent_key, true);
       return res;
     }
     const res = await this.post<VerifyResult>("/v1/agent/verify", { otp: input.otp });
-    this.setSessionKey(res.agent_key);
+    this.setSessionKey(res.agent_key, true);
     return res;
+  }
+
+  /** Report whether the latest full-scope key was durably stored by this host. */
+  credentialPersistenceStatus(): DurableCredentialPersistenceStatus {
+    return { ...this.durableCredentialStatus };
   }
 
   /** Introspect the principal behind the current key: `GET /v1/auth/me`. */
@@ -1870,9 +1900,31 @@ export class ExtrovertClient {
     return parsed as T;
   }
 
-  private setSessionKey(key?: string): void {
+  private setSessionKey(key?: string, durable = false): void {
     const trimmed = key?.trim();
-    if (trimmed) this.apiKey = trimmed;
+    if (!trimmed) return;
+    this.apiKey = trimmed;
+    if (!durable) return;
+
+    const sink = this.options.onDurableAgentKey;
+    if (!sink) {
+      this.durableCredentialStatus = { attempted: false, persisted: false };
+      return;
+    }
+    try {
+      const saved = sink(trimmed, this.config.apiBaseUrl);
+      this.durableCredentialStatus = {
+        attempted: true,
+        persisted: true,
+        location: saved?.location,
+      };
+    } catch (error) {
+      this.durableCredentialStatus = {
+        attempted: true,
+        persisted: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 }
 

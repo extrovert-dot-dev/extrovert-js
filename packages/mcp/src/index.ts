@@ -32,7 +32,18 @@ export {
   type ReplyEmailInput,
   type WaitForEmailInput,
   type RedeemEnrollmentInput,
+  type DurableCredentialPersistenceStatus,
+  type ExtrovertClientOptions,
 } from "./client.js";
+
+export {
+  createCredentialStore,
+  credentialPaths,
+  type CredentialPaths,
+  type CredentialStore,
+  type PendingSignup,
+  type StoredCredential,
+} from "./credentials.js";
 
 export { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from "./config.js";
 export { registerTools, TOOL_NAMES } from "./tools.js";

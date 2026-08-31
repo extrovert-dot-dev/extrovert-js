@@ -1771,13 +1771,13 @@ export interface SignUpRequest {
 
 /**
  * Response from `POST /v1/agent/sign-up`. The `agent_key` is a LIMITED-scope key
- * (read-only) until the emailed code is confirmed via `POST /v1/agent/verify`.
- * The OTP itself is never returned — it is emailed to `human_email`.
+ * (read-only) that expires with the emailed code. Successful verification revokes
+ * it and returns a replacement full-scope key. The OTP itself is never returned.
  */
 export interface SignUpResponse {
   customer_id: string;
   agent_id: string;
-  /** Limited-scope agent key, shown once. Re-calling signup rotates it. */
+  /** Limited-scope bootstrap key, shown once and bounded by `otp_expires_at`. */
   agent_key: string;
   key_prefix: string;
   scopes: Scope[];
@@ -1796,17 +1796,42 @@ export interface VerifyRequest {
   otp: string;
 }
 
+/** One copy-ready MCP operation in the post-verification mailbox handoff. */
+export interface MailboxQuickstartCall {
+  tool: "read_messages" | "get_message" | "wait_for_email";
+  arguments: Record<string, unknown>;
+}
+
 /**
- * Response from `POST /v1/agent/verify`. On success a NEW full-scope `agent_key`
- * is returned (shown once); switch to it for subsequent calls.
+ * Safe, MCP-first next calls for the inbox returned by signup verification.
+ * SDK callers can use `address` with the typed inbox/message resources instead;
+ * these calls keep agent runtimes from inventing raw HTTP routes or parsers.
+ */
+export interface MailboxQuickstart {
+  inbox: string;
+  list_mail: MailboxQuickstartCall;
+  read_message: MailboxQuickstartCall;
+  wait_for_mail: MailboxQuickstartCall;
+}
+
+/**
+ * Response from `POST /v1/agent/verify`. On success the bootstrap key is revoked
+ * and a NEW full-scope `agent_key` is returned; switch to it for subsequent calls.
+ * `address` repeats the ready inbox so the handoff remains self-contained after
+ * a process restart or context compaction.
  */
 export interface VerifyResponse {
   agent_id: string;
   agent_key: string;
   key_prefix: string;
   scopes: Scope[];
+  /** The signup inbox, ready for immediate list/read/wait/send operations. */
+  address: string;
   verified: boolean;
   message: string;
+  mailbox_quickstart: MailboxQuickstart;
+  /** One-time email-bound owner claim for the human console, when freshly seeded. */
+  org_claim_token?: string;
 }
 
 /**

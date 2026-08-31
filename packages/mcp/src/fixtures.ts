@@ -106,6 +106,24 @@ const MOCK_PROJECT_ID = "prj_mock";
 /** Effective per-inbox recipient cap returned by the offline API fixture. */
 const DEFAULT_DAILY_SEND_LIMIT = 75;
 
+function mailboxQuickstart(address: string): VerifyResult["mailbox_quickstart"] {
+  return {
+    inbox: address,
+    list_mail: {
+      tool: "read_messages",
+      arguments: { inbox: address, limit: 20, unread_only: false },
+    },
+    read_message: {
+      tool: "get_message",
+      arguments: { id: "<message_id from read_messages>", format: "text", variant: "extracted" },
+    },
+    wait_for_mail: {
+      tool: "wait_for_email",
+      arguments: { inbox: address, since_now: true },
+    },
+  };
+}
+
 /**
  * The recipient the mock seeds an active org-scope suppression for, so the
  * suppression reads (check/list/revoke) and the `recipient_suppressed`
@@ -405,7 +423,9 @@ export class FixtureStore {
     const customerId = existing?.customerId ?? nextId("cus");
     const agentId = existing?.agentId ?? nextId("agt");
     const address = existing?.address ?? `${input.username ?? "agent" + shortLabel()}@smtp.extrovert.dev`;
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    // Stable offline code keeps the full signup → mailbox handoff executable in
+    // examples and contract tests without ever weakening the live API's CSPRNG.
+    const otp = "492013";
     this.signups.set(email, { customerId, agentId, address, otp, verified: false });
     const keyPrefix = "pk_agent_" + nextId("").split("_")[1];
     return {
@@ -432,8 +452,11 @@ export class FixtureStore {
           agent_key: `${keyPrefix}_${Math.random().toString(36).slice(2)}`,
           key_prefix: keyPrefix,
           scopes: ["mailbox:create", "mailbox:read", "mailbox:send"],
+          address: s.address,
           verified: true,
-          message: "Verified. Use the new agent_key (full scopes).",
+          message:
+            "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
+          mailbox_quickstart: mailboxQuickstart(s.address),
         };
       }
     }

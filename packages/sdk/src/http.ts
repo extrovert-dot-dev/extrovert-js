@@ -17,7 +17,7 @@ import { parseProblem, type Problem } from "./problem.js";
 import { API_VERSION_HEADER, CURRENT_API_VERSION } from "./version.js";
 
 /** The library version, surfaced in the User-Agent. Kept in sync with package.json by build. */
-export const SDK_VERSION = "0.1.0-pre.4";
+export const SDK_VERSION = "0.1.0-pre.5";
 
 export interface RetryOptions {
   /** Max retry attempts for idempotent requests on 429/5xx/network errors. Default 2. */

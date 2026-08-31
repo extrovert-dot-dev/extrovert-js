@@ -13,8 +13,8 @@ npm install @extrovert.dev/sdk@next
 npx -y @extrovert.dev/mcp@next --help
 ```
 
-The MCP package installs the `extrovert-mcp` binary. Extrovert does not yet publish a separate
-general-purpose CLI. OAuth-capable clients can connect directly to the production protected resource
+The MCP package installs `extrovert-mcp` for MCP transports and the `extrovert` CLI alias for setup,
+authentication, inbox reads, review status, and reviewed sends. OAuth-capable clients can connect directly to the production protected resource
 at `https://mcp.extrovert.dev/mcp`; the browser flow avoids putting an Extrovert key in client config.
 
 Documentation: [docs.extrovert.dev](https://docs.extrovert.dev)

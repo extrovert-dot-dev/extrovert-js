@@ -7,15 +7,38 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
+import { ExtrovertClient } from "./client.js";
+import { loadConfig } from "./config.js";
+import { createCredentialStore } from "./credentials.js";
 import { createExtrovertServer } from "./server.js";
 
 export async function runStdio(): Promise<void> {
-  const { server, config } = createExtrovertServer();
+  const credentialStore = createCredentialStore();
+  const stored = credentialStore.load();
+  const env = { ...process.env };
+  if (!(env.EXTROVERT_API_KEY ?? "").trim() && stored) {
+    env.EXTROVERT_API_KEY = stored.agent_key;
+    if (!(env.EXTROVERT_API_BASE_URL ?? "").trim()) {
+      env.EXTROVERT_API_BASE_URL = stored.api_base_url;
+    }
+  }
+
+  const config = loadConfig(env);
+  const client = new ExtrovertClient(config, {
+    onDurableAgentKey: config.mock
+      ? undefined
+      : (agentKey, apiBaseUrl) => {
+          credentialStore.save(agentKey, apiBaseUrl);
+          return { location: credentialStore.paths.credential };
+        },
+  });
+  const { server } = createExtrovertServer({ config, client });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  const mode = config.mock ? "offline fixtures" : `live API ${config.apiBaseUrl}`;
+  const auth = config.apiKey ? "authenticated" : "ready for sign_up";
+  const mode = config.mock ? "offline fixtures" : `live API ${config.apiBaseUrl} · ${auth}`;
   process.stderr.write(`extrovert-mcp: stdio transport ready — ${mode}\n`);
 
   const shutdown = async (): Promise<void> => {
