@@ -49,6 +49,7 @@ import type {
   GraduationStatus,
   RiskDial,
   Rule,
+  RuleSnapshot,
   RuleAuditEntry,
   SaveRuleRequest,
   ListThreadsParams,
@@ -258,7 +259,7 @@ export interface Transport {
   // Writing rules + house-style + precedence ladder + audit/undo (D2/D11). ANY
   // agent may write/edit/promote/retire/undo (the cross-agent exception); get_rules
   // returns the ORDERED list with the §7 ladder applied server-side (NO LLM).
-  getRules(params: GetRulesParams, signal?: AbortSignal): Promise<Page<Rule>>;
+  getRules(params: GetRulesParams, signal?: AbortSignal): Promise<RuleSnapshot>;
   saveRule(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule>;
   promoteRule(ruleId: string, toScope: "general" | "category", signal?: AbortSignal): Promise<Rule>;
   retireRule(ruleId: string, signal?: AbortSignal): Promise<Rule>;
@@ -1005,7 +1006,7 @@ export class HttpTransport implements Transport {
     });
   }
 
-  getRules(params: GetRulesParams, signal?: AbortSignal): Promise<Page<Rule>> {
+  getRules(params: GetRulesParams, signal?: AbortSignal): Promise<RuleSnapshot> {
     return this.call({
       method: "GET",
       path: "/v1/rules",
@@ -1015,7 +1016,13 @@ export class HttpTransport implements Transport {
   }
 
   saveRule(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule> {
-    return this.call({ method: "PUT", path: "/v1/rules", body: req, signal });
+    return this.call({
+      method: "PUT",
+      path: "/v1/rules",
+      body: withoutIdempotencyKey(req),
+      idempotencyKey: req.idempotency_key,
+      signal,
+    });
   }
 
   promoteRule(ruleId: string, toScope: "general" | "category", signal?: AbortSignal): Promise<Rule> {
@@ -1416,7 +1423,7 @@ export class MockTransport implements Transport {
     if (!st) throw notFound("category", categoryId);
     return st;
   }
-  async getRules(params: GetRulesParams): Promise<Page<Rule>> {
+  async getRules(params: GetRulesParams): Promise<RuleSnapshot> {
     return this.backend.getRules(params);
   }
   async saveRule(req: SaveRuleRequest): Promise<Rule> {

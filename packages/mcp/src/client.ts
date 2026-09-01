@@ -47,6 +47,7 @@ import type {
   CategoryPacingState,
   ReviewTurn,
   Rule,
+  RuleSnapshot,
   RuleAuditEntry,
   ProblemField,
   ReplyEmailResult,
@@ -191,6 +192,7 @@ export interface SendEmailInput {
   attachments?: AttachmentInput[];
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
+  composition_token?: string;
 }
 
 export interface ReplyEmailInput {
@@ -210,6 +212,7 @@ export interface ReplyEmailInput {
   attachments?: AttachmentInput[];
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
+  composition_token?: string;
 }
 
 export interface ForwardEmailInput {
@@ -223,6 +226,7 @@ export interface ForwardEmailInput {
   html?: string;
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
+  composition_token?: string;
 }
 
 /**
@@ -253,6 +257,7 @@ export interface SubmitForwardForReviewInput {
   category_confidence?: number;
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
+  composition_token?: string;
 }
 
 /** Submit a new message for human review (Review Loop, spec §5.1). */
@@ -287,6 +292,7 @@ export interface SubmitForReviewInput {
   category_confidence?: number;
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
+  composition_token?: string;
 }
 
 /** Submit an in-thread reply for human review (Review Loop). */
@@ -311,6 +317,7 @@ export interface SubmitReplyForReviewInput {
   category_confidence?: number;
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
+  composition_token?: string;
 }
 
 /** Filters for listing review requests (Review Loop, spec §5.2). */
@@ -338,6 +345,7 @@ export interface SubmitRevisionInput {
   id: string;
   /** The revision the agent composed against (PRIMARY CAS; 409 STALE on mismatch). */
   parent_revision: number;
+  composition_token?: string;
   /** Optional row-version CAS (defense in depth). */
   version?: number;
   subject?: string;
@@ -448,6 +456,8 @@ export interface GetRulesInput {
 
 /** Save / edit a writing rule (append-only by supersession, D11). */
 export interface SaveRuleInput {
+  /** Stable retry key for this exact mutation. */
+  client_id: string;
   /** Defaults from category_id (general iff empty). */
   scope?: "general" | "category";
   /** Category id (cat_…); empty = house-style/general (D2). */
@@ -1025,6 +1035,7 @@ export class ExtrovertClient {
     if (input.attachments !== undefined) body.attachments = input.attachments;
     if (input.built_at !== undefined) body.built_at = input.built_at;
     if (input.rules_version_seen !== undefined) body.rules_version_seen = input.rules_version_seen;
+    body.composition_token = input.composition_token;
     return this.post<Review>(
       `/v1/reviews/${encodeURIComponent(input.id)}/revision`,
       body,
@@ -1251,12 +1262,12 @@ export class ExtrovertClient {
    * general; human>agent; newest rev/created_at; higher priority; plus a soft cap.
    * Includes the general/house-style layer (D2) IN ADDITION to the category's rules.
    */
-  async getRules(input: GetRulesInput = {}): Promise<Page<Rule>> {
+  async getRules(input: GetRulesInput = {}): Promise<RuleSnapshot> {
     if (this.store) return this.store.getRules(input);
     const query: Record<string, unknown> = {};
     if (input.category_id) query.category_id = input.category_id;
     if (input.scope) query.scope = input.scope;
-    return this.get<Page<Rule>>("/v1/rules", query);
+    return this.get<RuleSnapshot>("/v1/rules", query);
   }
 
   /**
@@ -1277,7 +1288,7 @@ export class ExtrovertClient {
     if (input.scope_agent_id) body.scope_agent_id = input.scope_agent_id;
     if (input.propagate_to_pending !== undefined) body.propagate_to_pending = input.propagate_to_pending;
     if (input.suggested_batch !== undefined) body.suggested_batch = input.suggested_batch;
-    return this.put<Rule>("/v1/rules", body);
+    return this.put<Rule>("/v1/rules", body, idempotencyHeader(input.client_id));
   }
 
   /**
@@ -1834,8 +1845,8 @@ export class ExtrovertClient {
     return this.request<T>("PATCH", path, body);
   }
 
-  private async put<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("PUT", path, body);
+  private async put<T>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+    return this.request<T>("PUT", path, body, undefined, undefined, extraHeaders);
   }
 
   private async request<T>(

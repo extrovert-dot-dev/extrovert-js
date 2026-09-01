@@ -204,6 +204,7 @@ export type {
   ProposeGraduationRequest,
   // review loop writing rules + house-style + audit/undo (HITL, M4)
   Rule,
+  RuleSnapshot,
   RuleLayer,
   GetRulesParams,
   SaveRuleRequest,

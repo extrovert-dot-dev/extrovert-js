@@ -13,6 +13,8 @@
  * single-use enrollment token for that scoped key at runtime.
  */
 
+import { createHash } from "node:crypto";
+
 import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
 
@@ -580,9 +582,12 @@ const signUp = defineTool({
   title: "Sign up for a free account",
   description:
     "Grab a free Extrovert account in one call (no enrollment token needed). Provisions a tenant and a first inbox, then " +
-    "emails a one-time verification code to your human_email. Returns a LIMITED (read-only) agent key that this " +
+    "emails a one-time verification code to your human_email. Returns a LIMITED verification-only agent key that " +
+    "cannot read or send mail and that this " +
     "MCP session keeps only through verify_signup; it expires with the code and is revoked after verification. " +
-    "Re-calling with the same human_email rotates the bootstrap key and resends the code.",
+    "Re-calling with the same human_email rotates the bootstrap key and resends the code. Free signup may be " +
+    "temporarily paused; in that state the tool " +
+    "returns signup_disabled and creates nothing. Enrollment tokens remain available.",
   inputSchema: {
     human_email: emailAddress.describe("Your email — receives the one-time verification code."),
     username: z
@@ -614,7 +619,9 @@ const verifySignup = defineTool({
   description:
     "Confirm the one-time code emailed by sign_up. On success the bootstrap key is revoked and you receive a NEW " +
     "full-scope agent key (create/read/send/webhooks). This MCP session switches to it automatically. The packaged " +
-    "local stdio server also stores it in its permission-restricted credential file for future sessions.",
+    "local stdio server also stores it in its permission-restricted credential file for future sessions. Pending " +
+    "signup verification returns signup_disabled while free signup is temporarily paused; keep the limited key and " +
+    "retry after reopening.",
   inputSchema: {
     otp: z.string().min(4).max(12).describe("The verification code from your signup email."),
   },
@@ -829,6 +836,7 @@ const exportEmailConfig = defineTool({
   title: "Export email client config",
   description:
     "Export an inbox's IMAP/SMTP server settings + login so you can configure a real mail client (e.g. Himalaya). " +
+    "Requires the dedicated mailbox:credentials scope and a paid plan; free accounts cannot export raw credentials. " +
     "Direct SMTP is an explicit unreviewed delivery path: it bypasses Extrovert approval/review, suppression and " +
     "contact-list enforcement, List-Unsubscribe injection, and Extrovert billing/accounting. API/MCP sends keep those " +
     "controls. Returns a ready-to-use config; use format=json for raw connection fields.",
@@ -936,6 +944,7 @@ const sendEmail = defineTool({
           "the server never scores. Below the threshold (or omitted when one is set) the would-be auto-send " +
           "routes to needs_review (gate_outcome held:low_confidence).",
       ),
+    composition_token: z.string().min(1).optional().describe("Token returned by the fresh get_rules call used to compose this message. The MCP refreshes it when omitted for compatibility."),
     client_id: z
       .string()
       .min(1)
@@ -945,6 +954,8 @@ const sendEmail = defineTool({
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
+    const compositionToken = args.composition_token ?? (await client.getRules({ category_id: args.category_id })).composition_token;
+    if (!compositionToken) throw new ExtrovertApiError("Call get_rules without a scope filter before composing.", 422, "composition_token_required");
     // Review Loop overload: any of mode/intent/category_id opts into the richer
     // discriminated response. It does NOT decide whether a human sees the message —
     // the policy does that either way; this only shapes what comes back.
@@ -968,6 +979,7 @@ const sendEmail = defineTool({
         intent: args.intent,
         category_id: args.category_id,
         category_confidence: args.category_confidence,
+        composition_token: compositionToken,
         client_id: args.client_id,
       });
       return ok(renderSubmitResult(result), result as unknown as Record<string, unknown>);
@@ -983,6 +995,7 @@ const sendEmail = defineTool({
       reply_to: args.reply_to,
       headers: args.headers,
       attachments: args.attachments,
+      composition_token: compositionToken,
       client_id: args.client_id,
     });
     return ok(renderSendOutcome("Sent", result), result as unknown as Record<string, unknown>);
@@ -1035,6 +1048,7 @@ const replyEmail = defineTool({
       .max(1)
       .optional()
       .describe("Your confidence (0..1) in the category match. Feeds the min_confidence auto-send gate only."),
+    composition_token: z.string().min(1).optional().describe("Token returned by the fresh get_rules call used to compose this reply. The MCP refreshes it when omitted for compatibility."),
     client_id: z
       .string()
       .min(1)
@@ -1047,6 +1061,8 @@ const replyEmail = defineTool({
     if (!args.thread_id && !args.message_id) {
       throw new ExtrovertApiError("Provide thread_id or message_id to reply.", 400, "invalid_argument");
     }
+    const compositionToken = args.composition_token ?? (await client.getRules({ category_id: args.category_id })).composition_token;
+    if (!compositionToken) throw new ExtrovertApiError("Call get_rules without a scope filter before composing.", 422, "composition_token_required");
     // Review Loop overload: any of mode/intent/category_id opts into review.
     if (args.mode !== undefined || args.intent !== undefined || args.category_id !== undefined) {
       const result = await client.submitReplyForReview({
@@ -1065,6 +1081,7 @@ const replyEmail = defineTool({
         intent: args.intent,
         category_id: args.category_id,
         category_confidence: args.category_confidence,
+        composition_token: compositionToken,
         client_id: args.client_id,
       });
       return ok(renderSubmitResult(result), result as unknown as Record<string, unknown>);
@@ -1081,6 +1098,7 @@ const replyEmail = defineTool({
       headers: args.headers,
       reply_all: args.reply_all,
       attachments: args.attachments,
+      composition_token: compositionToken,
       client_id: args.client_id,
     });
     return ok(renderSendOutcome("Replied", res), res as unknown as Record<string, unknown>);
@@ -1129,6 +1147,7 @@ const forwardEmail = defineTool({
       .max(1)
       .optional()
       .describe("Your confidence (0..1) in the category match. Feeds the min_confidence auto-send gate only."),
+    composition_token: z.string().min(1).optional().describe("Token returned by the fresh get_rules call used to compose this forward. The MCP refreshes it when omitted for compatibility."),
     client_id: z
       .string()
       .min(1)
@@ -1138,6 +1157,8 @@ const forwardEmail = defineTool({
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
+    const compositionToken = args.composition_token ?? (await client.getRules({ category_id: args.category_id })).composition_token;
+    if (!compositionToken) throw new ExtrovertApiError("Call get_rules without a scope filter before composing.", 422, "composition_token_required");
     // Same opt-in predicate as send/reply: mode/intent/category_id select the
     // richer discriminated response; the policy governs the routing regardless.
     if (args.mode !== undefined || args.intent !== undefined || args.category_id !== undefined) {
@@ -1153,6 +1174,7 @@ const forwardEmail = defineTool({
         intent: args.intent,
         category_id: args.category_id,
         category_confidence: args.category_confidence,
+        composition_token: compositionToken,
         client_id: args.client_id,
       });
       return ok(renderSubmitResult(result), result as unknown as Record<string, unknown>);
@@ -1165,6 +1187,7 @@ const forwardEmail = defineTool({
       bcc: args.bcc,
       text: args.text,
       html: args.html,
+      composition_token: compositionToken,
       client_id: args.client_id,
     });
     return ok(renderSendOutcome("Forwarded", res), res as unknown as Record<string, unknown>);
@@ -1420,6 +1443,7 @@ const submitRevision = defineTool({
       ),
     built_at: z.string().optional().describe("When you built this draft (informational)."),
     rules_version_seen: z.number().int().optional().describe("Rule high-water this draft was composed against (born-stale basis)."),
+    composition_token: z.string().min(1).optional().describe("Token returned by the fresh get_rules call used to compose this revision. The MCP refreshes it when omitted for compatibility."),
     client_id: z
       .string()
       .min(1)
@@ -1429,6 +1453,9 @@ const submitRevision = defineTool({
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
+    const currentReview = await client.getReview(args.id);
+    const compositionToken = args.composition_token ?? (await client.getRules({ category_id: currentReview.category_id })).composition_token;
+    if (!compositionToken) throw new ExtrovertApiError("Call get_rules without a scope filter before redrafting.", 422, "composition_token_required");
     const review = await client.submitRevision({
       id: args.id,
       parent_revision: args.parent_revision,
@@ -1440,6 +1467,7 @@ const submitRevision = defineTool({
       attachments: args.attachments,
       built_at: args.built_at,
       rules_version_seen: args.rules_version_seen,
+      composition_token: compositionToken,
       client_id: args.client_id,
     });
     return ok(`Revised.\n${renderReview(review)}`, review as unknown as Record<string, unknown>);
@@ -1771,11 +1799,16 @@ const getRules = defineTool({
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
-    const res: Page<Rule> = await client.getRules({ category_id: args.category_id, scope: args.scope });
+    const res = await client.getRules({ category_id: args.category_id, scope: args.scope });
     const text = res.items.length ? res.items.map(renderRule).join("\n\n") : "No rules yet.";
     return ok(`${res.items.length} rule(s), highest precedence first.\n\n${text}`, {
       items: res.items,
       total: res.total,
+      house_style_version: res.house_style_version,
+      category_rules_version: res.category_rules_version,
+      rule_high_water: res.rule_high_water,
+      composition_token: res.composition_token,
+      composition_token_expires_at: res.composition_token_expires_at,
     });
   },
 });
@@ -1792,6 +1825,7 @@ const saveRule = defineTool({
     "lineage, the prior superseded). Use this AFTER you judge a diff/comment is a generalizable rule (the judgment is " +
     "yours; we never run an LLM). Returns the new active rule (with its rule_layer/org_id/project_id).",
   inputSchema: {
+    client_id: z.string().min(1).max(128).optional().describe("Stable retry id for this exact rule save; reuse it after a timeout. The MCP derives one when omitted."),
     rule_text: z.string().min(1).describe("The rule body, e.g. 'no em-dashes' or 'be more pushy, we need MRR'."),
     category_id: z.string().optional().describe("Category id (cat_…). Empty = house-style/general (D2)."),
     scope: z.enum(RULE_SCOPES).optional().describe("Defaults from category_id (general iff empty)."),
@@ -1815,9 +1849,11 @@ const saveRule = defineTool({
       .optional()
       .describe("Override the propagate batch (0 = base 3, bounded by rework_batch_max). Never fans one nudge to the whole queue."),
   },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
+    const derivedClientID = `rule:${createHash("sha256").update(JSON.stringify(args)).digest("hex")}`;
     const rule = await client.saveRule({
+      client_id: args.client_id ?? derivedClientID,
       rule_text: args.rule_text,
       category_id: args.category_id,
       scope: args.scope,

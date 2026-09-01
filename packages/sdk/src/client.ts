@@ -198,6 +198,8 @@ export class ExtrovertClient {
    * + a first inbox and returns a LIMITED-scope (read-only) agent key; a one-time
    * code is emailed to `human_email`. Call {@link verify} with the code to unlock
    * full scopes. Idempotent on `human_email`: re-calling rotates the key + resends.
+   * When free signup is paused, this throws an `ApiError` with status 403 and
+   * code `signup_disabled` without creating account state.
    */
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse> {
     return this.transport.signUp(req, signal);
@@ -208,6 +210,8 @@ export class ExtrovertClient {
    * once). Must be called with the limited key from {@link signUp} as the bearer.
    * The result repeats the ready inbox address and includes MCP-first list/read/wait
    * calls; SDK callers can pass `address` directly to `inboxes` and `messages`.
+   * Pending verification is also fail-closed with 403 `signup_disabled` while
+   * free signup is paused.
    */
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {
     return this.transport.verify(req, signal);

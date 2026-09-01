@@ -36,11 +36,13 @@ export type Scope =
   | "mailbox:read"
   | "mailbox:send"
   | "mailbox:quota"
+  | "mailbox:credentials"
   | "mailbox:delete"
   | "webhook:write"
   | "domain:manage"
   | "domain:purchase"
-  | "review:act";
+  | "review:act"
+  | "signup:verify";
 
 /** How a Extrovert domain was onboarded (§7). */
 export type OnboardingMode = "shared" | "purchased" | "ns_delegated" | "manual";
@@ -544,6 +546,8 @@ export interface SendRequest {
    * routes to needs_review with gate_outcome `held:low_confidence`.
    */
   category_confidence?: number;
+  /** Opaque token from the fresh getRules call used for this composition. */
+  composition_token?: string;
 }
 
 /**
@@ -580,6 +584,7 @@ export interface ReplyRequest {
   category_id?: string;
   /** Agent-supplied confidence (0..1); see {@link SendRequest.category_confidence}. */
   category_confidence?: number;
+  composition_token?: string;
 }
 
 /**
@@ -615,6 +620,7 @@ export interface ForwardRequest {
   category_id?: string;
   /** Agent-supplied confidence (0..1); see {@link SendRequest.category_confidence}. */
   category_confidence?: number;
+  composition_token?: string;
   /** See {@link SendRequest.idempotency_key} — sent as a header, never in the body. */
   idempotency_key?: string;
 }
@@ -865,6 +871,8 @@ export interface SubmitRevisionRequest {
   html?: string;
   built_at?: IsoTimestamp;
   rules_version_seen?: number;
+  /** Opaque token from the fresh getRules call used for this redraft. */
+  composition_token?: string;
   /**
    * REPLACES the draft's attachments. Omit the field to leave them untouched;
    * send an empty array to clear them.
@@ -1275,6 +1283,15 @@ export interface GetRulesParams {
   scope?: "general" | "category";
 }
 
+/** Stable effective rule stack plus an opaque proof for the next composition. */
+export interface RuleSnapshot extends Page<Rule> {
+  house_style_version: number;
+  category_rules_version: number;
+  rule_high_water: number;
+  composition_token?: string;
+  composition_token_expires_at?: IsoTimestamp;
+}
+
 /**
  * Save / edit a writing rule (append-only by supersession; spec §5.4; D11).
  *
@@ -1286,6 +1303,8 @@ export interface GetRulesParams {
  * `scope` is the category axis, `rule_layer` is the ownership axis.)
  */
 export interface SaveRuleRequest {
+  /** Stable retry key, sent as Idempotency-Key and omitted from the JSON body. */
+  idempotency_key?: string;
   /** Defaults from category_id (general iff empty). */
   scope?: "general" | "category";
   /** Category id (cat_…); empty = house-style/general (D2). */

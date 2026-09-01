@@ -48,6 +48,7 @@ import type {
   GraduationStatus,
   RiskDial,
   Rule,
+  RuleSnapshot,
   RuleAuditEntry,
   SaveRuleRequest,
   Message,
@@ -704,7 +705,7 @@ export class MockBackend {
       agent_id: agentId,
       agent_key: `pk_agent_${agentId.slice(4)}_${rid("sk").slice(3)}`,
       key_prefix: `pk_agent_${agentId.slice(4, 8)}`,
-      scopes: ["mailbox:read"],
+      scopes: ["signup:verify"],
       address,
       verified: false,
       otp_sent_to: email,
@@ -1958,7 +1959,7 @@ export class MockBackend {
   }
 
   /** Get the ORDERED active rule set (mock) — §7 ladder + category-before-general. */
-  getRules(params: GetRulesParams = {}): Page<Rule> {
+  getRules(params: GetRulesParams = {}): RuleSnapshot {
     const active = [...this.state.rules.values()].filter((r) => r.status === "active");
     const byRank = (a: Rule, b: Rule): number => {
       const ra = this.ruleRank(a);
@@ -1979,7 +1980,15 @@ export class MockBackend {
       category = active.filter((r) => r.scope === "category" && r.category_id === params.category_id).sort(byRank);
     }
     const items = [...category, ...general];
-    return { items, total: items.length };
+    return {
+      items,
+      total: items.length,
+      house_style_version: 1,
+      category_rules_version: params.category_id ? 1 : 0,
+      rule_high_water: params.category_id ? 1 : 0,
+      composition_token: params.scope ? undefined : `cmp_fixture_${params.category_id ?? "general"}`,
+      composition_token_expires_at: params.scope ? undefined : new Date(Date.now() + 600_000).toISOString(),
+    };
   }
 
   /** Save / edit a rule (mock) — append-only by supersession (D11). */

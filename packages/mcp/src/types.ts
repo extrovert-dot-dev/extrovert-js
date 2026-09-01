@@ -24,11 +24,13 @@ export type AgentScope =
   | "mailbox:read"
   | "mailbox:send"
   | "mailbox:quota"
+  | "mailbox:credentials"
   | "mailbox:delete"
   | "webhook:write"
   | "domain:manage"
   | "domain:purchase"
-  | "review:act";
+  | "review:act"
+  | "signup:verify";
 
 /**
  * Derive the key tier from the raw agent-key prefix (redesign §3.1, Appendix A).
@@ -702,6 +704,15 @@ export interface Rule {
   author_kind: "agent" | "human";
   created_at: string;
   updated_at: string;
+}
+
+/** Stable effective rule stack plus an opaque proof for the next composition. */
+export interface RuleSnapshot extends Page<Rule> {
+  house_style_version: number;
+  category_rules_version: number;
+  rule_high_water: number;
+  composition_token?: string;
+  composition_token_expires_at?: string;
 }
 
 /** One append-only rule/category change & undo audit row (udo_…). */

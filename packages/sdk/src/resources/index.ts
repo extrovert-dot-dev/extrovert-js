@@ -37,6 +37,7 @@ import type {
   GraduationStatus,
   RiskDial,
   Rule,
+  RuleSnapshot,
   RuleAuditEntry,
   SaveRuleRequest,
   PostReviewChatRequest,
@@ -653,7 +654,7 @@ export class Rules {
   constructor(private readonly ctx: ResourceContext) {}
 
   /** Get the ORDERED active rule set (precedence ladder applied; NO LLM). */
-  get(params: GetRulesParams = {}, signal?: AbortSignal): Promise<Page<Rule>> {
+  get(params: GetRulesParams = {}, signal?: AbortSignal): Promise<RuleSnapshot> {
     return this.ctx.transport.getRules(params, signal);
   }
 

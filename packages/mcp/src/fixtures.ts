@@ -47,6 +47,7 @@ import type {
   ReviewFeedback,
   ReviewTurn,
   Rule,
+  RuleSnapshot,
   RuleAuditEntry,
   ProblemField,
   ScanBacklogStatus,
@@ -433,7 +434,7 @@ export class FixtureStore {
       agent_id: agentId,
       agent_key: `${keyPrefix}_${Math.random().toString(36).slice(2)}`,
       key_prefix: keyPrefix,
-      scopes: ["mailbox:read"],
+      scopes: ["signup:verify"],
       address,
       verified: false,
       otp_sent_to: email,
@@ -1683,7 +1684,7 @@ export class FixtureStore {
    * Get the ORDERED active rule set (mock). Applies the §7 precedence ladder and the
    * category-before-general concatenation, mirroring the server (NO LLM).
    */
-  getRules(input: GetRulesInput = {}): Page<Rule> {
+  getRules(input: GetRulesInput = {}): RuleSnapshot {
     const active = [...this.rules.values()].filter((r) => r.status === "active");
     const byRank = (a: Rule, b: Rule): number => {
       const ra = this.ruleRank(a);
@@ -1704,7 +1705,15 @@ export class FixtureStore {
       category = active.filter((r) => r.scope === "category" && r.category_id === input.category_id).sort(byRank);
     }
     const items = [...category, ...general];
-    return { items, total: items.length };
+    return {
+      items,
+      total: items.length,
+      house_style_version: 1,
+      category_rules_version: input.category_id ? 1 : 0,
+      rule_high_water: input.category_id ? 1 : 0,
+      composition_token: input.scope ? undefined : `cmp_fixture_${input.category_id ?? "general"}`,
+      composition_token_expires_at: input.scope ? undefined : new Date(Date.now() + 600_000).toISOString(),
+    };
   }
 
   /** Save / edit a rule (mock) — append-only by supersession (D11). */
