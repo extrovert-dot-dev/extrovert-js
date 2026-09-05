@@ -1,3 +1,4 @@
+import type { LearnReviewRuleRequest, LearnedReviewRule } from "./types.js";
 /**
  * Offline fixture store.
  *
@@ -1344,7 +1345,7 @@ export class FixtureStore {
       created_at: new Date().toISOString(),
     });
     this.reviewTurns.set(input.id, turns);
-    this.enqueueReviewEvent(input.id, "redraft_requested");
+    // Do not wake a composer for its own successful revision.
     return review;
   }
 
@@ -1770,6 +1771,26 @@ export class FixtureStore {
   }
 
   /** Save / edit a rule (mock) - append-only by supersession (D11). */
+  private learnedRules = new Map<string, { fingerprint: string; result: LearnedReviewRule }>();
+  learnReviewRule(id: string, input: LearnReviewRuleRequest): LearnedReviewRule {
+    this.getReview(id);
+    const fingerprint = JSON.stringify({ id, input });
+    const prior = this.learnedRules.get(input.client_id);
+    if (prior) { if (prior.fingerprint !== fingerprint) throw new ConflictError("learning retry identity changed"); return structuredClone(prior.result); }
+    const turn = this.getReviewTurns(id).items.find(t => t.id === input.source_turn_id);
+    if (!turn || turn.actor_kind !== "human" || !turn.actor_id) throw new ForbiddenError("learning requires authenticated human feedback");
+    const rule = this.saveRule({ ...input, scope: input.target === "category" ? "category" : "general", source_review_id: id, source_turn_id: turn.id });
+    rule.rule_layer = input.target === "org_house" ? "org" : "project";
+    if (input.target === "org_house") delete rule.project_id;
+    rule.source_review_id = id;
+    rule.source_turn_id = turn.id;
+    const audit = [...this.ruleAudit.values()].find(entry => entry.entity_id === rule.id)!;
+    audit.after_json = ruleSnapshotJSON(rule);
+    const result: LearnedReviewRule = { rule, source_review_id: id, source_turn_id: turn.id, human_id: turn.actor_id, audit_id: audit.id, propagation: "queued" };
+    this.learnedRules.set(input.client_id, { fingerprint, result: structuredClone(result) });
+    return result;
+  }
+
   saveRule(input: SaveRuleInput): Rule {
     const text = input.rule_text.trim();
     if (!text) throw new IntentRequiredError("rule_text is required");

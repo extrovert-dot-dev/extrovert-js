@@ -68,3 +68,6 @@ export type {
   InboxStatus,
   MessageDirection,
 } from "./types.js";
+
+export type { LearnReviewRuleRequest, LearnedReviewRule } from "./types.js";
+export type { ReviewWorkflow } from "./review-workflow.js";

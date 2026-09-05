@@ -209,6 +209,7 @@ export type {
   RuleSnapshot,
   RuleLayer,
   GetRulesParams,
+  LearnReviewRuleRequest, LearnedReviewRule,
   SaveRuleRequest,
   RuleAuditEntry,
   GetRuleAuditParams,

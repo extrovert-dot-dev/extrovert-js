@@ -49,6 +49,7 @@ import type {
   Rule,
   RuleSnapshot,
   RuleAuditEntry,
+  LearnReviewRuleRequest, LearnedReviewRule,
   SaveRuleRequest,
   PostReviewChatRequest,
   RegisterWebhookRequest,
@@ -751,6 +752,11 @@ export class Categories {
  * rule_/rln_/udo_ ids: nothing keys on a name.
  */
 export class Rules {
+  /** Learn category or organization house rules from verified human review feedback. */
+  learnFromReview(reviewId: string, req: LearnReviewRuleRequest, signal?: AbortSignal): Promise<LearnedReviewRule> {
+    return this.ctx.transport.learnReviewRule(reviewId, req, signal);
+  }
+
   constructor(private readonly ctx: ResourceContext) {}
 
   /** Get the ORDERED active rule set (precedence ladder applied; NO LLM). */
@@ -761,7 +767,7 @@ export class Rules {
   /**
    * Save / edit a rule (append-only by supersession; D11). An agent-plane save is
    * ALWAYS project-layer: the saved rule's `rule_layer` is `project`, bound to the
-   * key's project. Agents cannot author org-layer / house-style (`rule_layer:"org"`)
+   * key's project. For org-layer house rules use learnFromReview with an authenticated human source; this method cannot author (`rule_layer:"org"`)
    * rules in v1: that is a console/admin action.
    */
   save(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule> {

@@ -687,6 +687,7 @@ export interface CategoryPacingState {
 
 /** Drain result for list/wait: un-acked events in FIFO seq order + cursors. */
 export interface ReviewEventsResult {
+  pending_reviews?: number;
   events: ReviewEvent[];
   cursors?: ReviewEventCursor[];
 }
@@ -703,8 +704,9 @@ export interface Rule {
   /**
    * Ownership layer (org/project model). `org` = house-style inherited by every
    * project in the org; `project` = layered on top (the agent-plane default).
-   * Project/per-agent rules outrank broader org rules in the ordered get_rules
-   * ladder. Agent-plane saves are ALWAYS `project`.
+   * Hard house rules take precedence; softer rules allow narrower refinements.
+   * Ordinary agent saves are project-scoped; authenticated reviewer learning can
+   * create org house rules through learn_review_rule.
    */
   rule_layer?: "org" | "project";
   /** The org this rule belongs to. */
@@ -723,6 +725,8 @@ export interface Rule {
   priority: number;
   status: "proposed" | "active" | "superseded" | "retired";
   supersedes_id?: string;
+  source_review_id?: string;
+  source_turn_id?: string;
   author_kind: "agent" | "human";
   created_at: string;
   updated_at: string;
@@ -1389,4 +1393,24 @@ export const RETRYABLE_PROBLEM_CODES: readonly ProblemCode[] = ["stale", "born_s
 /** True when this problem code is worth a bounded retry after re-reading state. */
 export function isRetryableProblemCode(code: string | undefined): boolean {
   return (RETRYABLE_PROBLEM_CODES as readonly string[]).includes(code ?? "");
+}
+
+
+/** Learn writing guidance from an authenticated human turn on your review. */
+export interface LearnReviewRuleRequest {
+  client_id: string;
+  source_turn_id: string;
+  rule_text: string;
+  target: "org_house" | "project_general" | "category";
+  category_id?: string;
+  kind?: "soft" | "hard";
+  supersedes_id?: string;
+}
+export interface LearnedReviewRule {
+  rule: Rule;
+  source_review_id: string;
+  source_turn_id: string;
+  human_id: string;
+  audit_id: string;
+  propagation: "queued";
 }

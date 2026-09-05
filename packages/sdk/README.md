@@ -30,7 +30,7 @@ for a stable release:
 npm install @extrovert.dev/sdk@next
 ```
 
-Pin `@extrovert.dev/sdk@0.1.0-pre.7` when a dogfood test needs a reproducible contract snapshot.
+Pin `@extrovert.dev/sdk@0.1.0-pre.8` when a dogfood test needs a reproducible contract snapshot.
 Requires Node 18+ for global `fetch` and Web Crypto.
 
 ## Build and use from source
@@ -529,7 +529,7 @@ a wire protocol (there is no `/v1/contract` endpoint).
 ```ts
 import { CONTRACT_VERSION, CONTRACT_MANIFEST } from "@extrovert.dev/sdk";
 
-CONTRACT_VERSION;            // "0.1.0-pre.7": provisional, pre-1.0; pin it
+CONTRACT_VERSION;            // "0.1.0-pre.8": provisional, pre-1.0; pin it
 CONTRACT_MANIFEST.stability; // "provisional"
 CONTRACT_MANIFEST.core_shapes; // ["ReviewIntent","ReviewFeedback","DiffJson","Rule","ReviewEvent"]
 ```
@@ -550,7 +550,7 @@ page and the agent skills (`extrovert-send-email`, `extrovert-writing-rules`).
 The Review-Loop shapes are an **open, documented contract: versioned *with* this SDK** (not a wire
 protocol; there is no `/v1/contract` endpoint). Three guarantees:
 
-- **One version, everywhere.** `CONTRACT_VERSION` is **`0.1.0-pre.7`**, reconciled across the SDK package
+- **One version, everywhere.** `CONTRACT_VERSION` is **`0.1.0-pre.8`**, reconciled across the SDK package
   version, the MCP server, and the OpenAPI `info.version`. Pin it; pin `CONTRACT_MANIFEST` for the
   exact shape set you built against.
 - **Named, documented types.** The five canonical shapes: `ReviewIntent`, `ReviewFeedback`,
@@ -581,7 +581,7 @@ EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
 
 ## Status
 
-> **Note.** This source SDK tracks the `/v1` contract at `CONTRACT_VERSION` `0.1.0-pre.7`: a
+> **Note.** This source SDK tracks the `/v1` contract at `CONTRACT_VERSION` `0.1.0-pre.8`: a
 > deliberate **prerelease**, pre-1.0, expect additive change. The offline `mock` transport models the
 > live server closely enough to reproduce a 422 `intent_required` and a queued review, so build and
 > test against it before you have a key. Install from the `next` tag until a stable release is cut.

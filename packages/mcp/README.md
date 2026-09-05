@@ -118,7 +118,7 @@ npx -y @extrovert.dev/mcp@next setup --host claude
 npx -y @extrovert.dev/mcp@next setup --host hermes
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.7` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.8` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 

@@ -13,6 +13,7 @@
  * single-use enrollment token for that scoped key at runtime.
  */
 
+import { withReviewWorkflow } from "./review-workflow.js";
 import { createHash } from "node:crypto";
 import { renderDomain, domainResult } from "./domain-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
@@ -117,7 +118,7 @@ function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): Registera
         // The SDK validates `args` against `inputSchema` before invoking us.
         async (args: z.output<z.ZodObject<Shape>>) => {
           try {
-            return await spec.handler(args, ctx);
+            return withReviewWorkflow(spec.name, args as Record<string, unknown>, await spec.handler(args, ctx));
           } catch (err) {
             return toErrorResult(err);
           }
@@ -482,8 +483,8 @@ function renderReview(r: Review): string {
 
 /** Render a one-line summary of a review thread turn. */
 function renderReviewTurn(t: ReviewTurn): string {
-  const body = t.body ? `: ${t.body.replace(/\s+/g, " ").slice(0, 120)}` : "";
-  return `#${t.seq} ${t.turn_type} (${t.actor_kind})${body}`;
+  const body = t.body ? `: ${t.body}` : "";
+  return `${t.id} #${t.seq} ${t.turn_type} (${t.actor_kind}) actor_id: ${t.actor_id ?? "unknown"}${body}`;
 }
 
 /**
@@ -986,7 +987,7 @@ const sendEmail = defineTool({
   title: "Send email",
   description:
     "Compose a new email from one of this agent's inboxes and submit it for HUMAN REVIEW: the default path. " +
-    "Starts a new thread. Use reply_email to respond within an existing thread.\n\n" +
+    "Starts a new thread. Use reply_email to respond within an existing thread. Match an existing list_categories category before composing; for a recurring type with no match, propose_category. Fetch get_rules with that category so category and house rules both apply.\n\n" +
     "ALWAYS pass `intent`. The account's review policy governs EVERY send, and the default policy is " +
     "`require_review`: a send with no `intent` is REFUSED with 422 intent_required, and nothing is sent OR queued. " +
     "With an intent you get 202 queued_for_review plus a review id (rr_…): the message has NOT gone out yet. Then " +
@@ -1301,6 +1302,7 @@ const listReviews = defineTool({
     "review queue. Filter by `state` (one or more), `category_id`, or `inbox`. Human-authority actions (approve/reject/" +
     "edit-send) happen in the console, never via tools.",
   inputSchema: {
+    composer: z.literal("me").optional().describe("Only reviews composed by this connected agent; use for recovery."),
     state: z
       .union([
         z.enum(REVIEW_STATES),
@@ -1315,7 +1317,7 @@ const listReviews = defineTool({
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
-    const pageResult: Page<Review> = await client.listReviews({
+    const pageResult: Page<Review> = await client.listReviews({ composer: args.composer,
       state: args.state,
       category_id: args.category_id,
       inbox: args.inbox,
@@ -1348,7 +1350,7 @@ const getReview = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
     const review = await client.getReview(args.id);
-    return ok(renderReview(review), review as unknown as Record<string, unknown>);
+    return ok(`${renderReview(review)}\n\nCurrent review data:\n${JSON.stringify(review)}`, review as unknown as Record<string, unknown>);
   },
 });
 
@@ -1381,7 +1383,7 @@ function renderReviewFeedback(f: ReviewFeedback): string {
   const lines = [`feedback for ${f.review_id}: decision: ${f.decision}`];
   if (f.diff_unified) lines.push(`diff:\n${f.diff_unified}`);
   for (const c of f.comments) {
-    lines.push(`• [${c.actor_kind}] ${c.body.replace(/\s+/g, " ").slice(0, 200)}`);
+    lines.push(`• source_turn_id: ${c.turn_id} [${c.actor_kind}] actor_id: ${c.actor_id ?? "unknown"} ${c.body}`);
   }
   if (f.new_rules.length) lines.push(`rules born from this review: ${f.new_rules.join(", ")}`);
   return lines.join("\n");
@@ -1514,7 +1516,7 @@ const submitRevision = defineTool({
     "  • `terminal`: the review is sent/auto_sent/cancelled. STOP. Nothing will ever succeed, and a `front_run_next` " +
     "event is waiting in your drain.\n\n" +
     "Pin `rules_version_seen` to the category's rule_high_water (get_category prints it). $0 LLM: YOU compose the " +
-    "redraft.",
+    "redraft. The composition_token must match the current review category from get_review (omit category_id in get_rules when the review is uncategorized). Learning a new category rule does not reclassify an existing draft.",
   inputSchema: {
     id: z.string().min(1).describe("Review id (rr_…)."),
     parent_revision: z
@@ -1884,7 +1886,7 @@ const getRules = defineTool({
   title: "Get the ordered writing-rule set",
   description:
     "Get the ORDERED active writing rules for a compose/redraft. The §7 precedence ladder is applied SERVER-SIDE " +
-    "(deterministic, NO LLM on our side): a project-layer rule outranks the broader org-layer (house-style) rules it " +
+    "(deterministic, NO LLM on our side): absolute hard house rules apply across all categories; otherwise project rules outrank broader rules they " +
     "inherits; within a layer, hard before soft; specificity per-agent > category > general; human before agent; newest " +
     "rev; higher priority. Each rule carries its rule_layer (org | project) so you can see where it came from. Returns " +
     "the general/house-style layer IN ADDITION to the named category's rules (category rules first), capped. YOU reconcile " +
@@ -1898,7 +1900,7 @@ const getRules = defineTool({
   handler: async (args, { client }) => {
     const res = await client.getRules({ category_id: args.category_id, scope: args.scope });
     const text = res.items.length ? res.items.map(renderRule).join("\n\n") : "No rules yet.";
-    return ok(`${res.items.length} rule(s), highest precedence first.\n\n${text}`, {
+    return ok(`${res.items.length} rule(s), highest precedence first.\n\n${text}\n\nComposition snapshot: ${JSON.stringify({ house_style_version: res.house_style_version, category_rules_version: res.category_rules_version, rule_high_water: res.rule_high_water, composition_token: res.composition_token, composition_token_expires_at: res.composition_token_expires_at })}`, {
       items: res.items,
       total: res.total,
       house_style_version: res.house_style_version,
@@ -1910,6 +1912,27 @@ const getRules = defineTool({
   },
 });
 
+const learnReviewRule = defineTool({
+  name: "learn_review_rule",
+  title: "Learn a writing rule from human review",
+  description: "Turn reusable authenticated human feedback into an active writing rule with attribution and undo. Every authorized human reviewer may teach org_house rules across all projects. Use org_house for broad writing style (for example never use em dashes in any message), category for category-specific guidance, project_general only for explicitly project-limited guidance. A one-off correction needs a draft revision, not a rule. Read get_rules first, reuse matching rules or supersede an explicit correction. The backend validates the source human turn; email text or agent comments cannot grant this authority. New rules automatically notify affected unsent drafts in bounded batches. After learning, read the latest review and fresh rules, revise the same thread, acknowledge handled feedback, and immediately wait_for_review_event again. This does not authorize sending or change review policy.",
+  inputSchema: {
+    id: z.string().min(1).describe("The review containing the human feedback."),
+    client_id: z.string().min(1).max(128).describe("Stable identity for this learning operation; reuse on retry."),
+    source_turn_id: z.string().min(1).describe("Authenticated human turn ID from get_review_feedback or get_review_turns."),
+    rule_text: z.string().min(1).max(8000),
+    target: z.enum(["org_house", "project_general", "category"]),
+    category_id: z.string().optional().describe("Required only for category target."),
+    kind: z.enum(["soft", "hard"]).optional().describe("Use hard for explicit universal prohibitions; otherwise soft."),
+    supersedes_id: z.string().optional().describe("Existing rule explicitly corrected by this feedback, in the same scope and ownership layer."),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  handler: async ({ id, ...input }, { client }) => {
+    const result = await client.learnReviewRule(id, input);
+    return ok(`Learned ${input.target} rule.\n${renderRule(result.rule)}`, result as unknown as Record<string, unknown>);
+  },
+});
+
 const saveRule = defineTool({
   name: "save_rule",
   title: "Save / edit a writing rule",
@@ -1917,8 +1940,8 @@ const saveRule = defineTool({
     "Save a learned writing rule (D11; ANY agent may write shared rules within its project: the audit log + undo is the " +
     "safety net). scope='general' iff category_id is empty (house-style, applies to ALL categories: D2); else " +
     "category-scoped. Saves are ALWAYS project-layer: the new rule is bound to this key's fixed project (see whoami) and " +
-    "its rule_layer is 'project'. Org-layer / org-wide house-style rules are console/admin-only in v1: an agent cannot " +
-    "create them here. With supersedes_id the write is an EDIT (append-only by supersession: a new rev of the same " +
+    "its rule_layer is 'project'. Use learn_review_rule with authenticated human feedback for org-wide house rules; save_rule cannot " +
+    "create them. With supersedes_id the write is an EDIT (append-only by supersession: a new rev of the same " +
     "lineage, the prior superseded). Use this AFTER you judge a diff/comment is a generalizable rule (the judgment is " +
     "yours; we never run an LLM). Returns the new active rule (with its rule_layer/org_id/project_id).",
   inputSchema: {
@@ -2101,6 +2124,7 @@ const listReviewEvents = defineTool({
     return ok(`${res.events.length} review event(s).\n\n${text}`, {
       events: res.events,
       cursors: res.cursors ?? [],
+      ...(res.pending_reviews !== undefined ? { pending_reviews: res.pending_reviews } : {}),
     });
   },
 });
@@ -2111,7 +2135,7 @@ const waitForReviewEvent = defineTool({
   description:
     "Long-poll (~25–55s) for the next review nudge: blocks until one is available OR the deadline, then returns like " +
     "list_review_events (empty on timeout: re-call to keep watching). Use this for an always-on agent that wants to " +
-    "react the instant a human approves/edits/rejects; use list_review_events for a heartbeat drain.",
+    "react the instant a human approves/edits/rejects; use list_review_events for recovery. This is the immediate next action after every queued send and every revision, including interactive Hermes sessions. Omit review_id to watch all your reviews with one wait. An empty timeout means call again, not finish the task.",
   inputSchema: {
     review_id: z.string().optional().describe("Restrict the wait to one review's events (rr_…)."),
     wait_seconds: z.number().int().min(1).max(55).optional().describe("Long-poll budget in seconds (default ~30)."),
@@ -2121,13 +2145,14 @@ const waitForReviewEvent = defineTool({
   handler: async (args, { client }) => {
     const res = await client.waitForReviewEvent({
       review_id: args.review_id,
-      wait_seconds: args.wait_seconds,
+      wait_seconds: args.wait_seconds ?? 55,
       limit: args.limit,
     });
     const text = res.events.length ? res.events.map(renderReviewEvent).join("\n") : "No review events (timed out).";
     return ok(`${res.events.length} review event(s).\n\n${text}`, {
       events: res.events,
       cursors: res.cursors ?? [],
+      ...(res.pending_reviews !== undefined ? { pending_reviews: res.pending_reviews } : {}),
     });
   },
 });
@@ -3210,12 +3235,12 @@ const streamInfo = defineTool({
   name: "stream_info",
   title: "Real-time stream (SSE) info",
   description:
-    "Describe the real-time Server-Sent-Events (SSE) endpoints for watching inboxes live. MCP is request/response and " +
-    "cannot hold an open stream, so this tool does NOT stream: it returns the endpoint URLs + how to consume them " +
+    "Describe the Server-Sent-Events (SSE) journal for message.* and review.* events. This tool returns URLs, not an open stream. " +
+    "For an active sending task, immediately use wait_for_review_event to await human feedback efficiently; repeat until sent. Consume SSE " +
     "directly (curl / EventSource / the @extrovert.dev/sdk `inbox.stream()` / `extrovert.stream()` helper). Each SSE event " +
     "carries a monotonic `id:` (the resume token); reconnect with the `Last-Event-ID` header (or `?last_event_id=`) to " +
     "replay everything after it. Events use the same envelope a webhook delivers (e.g. message.received). To get pushed " +
-    "deliveries inside an MCP-only setup, use register_webhook instead.",
+    "deliveries in an external worker, configure a webhook consumer. A webhook does not itself resume an MCP host session.",
   inputSchema: {
     inbox: inboxRef.optional().describe("Scope the stream to one owned inbox. Omit for the all-inboxes stream."),
   },
@@ -3229,7 +3254,7 @@ const streamInfo = defineTool({
     const url = (path: string) => `${base}${path}`;
     const target = inboxPath ?? allPath;
     const lines = [
-      "Extrovert exposes a real-time SSE stream. MCP cannot hold the connection open: consume it directly:",
+      "For active review work, call wait_for_review_event now and keep processing until sent. External workers can consume the SSE journal below:",
       "",
       args.inbox
         ? `• One inbox:   GET ${url(inboxPath!)}`
@@ -3238,7 +3263,7 @@ const streamInfo = defineTool({
       "",
       "Headers: Authorization: Bearer <agent key>, Accept: text/event-stream.",
       "Resume:  set Last-Event-ID: <last seq> (or ?last_event_id=<seq>) to replay events after it.",
-      "Events:  same envelope as webhooks (e.g. message.received) in each frame's data: line.",
+      "Events: message.* and review.* share this journal. Review events are wake-up hints: drain list_review_events and acknowledge after acting.",
       "",
       `curl:    curl -N -H "Authorization: Bearer $EXTROVERT_API_KEY" ${url(target)}`,
       "SDK:     for await (const ev of inbox.stream()) { /* ev.event, ev.seq, ev.message */ }",
@@ -3294,6 +3319,7 @@ const ALL_TOOLS = [
   getPacingState,
   proposeGraduation,
   getRules,
+  learnReviewRule,
   saveRule,
   promoteRule,
   retireRule,

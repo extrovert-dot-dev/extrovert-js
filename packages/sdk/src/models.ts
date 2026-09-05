@@ -835,6 +835,7 @@ export interface ReviewTurn {
 
 /** Filters for listing review requests (spec §5.2). */
 export interface ListReviewsParams {
+  composer?: "me";
   state?: ReviewState | ReviewState[];
   category_id?: string;
   inbox?: string;
@@ -981,6 +982,7 @@ export interface ReviewEventCursor {
 
 /** Drain result for list/wait: un-acked events in FIFO seq order + cursors. */
 export interface ReviewEventsResult {
+  pending_reviews?: number;
   events: ReviewEvent[];
   cursors?: ReviewEventCursor[];
 }
@@ -1299,6 +1301,8 @@ export interface Rule {
   author_kind: "agent" | "human";
   created_at: IsoTimestamp;
   updated_at: IsoTimestamp;
+  source_review_id?: string;
+  source_turn_id?: string;
 }
 
 /** Filter for the ordered get_rules read (spec §5.4; §7). */
@@ -2050,4 +2054,24 @@ export interface WhoAmI {
   agent_id: string;
   key_id: string;
   scopes: Scope[];
+}
+
+
+/** Learn writing guidance from an authenticated human turn on your review. */
+export interface LearnReviewRuleRequest {
+  client_id: string;
+  source_turn_id: string;
+  rule_text: string;
+  target: "org_house" | "project_general" | "category";
+  category_id?: string;
+  kind?: "soft" | "hard";
+  supersedes_id?: string;
+}
+export interface LearnedReviewRule {
+  rule: Rule;
+  source_review_id: string;
+  source_turn_id: string;
+  human_id: string;
+  audit_id: string;
+  propagation: "queued";
 }

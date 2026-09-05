@@ -58,6 +58,7 @@ import type {
   Rule,
   RuleSnapshot,
   RuleAuditEntry,
+  LearnReviewRuleRequest, LearnedReviewRule,
   SaveRuleRequest,
   ListThreadsParams,
   MarkReadRequest,
@@ -275,6 +276,7 @@ export interface Transport {
   // agent may write/edit/promote/retire/undo (the cross-agent exception); get_rules
   // returns the ORDERED list with the §7 ladder applied server-side (NO LLM).
   getRules(params: GetRulesParams, signal?: AbortSignal): Promise<RuleSnapshot>;
+  learnReviewRule(reviewId: string, req: LearnReviewRuleRequest, signal?: AbortSignal): Promise<LearnedReviewRule>;
   saveRule(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule>;
   promoteRule(ruleId: string, toScope: "general" | "category", signal?: AbortSignal): Promise<Rule>;
   retireRule(ruleId: string, signal?: AbortSignal): Promise<Rule>;
@@ -914,6 +916,7 @@ export class HttpTransport implements Transport {
       state: Array.isArray(params.state) ? params.state.join(",") : params.state,
       category_id: params.category_id,
       inbox: params.inbox,
+      composer: params.composer,
       limit: params.limit,
       page: params.page,
     };
@@ -1012,10 +1015,12 @@ export class HttpTransport implements Transport {
   }
 
   waitForReviewEvent(params: WaitForReviewEventParams, signal?: AbortSignal): Promise<ReviewEventsResult> {
+    const waitSeconds = Math.min(55, Math.max(1, params.wait_seconds ?? 55));
     return this.call({
       method: "GET",
       path: "/v1/reviews/events/wait",
-      query: { review_id: params.review_id, limit: params.limit, wait_seconds: params.wait_seconds },
+      query: { review_id: params.review_id, limit: params.limit, wait_seconds: waitSeconds },
+      timeoutMs: (waitSeconds + 10) * 1000,
       signal,
     });
   }
@@ -1096,6 +1101,9 @@ export class HttpTransport implements Transport {
     });
   }
 
+  learnReviewRule(reviewId: string, req: LearnReviewRuleRequest, signal?: AbortSignal): Promise<LearnedReviewRule> {
+    return this.call({method: "POST", path: `/v1/reviews/${encodeURIComponent(reviewId)}/learned-rules`, body: req, signal});
+  }
   saveRule(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule> {
     return this.call({
       method: "PUT",
@@ -1537,6 +1545,9 @@ export class MockTransport implements Transport {
   }
   async getRules(params: GetRulesParams): Promise<RuleSnapshot> {
     return this.backend.getRules(params);
+  }
+  async learnReviewRule(reviewId: string, req: LearnReviewRuleRequest): Promise<LearnedReviewRule> {
+    return this.backend.learnReviewRule(reviewId, req);
   }
   async saveRule(req: SaveRuleRequest): Promise<Rule> {
     return this.backend.saveRule(req);

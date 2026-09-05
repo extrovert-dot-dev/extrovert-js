@@ -20,7 +20,7 @@
  *
  * ## Provisional, pre-1.0 (0.x)
  *
- * {@link CONTRACT_VERSION} is **`0.1.0-pre.7`** - a deliberately **provisional**, pre-1.0
+ * {@link CONTRACT_VERSION} is **`0.1.0-pre.8`** - a deliberately **provisional**, pre-1.0
  * contract. It is open and documented, but it MAY still evolve before 1.0: there
  * are no external users yet, and the **D20 shared-pool auto-send governor** is a
  * hard prerequisite before onboarding external users. Pin the version; expect
@@ -154,12 +154,12 @@ export type {
 /**
  * The published version of the Extrovert Review-Loop open contract (D14).
  *
- * **`0.1.0-pre.7` - PROVISIONAL, pre-1.0.** Versioned *with the SDK* (this package's
+ * **`0.1.0-pre.8` - PROVISIONAL, pre-1.0.** Versioned *with the SDK* (this package's
  * `package.json` version) and aligned to the openapi `info.version`. Open and
  * documented, but MAY still evolve before 1.0 (no external users yet; the D20
  * shared-pool governor is required before external users). Pin it.
  */
-export const CONTRACT_VERSION = "0.1.0-pre.7" as const;
+export const CONTRACT_VERSION = "0.1.0-pre.8" as const;
 
 /** The stability posture of a published contract version. */
 export type ContractStability = "provisional" | "stable";
@@ -233,6 +233,8 @@ export const CONTRACT_MANIFEST: ContractManifest = {
     // realtime (M3)
     "ReviewEventReason",
     "ReviewEventsResult",
+    "LearnReviewRuleRequest",
+    "LearnedReviewRule",
     "ReviewEventCursor",
     // chat / revision / restamp (M5/M7)
     "PostReviewChatRequest",
@@ -275,3 +277,5 @@ export const CONTRACT_MANIFEST: ContractManifest = {
   // governance remains independently installable and part of this contract.
   skills: ["extrovert-send-email", "extrovert-writing-rules"],
 } as const;
+
+export type { LearnReviewRuleRequest, LearnedReviewRule } from "./models.js";

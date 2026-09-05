@@ -14,6 +14,7 @@ import type { ExtrovertConfig } from "./config.js";
 import { FixtureStore, NotFoundError } from "./fixtures.js";
 import { keyTierFromRawKey, listEnvelopeToPage } from "./types.js";
 import type {
+  LearnReviewRuleRequest, LearnedReviewRule,
   Attachment,
   AttachmentDownload,
   AttachmentInput,
@@ -329,6 +330,7 @@ export interface SubmitReplyForReviewInput {
 
 /** Filters for listing review requests (Review Loop, spec §5.2). */
 export interface ListReviewsInput {
+  composer?: "me";
   state?: ReviewState | ReviewState[];
   category_id?: string;
   inbox?: string;
@@ -995,6 +997,7 @@ export class ExtrovertClient {
     if (input.state !== undefined) {
       query.state = Array.isArray(input.state) ? input.state.join(",") : input.state;
     }
+    if ("composer" in input && input.composer) query.composer = input.composer;
     if (input.category_id !== undefined) query.category_id = input.category_id;
     if (input.inbox !== undefined) query.inbox = input.inbox;
     if (input.limit !== undefined) query.limit = input.limit;
@@ -1161,7 +1164,9 @@ export class ExtrovertClient {
     if (input.review_id !== undefined) query.review_id = input.review_id;
     if (input.limit !== undefined) query.limit = input.limit;
     if (input.wait_seconds !== undefined) query.wait_seconds = input.wait_seconds;
-    return this.get<ReviewEventsResult>("/v1/reviews/events/wait", query);
+    const waitSeconds = Math.min(55, Math.max(1, input.wait_seconds ?? 55));
+    query.wait_seconds = waitSeconds;
+    return this.request<ReviewEventsResult>("GET", "/v1/reviews/events/wait", undefined, query, (waitSeconds + 10) * 1000);
   }
 
   /**
@@ -1302,6 +1307,11 @@ export class ExtrovertClient {
    * scope='general' iff category_id is empty (house-style, D2). With supersedes_id
    * the write is an EDIT (rev+1, same lineage). Writes a create/supersede audit row.
    */
+  async learnReviewRule(id: string, input: LearnReviewRuleRequest): Promise<LearnedReviewRule> {
+    if (this.store) return this.store.learnReviewRule(id, input);
+    return this.post<LearnedReviewRule>(`/v1/reviews/${encodeURIComponent(id)}/learned-rules`, input);
+  }
+
   async saveRule(input: SaveRuleInput): Promise<Rule> {
     if (this.store) return this.store.saveRule(input);
     const body: Record<string, unknown> = { rule_text: input.rule_text };

@@ -141,6 +141,8 @@ function setupCommand(args: string[], context: CliContext): number {
   if (transport !== "stdio" && transport !== "hosted") throw new CliUsageError("--transport must be stdio or hosted");
   if (host === "hermes") {
     const result = setupHermes(context.env, context.store.paths.directory, transport);
+    context.stdout.write(`Hermes configuration: ${result.path}\n`);
+    if (result.warning) context.stdout.write(`${result.warning}\n`);
     if (result.existed) {
       context.stdout.write("Extrovert already has an entry in this Hermes profile. It was not changed. Start or reload the session and call whoami; configuration alone does not prove the connection works.\n");
     } else {

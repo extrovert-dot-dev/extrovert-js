@@ -57,6 +57,7 @@ import type {
   Rule,
   RuleSnapshot,
   RuleAuditEntry,
+  LearnReviewRuleRequest, LearnedReviewRule,
   SaveRuleRequest,
   Message,
   Page,
@@ -2035,6 +2036,26 @@ export class MockBackend {
   }
 
   /** Save / edit a rule (mock) - append-only by supersession (D11). */
+  private learnedRules = new Map<string, {fingerprint: string; result: LearnedReviewRule}>();
+  learnReviewRule(reviewId: string, req: LearnReviewRuleRequest): LearnedReviewRule {
+    const fingerprint = JSON.stringify({reviewId, req});
+    const prior = this.learnedRules.get(req.client_id);
+    if (prior) { if (prior.fingerprint !== fingerprint) throw new ValidationError({status:409,code:"conflict",message:"learning retry identity changed"}); return structuredClone(prior.result); }
+    const turn = (this.state.reviewTurns.get(reviewId) ?? []).find(t => t.id === req.source_turn_id);
+    if (!turn || turn.actor_kind !== "human" || !turn.actor_id) throw new ValidationError({status:403,code:"forbidden_scope",message:"learning requires authenticated human feedback"});
+    const rule = this.saveRule({...req, scope:req.target === "category" ? "category" : "general", source_review_id:reviewId,source_turn_id:turn.id});
+    rule.source_turn_id = turn.id;
+    rule.rule_layer = req.target === "org_house" ? "org" : "project";
+    if (req.target === "org_house") delete rule.project_id;
+    rule.source_review_id = reviewId;
+    rule.source_turn_id = turn.id;
+    const audit = [...this.state.ruleAudit.values()].find(entry => entry.entity_id === rule.id)!;
+    audit.after_json = ruleSnapshotJSON(rule);
+    const result: LearnedReviewRule = {rule, source_review_id:reviewId, source_turn_id:turn.id, human_id:turn.actor_id, audit_id:audit.id, propagation:"queued"};
+    this.learnedRules.set(req.client_id,{fingerprint,result:structuredClone(result)});
+    return result;
+  }
+
   saveRule(req: SaveRuleRequest): Rule {
     const text = req.rule_text.trim();
     if (!text) {
