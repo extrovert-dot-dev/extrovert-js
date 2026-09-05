@@ -1,3 +1,4 @@
+import type { ListCategoriesParams } from "./types.js";
 import type { LearnReviewRuleRequest, LearnedReviewRule } from "./types.js";
 /**
  * Offline fixture store.
@@ -1515,30 +1516,47 @@ export class FixtureStore {
    * (merged_into set). `match` is a pure lexical filter (every token must appear in
    * name+description) - NO LLM, mirroring the server.
    */
-  listCategories(match?: string): Page<Category> {
+  private categoryUsage(category: Category): Category {
+    const now = Date.now();
+    const rows = [...this.reviews.values()].filter(r => r.category_id === category.id && Date.parse(r.created_at) <= now);
+    const count = (days: number) => rows.filter(r => Date.parse(r.created_at) >= now - days * 86_400_000).length;
+    return { ...category, message_count_7d: count(7), message_count_30d: count(30), message_count_90d: count(90),
+      last_used_at: rows.map(r => r.created_at).sort().at(-1),
+      pending_review_count: rows.filter(r => ["needs_review","in_review","chatting","rejected","stale","approved"].includes(r.state)).length };
+  }
+
+  listCategories(input?: string | ListCategoriesParams): Page<Category> {
+    const params = typeof input === "string" ? { match: input } : input ?? {};
     let items = [...this.categories.values()]
       .filter((c) => !c.merged_into)
+      .map(c => this.categoryUsage(c))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
-    const tokens = (match ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const tokens = (params.match ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (tokens.length) {
       items = items.filter((c) => {
         const hay = `${c.name} ${c.description}`.toLowerCase();
         return tokens.every((t) => hay.includes(t));
       });
     }
-    return { items, total: items.length };
+    const field = ({ messages_7d: "message_count_7d", messages_90d: "message_count_90d", pending_reviews: "pending_review_count" } as const)[params.sort as "messages_7d"] ?? "message_count_30d";
+    items.sort((a, b) => (params.sort === "name" ? a.name.toLowerCase().localeCompare(b.name.toLowerCase()) : params.sort === "last_used" ? 0 : (b[field] ?? 0) - (a[field] ?? 0)) || (b.last_used_at ?? "").localeCompare(a.last_used_at ?? "") || a.id.localeCompare(b.id));
+    const offset = params.page ? JSON.parse(Buffer.from(params.page, "base64url").toString()).o : 0;
+    const total = items.length, limit = params.limit ?? 100;
+    const next = offset + limit < total ? Buffer.from(JSON.stringify({ o: offset + limit, v: 1 })).toString("base64url") : undefined;
+    return { items: items.slice(offset, offset + limit), total, next_cursor: next };
   }
 
   /** Get one category (mock); throws NotFound on an unknown id. */
   getCategory(id: string): Category {
     const cat = this.categories.get(id);
     if (!cat) throw new NotFoundError(`Category not found: ${id}`);
-    return cat;
+    return this.categoryUsage(cat);
   }
 
   /** Propose a category (mock): stands immediately, author_kind=agent. */
   proposeCategory(input: ProposeCategoryInput): Category {
     const name = input.name.trim();
+    if ([...this.categories.values()].some(c => !c.merged_into && c.name.toLowerCase() === name.toLowerCase())) throw new ExtrovertApiError("Category name already exists; browse and reuse it.", 409, "conflict");
     if (!name) throw new IntentRequiredError("name is required");
     const now = new Date().toISOString();
     const cat: Category = {

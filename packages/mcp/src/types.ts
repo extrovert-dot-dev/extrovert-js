@@ -558,6 +558,13 @@ export interface ReviewEventCursor {
  * agent-attributed: the deliberate cross-agent-404 exception. Opaque ids only.
  */
 export interface Category {
+  /** Logical accepted messages in this authorized project, counted by creation time. */
+  message_count_7d?: number;
+  message_count_30d?: number;
+  message_count_90d?: number;
+  last_used_at?: string;
+  pending_review_count?: number;
+
   id: string;
   name: string;
   description: string;
@@ -1413,4 +1420,10 @@ export interface LearnedReviewRule {
   human_id: string;
   audit_id: string;
   propagation: "queued";
+}
+
+export interface ListCategoriesParams { match?: string;
+  sort?: "popular" | "messages_7d" | "messages_90d" | "last_used" | "pending_reviews" | "name";
+  limit?: number;
+  page?: string;
 }

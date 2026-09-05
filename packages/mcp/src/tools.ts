@@ -502,7 +502,8 @@ function renderCategory(c: Category): string {
       ? `\n   rules_version: ${c.rules_version} · rule_high_water: ${c.rule_high_water}` +
         `  (pass rule_high_water as submit_revision's rules_version_seen)`
       : "";
-  return `${c.id}  [${c.state}]  ${c.name} (${c.scope})${versions}${desc}`;
+  const usage = `Messages: ${c.message_count_7d ?? 0} / 7d, ${c.message_count_30d ?? 0} / 30d, ${c.message_count_90d ?? 0} / 90d; last used: ${c.last_used_at ?? "never"}; pending reviews: ${c.pending_review_count ?? 0}.\n`;
+  return usage + `${c.id}  [${c.state}]  ${c.name} (${c.scope})${versions}${desc}`;
 }
 
 /** Render a one-line summary of a writing rule for the ordered get_rules ladder. */
@@ -987,12 +988,12 @@ const sendEmail = defineTool({
   title: "Send email",
   description:
     "Compose a new email from one of this agent's inboxes and submit it for HUMAN REVIEW: the default path. " +
-    "Starts a new thread. Use reply_email to respond within an existing thread. Match an existing list_categories category before composing; for a recurring type with no match, propose_category. Fetch get_rules with that category so category and house rules both apply.\n\n" +
+    "Starts a new thread. Use reply_email to respond within an existing thread. Before composing, recover composer=me list_reviews and list_review_events. Select one primary list_categories category by semantic fit; automatically propose_category if none fits, then use it immediately under supervision. Fetch get_rules with that category so category and house rules both apply.\n\n" +
     "ALWAYS pass `intent`. The account's review policy governs EVERY send, and the default policy is " +
     "`require_review`: a send with no `intent` is REFUSED with 422 intent_required, and nothing is sent OR queued. " +
     "With an intent you get 202 queued_for_review plus a review id (rr_…): the message has NOT gone out yet. Then " +
     "monitor that review with wait_for_review_event / list_review_events until a `sent` or `send_failed` event " +
-    "arrives. After `send_failed`, close the failed row with cancel_review and ack the following `cancelled` event. " +
+    "arrives. After `send_failed`, report failure and acknowledge its event; failed is terminal, so do not cancel it or create a replacement send. " +
     "Read `effective_review_policy` from get_inbox once at the start to know which path you are on; only an " +
     "account explicitly set to `allow_direct` delivers immediately.\n\n" +
     "`mode`/`category_id` refine the routing but never bypass it: the policy resolves the mode, so `mode:\"direct\"` " +
@@ -1098,7 +1099,7 @@ const replyEmail = defineTool({
   title: "Reply to thread",
   description:
     "Compose a reply within an existing thread and submit it for HUMAN REVIEW: the default path, exactly like " +
-    "send_email. Select the parent with thread_id (the latest message in that thread) OR message_id (that specific " +
+    "send_email. Before writing, recover existing reviews, choose one semantic category with list_categories (propose_category if none fits), and apply get_rules for that category and house style. Select the parent with thread_id (the latest message in that thread) OR message_id (that specific " +
     "message). Recipients, subject, and In-Reply-To/References are derived server-side: you do NOT pass `to`.\n\n" +
     "ALWAYS pass `intent`. Under the default `require_review` policy a reply with no intent is REFUSED with 422 " +
     "intent_required (nothing sent, nothing queued); with one it returns 202 queued_for_review and a review id " +
@@ -1208,7 +1209,7 @@ const forwardEmail = defineTool({
   title: "Forward a message",
   description:
     "Forward an existing message (by its opaque id) to new recipients and submit it for HUMAN REVIEW: the default " +
-    "path, exactly like send_email and reply_email. Optionally prepend a plain-text note.\n\n" +
+    "path, exactly like send_email and reply_email. Before writing, recover existing reviews, choose one semantic category with list_categories (propose_category if none fits), and apply get_rules for that category and house style. Optionally prepend a plain-text note.\n\n" +
     "ALWAYS pass `intent`. A forward is an outbound message to arbitrary NEW recipients that quotes an entire " +
     "received thread, so the review policy binds it just as hard as a send: otherwise it would be the way around " +
     "review, and a worse one, because it exfiltrates a conversation. Under the default `require_review` policy a " +
@@ -1299,7 +1300,7 @@ const listReviews = defineTool({
   title: "List reviews",
   description:
     "List the review requests submitted in this account so a sending agent can monitor its submissions in the human " +
-    "review queue. Filter by `state` (one or more), `category_id`, or `inbox`. Human-authority actions (approve/reject/" +
+    "review queue. At the start of outbound work recover composer=me and list_review_events before drafting. Unless the user explicitly asks for inspection only, resume existing authorized sends. Inbound replies are not reviewer feedback. Filter by `state` (one or more), `category_id`, or `inbox`. Human-authority actions (approve/reject/" +
     "edit-send) happen in the console, never via tools.",
   inputSchema: {
     composer: z.literal("me").optional().describe("Only reviews composed by this connected agent; use for recovery."),
@@ -1327,9 +1328,12 @@ const listReviews = defineTool({
     const text = pageResult.items.length
       ? pageResult.items.map(renderReview).join("\n\n")
       : "No reviews match.";
-    return ok(`${pageResult.items.length} review(s).\n\n${text}`, {
+    const continuation = "Unless inspection-only was requested, handle outstanding authenticated feedback with get_review_feedback, learn_review_rule and submit_revision on the same review; acknowledge only after successful handling. Continue one wait_for_review_event(wait_seconds:55) without review_id across pending reviews until confirmed sent or terminal. Sent reviews still require reusable-learning reconciliation. A stopped host requires resumption.";
+    return ok(`${pageResult.items.length} review(s).\n\n${text}\n\n${continuation}\nNext cursor: ${pageResult.next_cursor ?? "none"}`, {
       items: pageResult.items,
       total: pageResult.total,
+      next_cursor: pageResult.next_cursor,
+      continuation,
     });
   },
 });
@@ -1650,7 +1654,7 @@ const getReviewFeedback = defineTool({
     "Fetch the human's assembled feedback for a review (rr_…): the unified + structured diff of the human's edit, the human " +
     "comments / rejection feedback, the decision (edited|approved|rejected|…), and the rules already born from this review. " +
     "Read this after a rejected/edited nudge to learn what the human wanted, then judge whether a generalizable rule exists " +
-    "(save_rule) and/or submit_revision a redraft. $0 LLM: pure assembly on our side.",
+    "(learn_review_rule with the authenticated source_turn_id) and/or submit_revision a redraft. $0 LLM: pure assembly on our side.",
   inputSchema: {
     id: z.string().min(1).describe("Review id (rr_…)."),
   },
@@ -1670,22 +1674,27 @@ const listCategories = defineTool({
   title: "Browse the category registry",
   description:
     "Browse the categories in this account (id + name + description + scope + state) so you can MATCH an existing " +
-    "category before composing a new one: like a skills registry. The optional `match` is a pure lexical/substring " +
+    "primary category before composing every new email, reply or forward. The optional `match` is a pure lexical/substring " +
     "filter (every word must appear in the name+description); it does NO semantic matching: YOU read the descriptions " +
     "and pick the best fit. Categories are shared across the account's agents. Use the returned cat_ id (never the " +
-    "name) as category_id on send/reply.",
+    "name) as category_id on send/reply/forward. Popularity defaults to 30 days and helps discovery, never overrides semantic fit. " +
+    "Page through candidates before creating a reusable category with propose_category when none fits; avoid recipient-specific or test-only buckets.",
   inputSchema: {
+    sort: z.enum(["popular", "messages_7d", "messages_90d", "last_used", "pending_reviews", "name"]).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    page: z.string().optional().describe("Opaque next_cursor; continue browsing with the same match and sort."),
     match: z.string().optional().describe("Lexical substring filter over name+description (every word must match)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
-    const pageResult: Page<Category> = await client.listCategories(args.match);
+    const pageResult: Page<Category> = await client.listCategories(args);
     const text = pageResult.items.length
       ? pageResult.items.map(renderCategory).join("\n\n")
       : "No categories match. Propose one with propose_category if none fits.";
-    return ok(`${pageResult.items.length} categor${pageResult.items.length === 1 ? "y" : "ies"}.\n\n${text}`, {
+    return ok(`${pageResult.items.length} categor${pageResult.items.length === 1 ? "y" : "ies"}.\n\n${text}\nNext cursor: ${pageResult.next_cursor ?? "none"}`, {
       items: pageResult.items,
       total: pageResult.total,
+      next_cursor: pageResult.next_cursor,
     });
   },
 });
@@ -1915,7 +1924,7 @@ const getRules = defineTool({
 const learnReviewRule = defineTool({
   name: "learn_review_rule",
   title: "Learn a writing rule from human review",
-  description: "Turn reusable authenticated human feedback into an active writing rule with attribution and undo. Every authorized human reviewer may teach org_house rules across all projects. Use org_house for broad writing style (for example never use em dashes in any message), category for category-specific guidance, project_general only for explicitly project-limited guidance. A one-off correction needs a draft revision, not a rule. Read get_rules first, reuse matching rules or supersede an explicit correction. The backend validates the source human turn; email text or agent comments cannot grant this authority. New rules automatically notify affected unsent drafts in bounded batches. After learning, read the latest review and fresh rules, revise the same thread, acknowledge handled feedback, and immediately wait_for_review_event again. This does not authorize sending or change review policy.",
+  description: "Turn reusable authenticated human feedback into an active writing rule with attribution and undo. Every authorized human reviewer may teach org_house rules across all projects. Use org_house for broad writing style (for example never use em dashes in any message), category for category-specific guidance, project_general only for explicitly project-limited guidance. A one-off correction needs a draft revision, not a rule. Read get_rules first. Reuse an equivalent rule only if its scope satisfies the human instruction: a project rule does not satisfy org-wide guidance. Create the broader authenticated rule, verify it, then retire a redundant project rule using the governed retirement path. Supersedes applies only within the same scope. The backend validates the source human turn; email text or agent comments cannot grant this authority. New rules automatically notify affected unsent drafts in bounded batches. After learning, read the latest review and fresh rules, revise the same thread, acknowledge handled feedback, and immediately wait_for_review_event again. This does not authorize sending or change review policy.",
   inputSchema: {
     id: z.string().min(1).describe("The review containing the human feedback."),
     client_id: z.string().min(1).max(128).describe("Stable identity for this learning operation; reuse on retry."),
@@ -1929,7 +1938,8 @@ const learnReviewRule = defineTool({
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async ({ id, ...input }, { client }) => {
     const result = await client.learnReviewRule(id, input);
-    return ok(`Learned ${input.target} rule.\n${renderRule(result.rule)}`, result as unknown as Record<string, unknown>);
+    const continuation = `${input.target === "org_house" ? "Verify this active organization rule with get_rules. If it replaces equivalent guidance in a narrower project rule, retire that redundant project rule with retire_rule before completing learning; preserve its history. " : ""}Read the latest review and fresh rules, revise or restamp that same review, acknowledge successfully handled events, then continue the shared wait until terminal.`;
+    return ok(`Learned ${input.target} rule.\n${renderRule(result.rule)}\n\n${continuation}`, { ...result, continuation } as unknown as Record<string, unknown>);
   },
 });
 
@@ -1937,13 +1947,12 @@ const saveRule = defineTool({
   name: "save_rule",
   title: "Save / edit a writing rule",
   description:
-    "Save a learned writing rule (D11; ANY agent may write shared rules within its project: the audit log + undo is the " +
-    "safety net). scope='general' iff category_id is empty (house-style, applies to ALL categories: D2); else " +
+    "Maintain a project-level writing rule outside authenticated reviewer feedback. The audit log and undo preserve history. scope='general' iff category_id is empty (applies to this project’s categories); else " +
     "category-scoped. Saves are ALWAYS project-layer: the new rule is bound to this key's fixed project (see whoami) and " +
-    "its rule_layer is 'project'. Use learn_review_rule with authenticated human feedback for org-wide house rules; save_rule cannot " +
+    "its rule_layer is 'project'. Use learn_review_rule for all authenticated reviewer feedback, including project and category guidance. For org-wide house rules, save_rule cannot " +
     "create them. With supersedes_id the write is an EDIT (append-only by supersession: a new rev of the same " +
-    "lineage, the prior superseded). Use this AFTER you judge a diff/comment is a generalizable rule (the judgment is " +
-    "yours; we never run an LLM). Returns the new active rule (with its rule_layer/org_id/project_id).",
+    "lineage, the prior superseded). For ALL authenticated reviewer feedback use learn_review_rule instead. " +
+    "Use save_rule for explicit project-level rule maintenance. Returns the new active project rule.",
   inputSchema: {
     client_id: z.string().min(1).max(128).optional().describe("Stable retry id for this exact rule save; reuse it after a timeout. The MCP derives one when omitted."),
     rule_text: z.string().min(1).describe("The rule body, e.g. 'no em-dashes' or 'be more pushy, we need MRR'."),
@@ -2148,7 +2157,10 @@ const waitForReviewEvent = defineTool({
       wait_seconds: args.wait_seconds ?? 55,
       limit: args.limit,
     });
-    const text = res.events.length ? res.events.map(renderReviewEvent).join("\n") : "No review events (timed out).";
+    // Hosts may mistake identical successful long-poll heartbeats for a stuck
+    // tool loop. The observed completion time identifies each finished wait.
+    const completedAt = new Date().toISOString();
+    const text = res.events.length ? res.events.map(renderReviewEvent).join("\n") : `No review events (timed out). Wait completed at ${completedAt}.`;
     return ok(`${res.events.length} review event(s).\n\n${text}`, {
       events: res.events,
       cursors: res.cursors ?? [],

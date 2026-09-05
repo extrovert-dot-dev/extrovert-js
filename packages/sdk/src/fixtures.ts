@@ -1782,9 +1782,19 @@ export class MockBackend {
    * is a pure lexical filter (every token must appear in name+description) - NO LLM,
    * mirroring the server.
    */
+  private categoryUsage(category: Category): Category {
+    const now = Date.now();
+    const rows = [...this.state.reviews.values()].filter(r => r.category_id === category.id && Date.parse(r.created_at) <= now);
+    const count = (days: number) => rows.filter(r => Date.parse(r.created_at) >= now - days * 86_400_000).length;
+    return { ...category, message_count_7d: count(7), message_count_30d: count(30), message_count_90d: count(90),
+      last_used_at: rows.map(r => r.created_at).sort().slice(-1)[0],
+      pending_review_count: rows.filter(r => ["needs_review","in_review","chatting","rejected","stale","approved"].includes(r.state)).length };
+  }
+
   listCategories(params: ListCategoriesParams = {}): Page<Category> {
     let items = [...this.state.categories.values()]
       .filter((c) => !c.merged_into)
+      .map(c => this.categoryUsage(c))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
     const tokens = (params.match ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (tokens.length) {
@@ -1793,17 +1803,24 @@ export class MockBackend {
         return tokens.every((t) => hay.includes(t));
       });
     }
-    return { items, total: items.length };
+    const field = ({ messages_7d: "message_count_7d", messages_90d: "message_count_90d", pending_reviews: "pending_review_count" } as const)[params.sort as "messages_7d"] ?? "message_count_30d";
+    items.sort((a, b) => (params.sort === "name" ? a.name.toLowerCase().localeCompare(b.name.toLowerCase()) : params.sort === "last_used" ? 0 : (b[field] ?? 0) - (a[field] ?? 0)) || (b.last_used_at ?? "").localeCompare(a.last_used_at ?? "") || a.id.localeCompare(b.id));
+    const offset = params.page ? JSON.parse(Buffer.from(params.page, "base64url").toString()).o : 0;
+    const total = items.length, limit = params.limit ?? 100;
+    const next = offset + limit < total ? Buffer.from(JSON.stringify({ o: offset + limit, v: 1 })).toString("base64url") : undefined;
+    return { items: items.slice(offset, offset + limit), total, next_cursor: next };
   }
 
   /** Get one category (mock), or undefined when not found. */
   getCategory(categoryId: string): Category | undefined {
-    return this.state.categories.get(categoryId);
+    const category = this.state.categories.get(categoryId);
+    return category ? this.categoryUsage(category) : undefined;
   }
 
   /** Propose a category (mock): stands immediately, author_kind=agent (D9). */
   proposeCategory(req: ProposeCategoryRequest): Category {
     const name = req.name.trim();
+    if ([...this.state.categories.values()].some(c => !c.merged_into && c.name.toLowerCase() === name.toLowerCase())) throw new ConflictError({ status: 409, code: "conflict", message: "Category name already exists; browse and reuse it." });
     if (!name) {
       throw new ValidationError({ status: 400, code: "invalid", message: "name is required" });
     }

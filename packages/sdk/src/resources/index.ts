@@ -767,8 +767,8 @@ export class Rules {
   /**
    * Save / edit a rule (append-only by supersession; D11). An agent-plane save is
    * ALWAYS project-layer: the saved rule's `rule_layer` is `project`, bound to the
-   * key's project. For org-layer house rules use learnFromReview with an authenticated human source; this method cannot author (`rule_layer:"org"`)
-   * rules in v1: that is a console/admin action.
+   * key's project. For all authenticated reviewer feedback use learnFromReview at the intended
+   * organization, project, or category scope. This method is project maintenance only.
    */
   save(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule> {
     return this.ctx.transport.saveRule(req, signal);

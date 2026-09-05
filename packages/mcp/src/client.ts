@@ -1,3 +1,4 @@
+import type { ListCategoriesParams } from "./types.js";
 /**
  * Thin, typed Extrovert API client.
  *
@@ -1188,10 +1189,10 @@ export class ExtrovertClient {
    * description + scope + state for fuzzy matching. `match` is a pure lexical filter
    * (NO LLM on our side) - the agent does the semantic match. Customer-scoped.
    */
-  async listCategories(match?: string): Promise<Page<Category>> {
-    if (this.store) return this.store.listCategories(match);
-    const query: Record<string, unknown> = {};
-    if (match !== undefined && match.trim() !== "") query.match = match;
+  async listCategories(input?: string | ListCategoriesParams): Promise<Page<Category>> {
+    const params = typeof input === "string" ? { match: input } : input ?? {};
+    if (this.store) return this.store.listCategories(params);
+    const query: Record<string, unknown> = { ...params };
     return this.get<Page<Category>>("/v1/categories", query);
   }
 

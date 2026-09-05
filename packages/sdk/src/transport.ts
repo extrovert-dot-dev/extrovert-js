@@ -1035,7 +1035,7 @@ export class HttpTransport implements Transport {
   }
 
   listCategories(params: ListCategoriesParams, signal?: AbortSignal): Promise<Page<Category>> {
-    return this.call({ method: "GET", path: "/v1/categories", query: { match: params.match }, signal });
+    return this.call({ method: "GET", path: "/v1/categories", query: { ...params }, signal });
   }
 
   getCategory(categoryId: string, signal?: AbortSignal): Promise<Category> {

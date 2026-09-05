@@ -1002,6 +1002,13 @@ export interface ListReviewEventsParams {
  * agent-attributed: the deliberate cross-agent-404 exception. Opaque ids only.
  */
 export interface Category {
+  /** Logical accepted messages in this authorized project, counted by creation time. */
+  message_count_7d?: number;
+  message_count_30d?: number;
+  message_count_90d?: number;
+  last_used_at?: string;
+  pending_review_count?: number;
+
   id: string;
   name: string;
   description: string;
@@ -1019,6 +1026,10 @@ export interface Category {
 
 /** Browse filter for the category registry (spec §5.5). */
 export interface ListCategoriesParams {
+  sort?: "popular" | "messages_7d" | "messages_90d" | "last_used" | "pending_reviews" | "name";
+  limit?: number;
+  page?: string;
+
   /** Pure lexical substring filter over name+description (every token must match; NO LLM). */
   match?: string;
 }
@@ -1327,8 +1338,8 @@ export interface RuleSnapshot extends Page<Rule> {
  *
  * Layering (org/project): an agent-plane save is ALWAYS project-layer: the saved
  * rule's `rule_layer` is `project`, bound to the calling key's project. There is no
- * settable `rule_layer` here: an agent cannot create org-layer / house-style
- * (`rule_layer="org"`) rules in v1; authoring org rules is a console/admin action.
+ * settable `rule_layer` here: this method cannot create org-layer rules. Use learnFromReview for
+ * authenticated reviewer feedback, including organization house style.
  * (`scope: "general"` still means a house-style rule WITHIN the project layer :
  * `scope` is the category axis, `rule_layer` is the ownership axis.)
  */
