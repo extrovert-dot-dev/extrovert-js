@@ -402,7 +402,7 @@ function renderThread(t: Thread): string {
 
 function renderSendResult(r: SendResult): string {
   const review = r.review_id ? ` · review: ${r.review_id}` : "";
-  return `message_id: ${r.message_id || "(queued)"} · thread: ${r.thread_id}${review}`;
+  return `message_id: ${r.message_id || "(queued)"} · thread: ${r.thread_id}${review}${r.submission_id ? `\nsubmission_id: ${r.submission_id} (get_submission to check transport status)` : ""}`;
 }
 
 /**
@@ -426,7 +426,7 @@ function renderSendOutcome(verb: string, result: SendEmailResult | ReplyEmailRes
   }
   const review = result.review_id ? `\nreview: ${result.review_id}` : "";
   if ("status" in result) {
-    return `${verb} (policy allows direct send).\nmessage_id: ${result.message_id}${review}`;
+    return `${verb} (policy allows direct send).\nmessage_id: ${result.message_id}${review}${result.submission_id ? `\nsubmission_id: ${result.submission_id} (get_submission to check transport status)` : ""}`;
   }
   return `${verb} (policy allows direct send).\n${renderSendResult(result)}`;
 }
@@ -2415,6 +2415,19 @@ const getThread = defineTool({
   },
 });
 
+const getSubmission = defineTool({
+  name: "get_submission",
+  title: "Get submission status",
+  description: "Check an accepted email's per-recipient transport status and saved Sent copy. Use the submission_id returned by send_email/reply_email. accepted means accepted for onward delivery, not arrival in the recipient inbox. waiting_for_parent is retried automatically; unknown needs checking. Do not resend a message to check its status.",
+  inputSchema: { inbox: inboxRef, submission_id: z.string().min(1).describe("Opaque submission_id returned by a send or reply.") },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  handler: async (args, { client }) => {
+    const result = await client.getSubmission(args);
+    const counts = Object.entries(result.transport).filter(([, count]) => count > 0).map(([state, count]) => `${count} ${state}`).join(", ");
+    return ok(`Submission ${result.submission_id}: ${counts || "status pending"}. Sent copy: ${result.sent_copy_status}. This status check does not send mail.`, result as unknown as Record<string, unknown>);
+  },
+});
+
 const deleteMessage = defineTool({
   name: "delete_message",
   title: "Delete a message",
@@ -3348,6 +3361,7 @@ const ALL_TOOLS = [
   listThreads,
   searchThreads,
   getThread,
+  getSubmission,
   deleteMessage,
   deleteThread,
   batchUpdateMessages,

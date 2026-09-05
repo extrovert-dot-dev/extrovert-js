@@ -32,7 +32,7 @@ export { ExtrovertClient, ExtrovertClient as Extrovert, DEFAULT_BASE_URL, MOCK_B
 export type { ExtrovertClientOptions } from "./client.js";
 
 // Resource classes (for advanced typing / DI).
-export { Inboxes, Messages, Threads, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, ReviewEvents, Categories, Rules, Projects, ProjectInboxes, InboxHandle } from "./resources/index.js";
+export { Inboxes, Messages, Threads, Submissions, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, ReviewEvents, Categories, Rules, Projects, ProjectInboxes, InboxHandle } from "./resources/index.js";
 
 // Transport-level types surfaced to callers (attachment download payload).
 export type { AttachmentDownload } from "./transport.js";
@@ -154,6 +154,11 @@ export type {
   ReplyRequest,
   ForwardRequest,
   SendResult,
+  SentCopyStatus,
+  Submission,
+  SubmissionRecipientState,
+  SubmissionTracking,
+  TransportCounts,
   SendOutcome,
   // review loop (HITL)
   ReviewMode,

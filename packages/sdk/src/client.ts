@@ -18,7 +18,7 @@
 import { HttpClient, type HttpClientConfig, type RetryOptions } from "./http.js";
 import { HttpTransport, MockTransport, type Transport } from "./transport.js";
 import { MockBackend } from "./fixtures.js";
-import { Inboxes, Messages, Threads, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, Categories, Rules, Projects, InboxHandle } from "./resources/index.js";
+import { Inboxes, Messages, Threads, Submissions, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, Categories, Rules, Projects, InboxHandle } from "./resources/index.js";
 import type { InboxHandleOptions } from "./resources/inbox-handle.js";
 import { CURRENT_API_VERSION } from "./version.js";
 import { parseKeyTier, type KeyTier } from "./key-tier.js";
@@ -89,6 +89,7 @@ export class ExtrovertClient {
   readonly messages: Messages;
   /** `extrovert.threads` - fetch a conversation thread. */
   readonly threads: Threads;
+  readonly submissions: Submissions;
   /** `extrovert.webhooks` - register HMAC-signed inbound webhooks. */
   readonly webhooks: Webhooks;
   /** `extrovert.contactLists` - per-inbox allow/block lists of addresses/domains. */
@@ -174,6 +175,7 @@ export class ExtrovertClient {
     this.inboxes = new Inboxes(ctx);
     this.messages = new Messages(ctx);
     this.threads = new Threads(ctx);
+    this.submissions = new Submissions(ctx);
     this.webhooks = new Webhooks(ctx);
     this.contactLists = new ContactLists(ctx);
     this.suppressions = new Suppressions(ctx);

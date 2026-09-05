@@ -89,6 +89,7 @@ import type {
   ListSuppressionsParams,
   Thread,
   ThreadDetail,
+  Submission,
   UpdateInboxRequest,
   UpdateWebhookRequest,
   VerifyRequest,
@@ -179,6 +180,8 @@ export interface Transport {
   listThreads(address: string, params: ListThreadsParams, signal?: AbortSignal): Promise<Page<Thread>>;
   searchThreads(address: string, params: SearchMessagesParams, signal?: AbortSignal): Promise<Page<Thread>>;
   getThread(address: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail>;
+  getSubmission(address: string, submissionId: string, signal?: AbortSignal): Promise<Submission>;
+  getSubmissionInProject(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission>;
   deleteThread(address: string, threadId: string, expunge?: boolean, signal?: AbortSignal): Promise<DeleteResult>;
   waitForEmail(
     address: string,
@@ -667,6 +670,13 @@ export class HttpTransport implements Transport {
       path: `/v1/inboxes/${this.encodeAddress(address)}/threads/${encodeURIComponent(threadId)}`,
       signal,
     });
+  }
+
+  getSubmission(address: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
+    return this.call({ method: "GET", path: `/v1/inboxes/${this.encodeAddress(address)}/submissions/${encodeURIComponent(submissionId)}`, signal });
+  }
+  getSubmissionInProject(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
+    return this.call({ method: "GET", path: `/v1/projects/${encodeURIComponent(projectId)}/inboxes/${encodeURIComponent(inboxId)}/submissions/${encodeURIComponent(submissionId)}`, signal });
   }
 
   deleteThread(
@@ -1324,6 +1334,15 @@ export class MockTransport implements Transport {
     } catch {
       throw notFound("thread", threadId);
     }
+  }
+  async getSubmission(address: string, submissionId: string): Promise<Submission> {
+    const result = this.backend.getSubmission(address, submissionId);
+    if (!result) throw notFound("submission", submissionId);
+    return result;
+  }
+  async getSubmissionInProject(projectId: string, inboxId: string, submissionId: string): Promise<Submission> {
+    const inbox = await this.getInboxInProject(projectId, inboxId);
+    return this.getSubmission(inbox.address, submissionId);
   }
   async deleteThread(address: string, threadId: string, expunge?: boolean): Promise<DeleteResult> {
     const res = this.backend.deleteThread(address, threadId, expunge ?? false);

@@ -33,6 +33,7 @@ import type {
   StreamOptions,
   Thread,
   ThreadDetail,
+  Submission,
   UpdateInboxRequest,
   WaitForEmailRequest,
   WaitForEmailResult,
@@ -245,6 +246,11 @@ export class InboxHandle {
   /** Fetch one thread (with its messages) in this inbox by stable id. */
   thread(threadId: string, signal?: AbortSignal): Promise<ThreadDetail> {
     return this.transport.getThread(this.ref, threadId, signal);
+  }
+
+  /** Check an accepted submission without sending it again. */
+  getSubmission(submissionId: string, signal?: AbortSignal): Promise<Submission> {
+    return this.transport.getSubmission(this.ref, submissionId, signal);
   }
 
   /**

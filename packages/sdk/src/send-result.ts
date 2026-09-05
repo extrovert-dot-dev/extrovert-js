@@ -38,7 +38,7 @@ export function isSentImmediately(res: SendOutcome): res is SendResult | SentRes
 }
 
 /**
- * The delivered message id, or `undefined` when the message was queued instead.
+ * A saved message selector, or `undefined` while queued for review / without a Sent copy.
  *
  * `undefined` here is NOT an error - it is the normal answer under
  * `require_review`. Pair it with {@link reviewIdOf} to follow the message to its
@@ -46,7 +46,8 @@ export function isSentImmediately(res: SendOutcome): res is SendResult | SentRes
  */
 export function sentMessageIdOf(res: SendOutcome): string | undefined {
   if (isQueuedForReview(res)) return undefined;
-  return res.kind === "sent" ? res.message.id : res.message_id;
+  const candidate = res.sent_message_id !== undefined ? res.sent_message_id : res.kind === "sent" ? res.message.id : res.message_id;
+  return candidate?.startsWith("msg_") ? candidate : undefined;
 }
 
 /**

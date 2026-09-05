@@ -70,6 +70,7 @@ import type {
   SuppressionPrecheck,
   ListSuppressionsParams,
   ThreadDetail,
+  Submission,
   Thread,
   UpdateCategoryRequest,
   UpdateInboxRequest,
@@ -287,6 +288,14 @@ export class Threads {
     signal?: AbortSignal,
   ): Promise<DeleteResult> {
     return this.ctx.transport.deleteThread(inbox, threadId, expunge, signal);
+  }
+}
+
+/** `extrovert.submissions`: read transport status; never resubmits a message. */
+export class Submissions {
+  constructor(private readonly ctx: ResourceContext) {}
+  get(inbox: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
+    return this.ctx.transport.getSubmission(inbox, submissionId, signal);
   }
 }
 

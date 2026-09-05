@@ -45,6 +45,7 @@ import type {
   SendRequest,
   Thread,
   ThreadDetail,
+  Submission,
   UpdateInboxRequest,
   WaitForEmailRequest,
   WaitForEmailResult,
@@ -263,6 +264,11 @@ export class ProjectInboxes {
     signal?: AbortSignal,
   ): Promise<ThreadDetail> {
     return this.ctx.transport.getThread(this.ref(projectId, inboxId), threadId, signal);
+  }
+
+  /** Read recipient transport and Sent-copy status for an accepted submission. */
+  getSubmission(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
+    return this.ctx.transport.getSubmissionInProject(projectId, inboxId, submissionId, signal);
   }
 
   /**

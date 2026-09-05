@@ -91,6 +91,7 @@ import type {
   StreamEvent,
   Thread,
   ThreadDetail,
+  Submission,
   UpdateInboxRequest,
   UpdateWebhookRequest,
   VerifyRequest,
@@ -1190,6 +1191,8 @@ export class MockBackend {
     }
 
     const sent = params.deliver();
+    const tracking = { submission_id: sent.submission_id, sent_message_id: sent.sent_message_id,
+      sent_copy_status: sent.sent_copy_status, transport: sent.transport };
     this.markReviewAutoSent(review, sent, directAuto ? "agent_direct" : "graduated_auto");
 
     if (!optedIn) {
@@ -1200,12 +1203,12 @@ export class MockBackend {
       // {status, message_id, review_id} with NO thread_id; reply/forward answer
       // {message_id, thread_id, review_id} with no status.
       return kind === "send"
-        ? { message_id: sent.message_id, status: "sent", review_id: review.id }
-        : { message_id: sent.message_id, thread_id: sent.thread_id, review_id: review.id };
+        ? { message_id: sent.message_id, status: "sent", review_id: review.id, ...tracking }
+        : { message_id: sent.message_id, thread_id: sent.thread_id, review_id: review.id, ...tracking };
     }
     const message: { id: string; thread_id?: string } = { id: sent.message_id };
     if (sent.thread_id) message.thread_id = sent.thread_id;
-    return { kind: "sent", message, review: { id: review.id, state: review.state } };
+    return { kind: "sent", message, review: { id: review.id, state: review.state }, ...tracking };
   }
 
   /**
@@ -1285,6 +1288,10 @@ export class MockBackend {
     return {
       message_id: msg.id,
       thread_id: msg.thread_id,
+      submission_id: (msg.submission_id = `sub_${msg.id}`),
+      sent_message_id: (msg.sent_message_id = msg.id),
+      sent_copy_status: (msg.sent_copy_status = "stored"),
+      transport: (msg.transport = { accepted: opts.to.length + (opts.cc?.length ?? 0) }),
       message_id_header: msg.message_id,
       status: "sent",
       created_at: now(),
@@ -1329,7 +1336,11 @@ export class MockBackend {
     }
     const to: string[] = [];
     if (parent) {
-      to.push(parent.from.email);
+      if (parent.from.email.toLowerCase() === address.toLowerCase()) {
+        to.push(...parent.to.map(({ email }) => email).filter((email) => email.toLowerCase() !== address.toLowerCase()));
+      } else {
+        to.push(...(parent.reply_to?.length ? parent.reply_to : [parent.from]).map(({ email }) => email));
+      }
       if (req.reply_all) for (const a of parent.to) if (a.email !== address) to.push(a.email);
     }
     return {
@@ -2734,6 +2745,15 @@ export class MockBackend {
       .sort((a, b) => a.date.localeCompare(b.date));
     if (messages.length === 0) throw new Error(`thread not found: ${threadId}`);
     return { ...this.buildThread(address, threadId, messages), messages };
+  }
+
+  getSubmission(address: string, submissionId: string): Submission | undefined {
+    address = this.addrOf(address);
+    const message = (this.state.messages.get(address) ?? []).find((item) => item.submission_id === submissionId);
+    if (!message) return undefined;
+    return { submission_id: submissionId, inbox: address, sent_message_id: message.id, sent_copy_status: "stored",
+      transport: message.transport ?? {}, recipients: [...message.to, ...(message.cc ?? [])].map(({ email }) => ({ recipient: email, state: "accepted" })),
+      created_at: message.date, updated_at: message.date };
   }
 
   /**

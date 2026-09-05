@@ -67,6 +67,7 @@ import type {
   ListDeliverabilityFindingsInput,
   Thread,
   ThreadDetail,
+  Submission,
   VerifyResult,
   WaitForEmailResult,
   Webhook,
@@ -1483,6 +1484,11 @@ export class ExtrovertClient {
     return this.get<ThreadDetail>(
       `/v1/inboxes/${encodeURIComponent(input.inbox)}/threads/${encodeURIComponent(input.thread_id)}`,
     );
+  }
+
+  async getSubmission(input: { inbox: string; submission_id: string }): Promise<Submission> {
+    if (this.store) return this.store.getSubmission(input.inbox, input.submission_id);
+    return this.get<Submission>(`/v1/inboxes/${encodeURIComponent(input.inbox)}/submissions/${encodeURIComponent(input.submission_id)}`);
   }
 
   /**

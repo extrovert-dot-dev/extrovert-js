@@ -192,7 +192,7 @@ export type MessageDirection = "inbound" | "outbound";
  * owning address; `seen` is the native IMAP \Seen read state (no Gmail-style
  * labels); `folder` is the IMAP mailbox the message lives in.
  */
-export interface Message {
+export interface Message extends SubmissionTracking {
   id: string;
   thread_id: string;
   /** Owning inbox address (e.g. agent7@extrovertmail.com). */
@@ -268,7 +268,27 @@ export interface ThreadDetail extends Thread {
  * message (`get_review` → `closed`); without it the direct path hands back no
  * handle at all. Absent only when talking to a server that predates it.
  */
-export interface SendResult {
+export type SentCopyStatus = "pending" | "stored" | "unavailable";
+export type SubmissionRecipientState = "queued" | "waiting_for_parent" | "transmitting" | "accepted" | "failed" | "dependency_failed" | "unknown";
+export type TransportCounts = Partial<Record<SubmissionRecipientState, number>>;
+export interface SubmissionTracking {
+  submission_id?: string;
+  sent_message_id?: string | null;
+  sent_copy_status?: SentCopyStatus;
+  transport?: TransportCounts;
+}
+export interface Submission {
+  submission_id: string;
+  inbox: string;
+  sent_message_id: string | null;
+  sent_copy_status: SentCopyStatus;
+  transport: TransportCounts;
+  recipients: { recipient: string; state: SubmissionRecipientState }[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SendResult extends SubmissionTracking {
   message_id: string;
   thread_id: string;
   review_id?: string;
@@ -283,7 +303,7 @@ export interface SendResult {
  * intent answers {@link QueuedForReviewResult} instead, and one without an intent
  * is refused with 422 `intent_required`.
  */
-export interface DirectSendResult {
+export interface DirectSendResult extends SubmissionTracking {
   status: "sent";
   message_id: string;
   review_id?: string;
@@ -462,7 +482,7 @@ export type ReviewerAction = "approve" | "edit" | "reject" | "escalate";
  * (reject/escalate, or a reject FORCED to the human by a circuit breaker, with
  * `forced_by_breaker` naming it).
  */
-export interface ReviewerDecisionResult {
+export interface ReviewerDecisionResult extends SubmissionTracking {
   kind: "sent" | "sent_to_human";
   review: Review;
   sent: boolean;
@@ -776,9 +796,9 @@ export interface QueuedForReviewResult {
  * here, on the path that never queued, so an agent that crashed between the
  * request and the response can still ask what became of the message.
  */
-export interface SentResult {
+export interface SentResult extends SubmissionTracking {
   kind: "sent";
-  message: { id: string; thread_id?: string };
+  message: { id: string; thread_id?: string } & SubmissionTracking;
   review?: { id: string; state?: ReviewState };
 }
 

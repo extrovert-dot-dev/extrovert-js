@@ -81,6 +81,8 @@ import type {
   ListDeliverabilityFindingsInput,
   Thread,
   ThreadDetail,
+  Submission,
+  SubmissionTracking,
   SignUpResult,
   VerifyResult,
   WaitForEmailResult,
@@ -702,7 +704,7 @@ export class FixtureStore {
     this.preflight(inbox.address, [...opts.to, ...(opts.cc ?? []), ...(opts.bcc ?? [])]);
     this.requireDirectSendAllowed("send");
     const msg = this.deliverSend(opts);
-    return { status: "sent", message_id: msg.id, review_id: this.recordDirectReview("send", msg, opts.subject, opts.to) };
+    return { status: "sent", message_id: msg.id, ...this.trackSubmission(msg), review_id: this.recordDirectReview("send", msg, opts.subject, opts.to) };
   }
 
   /**
@@ -811,7 +813,11 @@ export class FixtureStore {
     }
     const to: string[] = [];
     if (parent) {
-      to.push(parent.from.email);
+      if (parent.from.email.toLowerCase() === inbox.address.toLowerCase()) {
+        to.push(...parent.to.map(({ email }) => email).filter((email) => email.toLowerCase() !== inbox.address.toLowerCase()));
+      } else {
+        to.push(...(parent.reply_to?.length ? parent.reply_to : [parent.from]).map(({ email }) => email));
+      }
       if (opts.replyAll) for (const a of parent.to) if (a.email !== inbox.address) to.push(a.email);
     }
     const msg = this.appendMessage(inbox.id, {
@@ -827,7 +833,7 @@ export class FixtureStore {
       ageMinutes: 0,
       attachments: opts.attachments,
     });
-    return { message_id: msg.id, thread_id: msg.thread_id };
+    return { message_id: msg.id, thread_id: msg.thread_id, ...this.trackSubmission(msg) };
   }
 
   /**
@@ -874,7 +880,7 @@ export class FixtureStore {
       threadId: parent.thread_id,
       ageMinutes: 0,
     });
-    return { message_id: msg.id, thread_id: msg.thread_id };
+    return { message_id: msg.id, thread_id: msg.thread_id, ...this.trackSubmission(msg) };
   }
 
   // ---- Review Loop (HITL) -----------------------------------------------
@@ -922,7 +928,7 @@ export class FixtureStore {
         attachments: input.attachments,
       });
       const reviewId = this.recordDirectReview("send", sent, input.subject ?? "", input.to);
-      return { kind: "sent", message: { id: sent.id, thread_id: sent.thread_id }, review: { id: reviewId } };
+      return { kind: "sent", message: { id: sent.id, thread_id: sent.thread_id }, review: { id: reviewId }, ...this.trackSubmission(sent) };
     }
     const review = this.createReviewRecord({
       kind: "send",
@@ -961,7 +967,7 @@ export class FixtureStore {
         replyAll: input.reply_all,
         attachments: input.attachments,
       });
-      return { kind: "sent", message: { id: res.message_id, thread_id: res.thread_id } };
+      return { kind: "sent", message: { id: res.message_id, thread_id: res.thread_id }, submission_id: res.submission_id, sent_message_id: res.sent_message_id, sent_copy_status: res.sent_copy_status, transport: res.transport };
     }
     // The reply's envelope is materialized AT SUBMIT - subject and recipients are
     // derived here, not at approval - so the human reviews a message that actually
@@ -1020,7 +1026,7 @@ export class FixtureStore {
         text: input.text,
         html: input.html,
       });
-      return { kind: "sent", message: { id: res.message_id, thread_id: res.thread_id } };
+      return { kind: "sent", message: { id: res.message_id, thread_id: res.thread_id }, submission_id: res.submission_id, sent_message_id: res.sent_message_id, sent_copy_status: res.sent_copy_status, transport: res.transport };
     }
     const parent = (this.messages.get(inbox.id) ?? []).find((m) => m.id === input.message_id);
     if (!parent) throw new NotFoundError(`Message not found: ${input.message_id}`);
@@ -2201,6 +2207,22 @@ export class FixtureStore {
       .sort((a, b) => a.date.localeCompare(b.date));
     if (msgs.length === 0) throw new NotFoundError(`Thread not found: ${threadId}`);
     return { ...this.toThread(inbox.address, threadId, msgs), messages: msgs };
+  }
+
+  private trackSubmission(message: Message): SubmissionTracking {
+    const tracking: SubmissionTracking = { submission_id: `sub_${message.id}`, sent_message_id: message.id,
+      sent_copy_status: "stored", transport: { accepted: message.to.length + (message.cc?.length ?? 0) } };
+    Object.assign(message, tracking);
+    return tracking;
+  }
+
+  getSubmission(idOrAddress: string, submissionId: string): Submission {
+    const inbox = this.requireInbox(idOrAddress);
+    const message = (this.messages.get(inbox.id) ?? []).find((item) => item.submission_id === submissionId);
+    if (!message) throw new NotFoundError(`Submission not found: ${submissionId}`);
+    return { submission_id: submissionId, inbox: inbox.address, sent_message_id: message.id, sent_copy_status: "stored",
+      transport: message.transport ?? {}, recipients: [...message.to, ...(message.cc ?? [])].map(({ email }) => ({ recipient: email, state: "accepted" })),
+      created_at: message.date, updated_at: message.date };
   }
 
   /**

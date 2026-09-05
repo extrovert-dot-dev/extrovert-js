@@ -410,7 +410,7 @@ export interface AttachmentInput {
  * Gmail-style labels: read/unread is the \Seen flag); `folder` is the IMAP
  * mailbox; `date` is the raw `Date` header.
  */
-export interface Message {
+export interface Message extends SubmissionTracking {
   id: string;
   thread_id: string;
   /** Owning inbox address. */
@@ -665,7 +665,32 @@ export interface ForwardRequest {
  * never returned one, so `res.thread_id` typechecked and was `undefined` at
  * runtime. It is optional now because that is the truth.
  */
-export interface SendResult {
+export type SentCopyStatus = "pending" | "stored" | "unavailable";
+export type SubmissionRecipientState = "queued" | "waiting_for_parent" | "transmitting" | "accepted" | "failed" | "dependency_failed" | "unknown";
+export type TransportCounts = Partial<Record<SubmissionRecipientState, number>>;
+
+/** Additive transport metadata; absent when talking to an older server. */
+export interface SubmissionTracking {
+  submission_id?: string;
+  /** A resolvable msg_ selector, or null until the Sent copy is available. */
+  sent_message_id?: string | null;
+  sent_copy_status?: SentCopyStatus;
+  /** accepted means accepted for onward delivery, not arrival in the recipient inbox. */
+  transport?: TransportCounts;
+}
+
+export interface Submission {
+  submission_id: string;
+  inbox: string;
+  sent_message_id: string | null;
+  sent_copy_status: SentCopyStatus;
+  transport: TransportCounts;
+  recipients: { recipient: string; state: SubmissionRecipientState }[];
+  created_at: IsoTimestamp;
+  updated_at: IsoTimestamp;
+}
+
+export interface SendResult extends SubmissionTracking {
   /**
    * Discriminant hole. This legacy body carries NO `kind` field, unlike the two
    * review-loop bodies it shares a union with; declaring it as absent is what
@@ -1196,7 +1221,7 @@ export interface ReviewerDecisionRequest {
  * `kind=sent_to_human` when the draft returned to the human queue (reject/escalate, or
  * a reject FORCED to the human by a circuit breaker, with `forced_by_breaker` naming it).
  */
-export interface ReviewerDecisionResult {
+export interface ReviewerDecisionResult extends SubmissionTracking {
   kind: "sent" | "sent_to_human";
   review: Review;
   sent: boolean;
@@ -1415,9 +1440,9 @@ export interface QueuedForReviewResult {
 }
 
 /** A Review Loop submit sent immediately (200). */
-export interface SentResult {
+export interface SentResult extends SubmissionTracking {
   kind: "sent";
-  message: { id: string; thread_id?: string };
+  message: { id: string; thread_id?: string } & SubmissionTracking;
   /**
    * The review row that governed this send (ADDITIVE). Present on every send the
    * service routed, i.e. all of them: it is the handle that makes a post-crash
