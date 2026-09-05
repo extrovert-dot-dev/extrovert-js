@@ -1,5 +1,5 @@
 /**
- * InboxHandle — an ergonomic, bound handle to a single inbox.
+ * InboxHandle: an ergonomic, bound handle to a single inbox.
  *
  * Returned by `extrovert.inboxes.create(...)` and `extrovert.inbox(address)`, it scopes every operation
  * to one address so agent code reads naturally: `inbox.send(...)`, `inbox.waitForEmail(...)`. This
@@ -45,7 +45,7 @@ export interface InboxHandleOptions {
 }
 
 export class InboxHandle {
-  /** The canonical address, e.g. `agent7@smtp.extrovert.dev`. */
+  /** The canonical address, e.g. `agent7@extrovertmail.com`. */
   readonly address: string;
   /** The full inbox record this handle was created from (absent when constructed by address). */
   readonly record: Inbox | undefined;
@@ -128,8 +128,8 @@ export class InboxHandle {
    * Returns a three-way {@link SendOutcome}: `kind:"queued_for_review"` means a
    * human has to approve it and NOTHING has been delivered yet; anything else was
    * delivered. Under the default `require_review` policy a call WITHOUT an
-   * `intent` raises `IntentRequiredError` (422) instead — nothing sent, nothing
-   * queued — so pass one, or read `inbox.record.effective_review_policy` first.
+   * `intent` raises `IntentRequiredError` (422) instead: nothing sent, nothing
+   * queued: so pass one, or read `inbox.record.effective_review_policy` first.
    */
   send(req: SendRequest, signal?: AbortSignal): Promise<SendOutcome> {
     return this.transport.send(this.ref, req, signal);
@@ -140,7 +140,7 @@ export class InboxHandle {
    * the latest message) or `message_id` (reply to that message); the server
    * derives To / Subject / In-Reply-To / References. Set `reply_all` to reply to
    * every thread recipient. Returns the same three-way {@link SendOutcome} as
-   * {@link send} — a reply is governed by the review policy too.
+   * {@link send}: a reply is governed by the review policy too.
    */
   reply(req: ReplyRequest, signal?: AbortSignal): Promise<SendOutcome> {
     return this.transport.reply(this.ref, req, signal);
@@ -150,7 +150,7 @@ export class InboxHandle {
    * Forward a message in this inbox to new recipients, preserving the original.
    *
    * A forward is an outbound message to arbitrary NEW recipients that quotes an
-   * inbound thread, so it is governed by the review policy exactly like a send —
+   * inbound thread, so it is governed by the review policy exactly like a send :
    * same {@link SendOutcome} union, same `intent` requirement.
    */
   forward(messageId: string, req: ForwardRequest, signal?: AbortSignal): Promise<SendOutcome> {

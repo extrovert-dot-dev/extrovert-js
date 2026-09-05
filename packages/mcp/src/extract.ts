@@ -53,7 +53,7 @@ export function extractOtpCode(rawBody: string): string | undefined {
   return undefined;
 }
 
-/** Keep only alphanumerics — drops surrounding markup/punctuation. */
+/** Keep only alphanumerics - drops surrounding markup/punctuation. */
 function cleanCode(code: string): string {
   return code.replace(/[^A-Za-z0-9]/g, "");
 }

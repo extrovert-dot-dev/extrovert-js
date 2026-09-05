@@ -19,8 +19,11 @@ interface TransportArgs {
 }
 
 const CLI_COMMANDS = new Set([
+  "doctor",
   "setup",
   "auth",
+  "enroll",
+  "domain",
   "signup",
   "verify",
   "whoami",
@@ -71,8 +74,7 @@ function parseTransportArgs(argv: string[]): TransportArgs {
         break;
       }
       default:
-        // Retain compatibility with MCP hosts that append harmless flags.
-        break;
+        throw new Error(`Unknown command or option: ${arg}. Run 'extrovert --help'.`);
     }
   }
   return args;
@@ -102,6 +104,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  process.stderr.write(`extrovert: fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.stderr.write(`extrovert: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 });

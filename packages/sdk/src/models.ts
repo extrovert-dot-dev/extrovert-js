@@ -1,5 +1,5 @@
 /**
- * Extrovert API — typed request/response models.
+ * Extrovert API: typed request/response models.
  *
  * These mirror the Extrovert V1 REST contract (`/v1`, §8 of the build spec). The Go API does not
  * exist yet; field shapes here are the source of truth the client codes against and are validated
@@ -25,11 +25,11 @@ export type IsoTimestamp = string;
  * its caveats but cannot exceed them (§5).
  *
  * The `mailbox:*` scope strings are the live wire contract (stored in issued keys'
- * caveats) and are NOT renamed despite the public "inbox" product naming — renaming
- * them would invalidate every key already minted. `domain:manage` gates the domains
- * plane; `domain:purchase` is additionally required (and is opt-in, default-off) to
- * buy a new domain (`POST /v1/domains` with `mode: "purchased"`). `review:act` gates
- * the BYO reviewer decision plane.
+ * caveats) and are NOT renamed despite the public "inbox" product naming: renaming
+ * them would invalidate every key already issued. `domain:manage` gates onboarding
+ * for domains the customer already controls. `commerce:request` permits quotes,
+ * requests, and status reads, but never a human approval transition or direct spend.
+ * `review:act` gates the BYO reviewer decision plane.
  */
 export type Scope =
   | "mailbox:create"
@@ -40,7 +40,9 @@ export type Scope =
   | "mailbox:delete"
   | "webhook:write"
   | "domain:manage"
+  | "domain:read"
   | "domain:purchase"
+  | "commerce:request"
   | "review:act"
   | "signup:verify";
 
@@ -61,36 +63,36 @@ export type MessageDirection = "inbound" | "outbound";
 // ---------------------------------------------------------------------------
 
 /**
- * Request body for `POST /v1/enroll`. An agent redeems a `pk_enroll_...` token to mint a scoped
+ * Request body for `POST /v1/enroll`. An agent redeems a `pk_enroll_...` token to issue a scoped
  * agent key. Idempotent on `agent_handle` (à la AgentMail's `client_id`).
  */
 export interface EnrollRequest {
   /**
    * The raw enrollment token, format `pk_enroll_<id>_<secret>`. Shown once at issue
-   * time. REQUIRED — this is the wire field the server reads (`json:"token"`); the
+   * time. REQUIRED: this is the wire field the server reads (`json:"token"`); the
    * request is serialized verbatim, so the field name must match the contract.
    */
   token: string;
   /**
    * Stable client-chosen handle for this agent. Redeeming twice with the same handle returns the
-   * same agent rather than minting a new one.
+   * same agent rather than creating a new one.
    */
   agent_handle: string;
-  /** Optional human-readable label for the minted agent. */
+  /** Optional human-readable label for the created agent. */
   agent_name?: string;
   /**
    * Optional idempotency key (sent as the `Idempotency-Key` header). A retry with
-   * the same key replays the original enrollment response instead of re-minting.
+   * the same key replays the original enrollment response instead of reissuing.
    */
   client_id?: string;
 }
 
 /**
  * Response from `POST /v1/enroll`. The `agent_key` is the short-lived, per-agent scoped key the
- * agent uses for all subsequent calls — never an org-wide key (§5, §14).
+ * agent uses for all subsequent calls: never an org-wide key (§5, §14).
  */
 export interface EnrollResponse {
-  /** The minted agent principal id, e.g. `agt_7Hq2...`. */
+  /** The created agent principal id, e.g. `agt_7Hq2...`. */
   agent_id: string;
   /**
    * The scoped agent key, format `pk_agent_<id>_<secret>`. Returned once. Treat as a secret and
@@ -100,13 +102,13 @@ export interface EnrollResponse {
   /** Scopes granted to this key (a subset of the enrollment token's scopes). */
   scopes: Scope[];
   /**
-   * The fixed org the minted key is bound to (the token's resolved org). The agent
+   * The fixed org the issued key is bound to (the token's resolved org). The agent
    * cannot change it; it is the canonical org for every subsequent call.
    */
   org_id?: string;
   /**
-   * The fixed project the minted key is bound to (the token's resolved project). The
-   * agent cannot change it — there is no mutable project selector for a scoped key.
+   * The fixed project the issued key is bound to (the token's resolved project). The
+   * agent cannot change it: there is no mutable project selector for a scoped key.
    */
   project_id?: string;
 }
@@ -128,7 +130,7 @@ export interface Agent {
 /**
  * One arbitrary metadata value stored on an inbox. The wire allows string, number,
  * or boolean (nested objects and arrays are rejected). In a PATCH (update) body a
- * value of `null` for a key DELETES that key (the merge/null-delete semantics —
+ * value of `null` for a key DELETES that key (the merge/null-delete semantics :
  * see {@link UpdateInboxRequest.metadata}); a read shape ({@link Inbox.metadata})
  * never contains `null`.
  */
@@ -149,25 +151,28 @@ export type InboxMetadata = Record<string, InboxMetadataValue>;
 export type InboxMetadataPatch = Record<string, InboxMetadataValue | null>;
 
 /**
- * Request body for `POST /v1/inboxes`. All fields optional: the default path mints an address on a
- * pre-warmed, pre-ACS-verified shared subdomain of `smtp.extrovert.dev`, so creation is instant.
+ * Request body for `POST /v1/inboxes`. All fields are optional. The default path
+ * creates an address on the account's platform shared domain.
  */
 export interface CreateInboxRequest {
   /**
-   * Desired local part (before the `@`). If omitted, the server generates a random handle.
-   * Example: `agent7` -> `agent7@smtp.extrovert.dev`.
+   * Desired local part (before the `@`). Shared-domain names are normalized,
+   * must be at least 5 characters, and cannot use reserved names. If omitted,
+   * the server generates a random handle.
+   * Example: `agent7` -> `agent7@extrovertmail.com` for paid accounts or
+   * `agent7@free.extrovertmail.com` for free accounts.
    */
   username?: string;
   /**
-   * Domain to mint on. Must be an org domain the calling key is scoped to. If omitted, the default
-   * shared subdomain is used (zero-config path).
+   * Domain to create the inbox on. Must be an org domain the calling key is
+   * scoped to. If omitted, the account's shared domain is used.
    */
   domain?: string;
   /** Human-readable display name used in the `From:` header on sends. */
   display_name?: string;
   /**
    * Idempotency handle. Re-creating with the same `client_id` returns the existing inbox rather
-   * than minting a duplicate.
+   * than creating a duplicate.
    */
   client_id?: string;
   /**
@@ -184,14 +189,14 @@ export interface CreateInboxRequest {
    */
   metadata?: InboxMetadata;
   /**
-   * Optional assertion that must match the key's bound project — NEVER a selector.
+   * Optional assertion that must match the key's bound project: NEVER a selector.
    * A mismatch is a 403. The inbox is always created in the key's stored project;
    * the assertion only lets a caller defend against a misrouted key.
    */
   project_id?: string;
   /**
-   * Whether to return the inbox credentials (IMAP/SMTP password) in the response. Defaults to
-   * false; credentials are sealed at rest and only surfaced on explicit request.
+   * Whether to return paid-inbox credentials (IMAP/SMTP password) in the response.
+   * Requires the `mailbox:credentials` permission and defaults to false.
    */
   return_credentials?: boolean;
 }
@@ -227,16 +232,18 @@ export interface UpdateInboxRequest {
    */
   metadata?: InboxMetadataPatch | null;
   /**
-   * Optional assertion that must match the key's bound project — NEVER a selector.
+   * Optional assertion that must match the key's bound project: NEVER a selector.
    * A mismatch is a 403.
    */
   project_id?: string;
 }
 
 /**
- * IMAP/SMTP connection config + login for an inbox, only present when
+ * IMAP/SMTP connection config + login for a paid inbox. Export requires the
+ * `mailbox:credentials` permission. On create it is present only when
  * `return_credentials` was requested. (The IMAP/SMTP host/port/password are mail
- * protocol internals — the "credentials" of the underlying mailbox.)
+ * protocol internals. Exported credentials do not mean direct SMTP is enabled.
+ * Check `direct_smtp_enabled` on the inbox before attempting an SMTP send.)
  */
 export interface InboxCredentials {
   imap_host: string;
@@ -244,7 +251,7 @@ export interface InboxCredentials {
   smtp_host: string;
   smtp_port: number;
   username: string;
-  /** Plaintext password — shown once, never re-retrievable. Treat as a secret. */
+  /** Plaintext mailbox password. Credential reads can return it again. Treat every response as a secret. */
   password: string;
 }
 
@@ -258,7 +265,7 @@ export interface Inbox {
   object?: "inbox";
   /**
    * The canonical OPAQUE inbox id and path key (`/v1/inboxes/{inbox_id}` /
-   * `/v1/projects/{project_id}/inboxes/{inbox_id}`). Treat it as opaque — do not parse
+   * `/v1/projects/{project_id}/inboxes/{inbox_id}`). Treat it as opaque: do not parse
    * the `pmbx_` prefix.
    */
   id: string;
@@ -267,11 +274,11 @@ export interface Inbox {
    */
   org_id?: string;
   /**
-   * The project this inbox belongs to (RFC D9) — the partition key. Optional for
+   * The project this inbox belongs to (RFC D9): the partition key. Optional for
    * legacy/mock shapes.
    */
   project_id?: string;
-  /** Full address, e.g. `agent7@smtp.extrovert.dev`. A within-project email alias for {@link Inbox.id}. */
+  /** Full address, e.g. `agent7@extrovertmail.com`. A within-project email alias for {@link Inbox.id}. */
   address: string;
   username: string;
   domain: string;
@@ -279,10 +286,17 @@ export interface Inbox {
   status: InboxStatus;
   /** Onboarding mode of the domain this inbox lives on. */
   onboarding_mode: OnboardingMode;
-  /** Agent that owns this inbox, if minted by an agent key. */
+  /** Agent that owns this inbox, if created by an agent key. */
   agent_id: string | null;
   /** Effective enforced rolling-24-hour recipient cap for this inbox. */
   daily_send_limit: number;
+  /**
+   * Whether raw protocol SMTP is currently allowed. It defaults to false, is
+   * controlled by a human per inbox, and is effective only while the inbox has a
+   * paid entitlement. Exported credentials do not imply this is true. API, SDK,
+   * and MCP sends remain governed by the Review Loop regardless of this value.
+   */
+  direct_smtp_enabled: boolean;
   /**
    * Inbound webhook registered for this inbox, if any. The wire field is
    * `webhook_url` (the server returns `webhook_url`, never `inbound_webhook_url`);
@@ -291,7 +305,7 @@ export interface Inbox {
   webhook_url?: string | null;
   /**
    * Arbitrary key-value metadata stored on the inbox (AgentMail parity). Always an
-   * object — `{}` when none is set, never null. Values are string, number, or
+   * object: `{}` when none is set, never null. Values are string, number, or
    * boolean. Project-scoped: an agent key only reads/mutates metadata for inboxes in
    * its bound project.
    */
@@ -393,7 +407,7 @@ export interface AttachmentInput {
  * A stored message in an inbox (read shape). Mirrors the canonical Go wire shape
  * (`messageResponse`): `id` is the opaque, inbox-resolvable id; `inbox` is the
  * owning address; `seen` is the native IMAP \Seen read state (Extrovert has no
- * Gmail-style labels — read/unread is the \Seen flag); `folder` is the IMAP
+ * Gmail-style labels: read/unread is the \Seen flag); `folder` is the IMAP
  * mailbox; `date` is the raw `Date` header.
  */
 export interface Message {
@@ -405,6 +419,8 @@ export interface Message {
   from: EmailAddress;
   to: EmailAddress[];
   cc?: EmailAddress[];
+  /** Reply-To addresses parsed from the source message. */
+  reply_to?: EmailAddress[];
   subject: string;
   /** Decoded text/plain MIME alternative; null when absent and never derived from HTML. */
   text: string | null;
@@ -416,6 +432,10 @@ export interface Message {
   extracted_html?: string | null;
   /** RFC 5322 `Message-ID` header value. */
   message_id: string;
+  /** Source RFC 5322 parent Message-ID, when present. */
+  in_reply_to?: string;
+  /** Source RFC 5322 References chain, when present. */
+  references?: string;
   /** IMAP folder the message lives in (e.g. `INBOX`, `Junk`). */
   folder?: string;
   /** Whether the message has been read (native IMAP \Seen flag). */
@@ -454,7 +474,7 @@ export interface SearchMessagesParams {
   cursor?: string;
 }
 
-/** Request body for `PATCH /v1/inboxes/{addr}/messages/{id}` — read-state toggle. */
+/** Request body for `PATCH /v1/inboxes/{addr}/messages/{id}`: read-state toggle. */
 export interface MarkReadRequest {
   /** true to set the \Seen flag (read), false to clear it (unread). */
   read: boolean;
@@ -516,7 +536,7 @@ export interface SendRequest {
   /** Override the `Reply-To` header. */
   reply_to?: string;
   /**
-   * Idempotency key — a replay with the same key returns the first response
+   * Idempotency key: a replay with the same key returns the first response
    * instead of sending a second message.
    *
    * Sent as the `Idempotency-Key` HEADER and STRIPPED from the JSON body: the
@@ -554,7 +574,7 @@ export interface SendRequest {
  * Request body for the canonical thread-aware reply,
  * `POST /v1/inboxes/{addr}/reply`. Exactly one of `thread_id` / `message_id`
  * selects the parent; the server derives `to` (original participants), the
- * `Re:`-prefixed subject, and the `In-Reply-To` / `References` headers — you do
+ * `Re:`-prefixed subject, and the `In-Reply-To` / `References` headers: you do
  * NOT pass `to`. Set `reply_all` to reply to every thread recipient.
  */
 export interface ReplyRequest {
@@ -562,6 +582,12 @@ export interface ReplyRequest {
   thread_id?: string;
   /** Reply to this specific message. One of thread_id / message_id. */
   message_id?: string;
+  /**
+   * Optional optimistic stale-context guard for a thread reply. Use the
+   * `last_message_id` from the thread you read; a 409 means the thread advanced.
+   * This detects stale context at submission, but is not an atomic send lock.
+   */
+  expected_last_message_id?: string;
   /** At least one of `text` / `html` is required. */
   text?: string;
   html?: string;
@@ -571,7 +597,7 @@ export interface ReplyRequest {
   reply_to?: string;
   /** Reply to all thread recipients, not just the original sender. */
   reply_all?: boolean;
-  /** See {@link SendRequest.idempotency_key} — sent as a header, never in the body. */
+  /** See {@link SendRequest.idempotency_key}: sent as a header, never in the body. */
   idempotency_key?: string;
   headers?: Record<string, string>;
   /** Files to attach (base64). Emitted as a multipart/mixed message. */
@@ -594,7 +620,7 @@ export interface ReplyRequest {
  * A forward is governed by the SAME review policy as a send, and for a stronger
  * reason: it is an outbound message to arbitrary NEW recipients that quotes an
  * entire inbound thread. Leaving it outside the policy would have made forward
- * the documented bypass — and a worse one than a bare send, because it
+ * the documented bypass: and a worse one than a bare send, because it
  * exfiltrates a received conversation.
  */
 export interface ForwardRequest {
@@ -621,7 +647,7 @@ export interface ForwardRequest {
   /** Agent-supplied confidence (0..1); see {@link SendRequest.category_confidence}. */
   category_confidence?: number;
   composition_token?: string;
-  /** See {@link SendRequest.idempotency_key} — sent as a header, never in the body. */
+  /** See {@link SendRequest.idempotency_key}: sent as a header, never in the body. */
   idempotency_key?: string;
 }
 
@@ -632,8 +658,8 @@ export interface ForwardRequest {
  * Its shape differs per verb, which is why almost every field is optional and
  * this type is NOT the whole story (see {@link SendOutcome}):
  *
- *  - `send`          → `{status:"sent", message_id, review_id}` — **no `thread_id`**.
- *  - `reply`/`forward` → `{message_id, thread_id, review_id}` — no `status`.
+ *  - `send`          → `{status:"sent", message_id, review_id}`: **no `thread_id`**.
+ *  - `reply`/`forward` → `{message_id, thread_id, review_id}`: no `status`.
  *
  * `thread_id` was declared REQUIRED here for a long time while the send path
  * never returned one, so `res.thread_id` typechecked and was `undefined` at
@@ -648,7 +674,7 @@ export interface SendResult {
   kind?: undefined;
   /** Extrovert message id of the sent outbound message. */
   message_id: string;
-  /** Thread id — present on reply/forward; ABSENT on the direct-send response. */
+  /** Thread id: present on reply/forward; ABSENT on the direct-send response. */
   thread_id?: string;
   /**
    * Opaque review id (rr_…) of the review row that governed this send. Every
@@ -667,16 +693,16 @@ export interface SendResult {
  * Every shape `inbox.send()` / `.reply()` / `.forward()` / `.submitForReview()`
  * can return, discriminated by `kind`.
  *
- * There are three, because the resolved review policy — not the caller — decides
+ * There are three, because the resolved review policy: not the caller: decides
  * what happens to an outbound message:
  *
- *  - {@link QueuedForReviewResult} (`kind:"queued_for_review"`, 202) — parked for
+ *  - {@link QueuedForReviewResult} (`kind:"queued_for_review"`, 202): parked for
  *    a human. **Nothing has been delivered yet.** Monitor
  *    `reviewEvents.wait({review_id})` until a `sent` or `send_failed` event
  *    arrives.
- *  - {@link SentResult} (`kind:"sent"`, 200) — delivered immediately, returned to
+ *  - {@link SentResult} (`kind:"sent"`, 200): delivered immediately, returned to
  *    callers that opted into the review loop by passing mode/intent/category_id.
- *  - {@link SendResult} (no `kind`, 202) — the legacy immediate-send body for a
+ *  - {@link SendResult} (no `kind`, 202): the legacy immediate-send body for a
  *    caller that mentioned none of those fields.
  *
  * Under the default `require_review` policy a send WITHOUT an `intent` does not
@@ -687,22 +713,22 @@ export interface SendResult {
 export type SendOutcome = SendResult | SentResult | QueuedForReviewResult;
 
 // ---------------------------------------------------------------------------
-// Review Loop (HITL) — supervised-autonomy submit + agent-plane reads (spec §5).
+// Review Loop (HITL): supervised-autonomy submit + agent-plane reads (spec §5).
 // ---------------------------------------------------------------------------
 
 /** Per-send agent assertion (D3/D6). The resolved policy may downgrade `direct`. */
 export type ReviewMode = "review" | "direct";
 
 /**
- * The account/inbox review policy — the AUTHORITY on what happens to an outbound
+ * The account/inbox review policy: the AUTHORITY on what happens to an outbound
  * message. There is no way for a caller to opt out of it.
  *
- *  - `require_review` — the default for every account. A send WITHOUT an `intent`
+ *  - `require_review`: the default for every account. A send WITHOUT an `intent`
  *    is rejected 422 `intent_required` (nothing sent, nothing queued); a send
  *    WITH one is queued for a human (202 `queued_for_review`).
- *  - `allow_direct` — a bare send (no mode/intent/category_id) is delivered
+ *  - `allow_direct`: a bare send (no mode/intent/category_id) is delivered
  *    immediately. Supplying an intent, or `mode: "review"`, still queues it.
- *  - `auto_send_graduated` — a categorized message that clears the graduation
+ *  - `auto_send_graduated`: a categorized message that clears the graduation
  *    gates auto-sends; everything else is queued.
  *
  * Read {@link Inbox.effective_review_policy} once before your first send rather
@@ -735,7 +761,7 @@ export interface ReviewIntent {
   };
 }
 
-/** A review request (rr_…) — the pre-send record under the Review Loop. */
+/** A review request (rr_…): the pre-send record under the Review Loop. */
 export interface Review {
   id: string;
   state: ReviewState;
@@ -768,8 +794,8 @@ export interface Review {
    * `failed`**.
    *
    * `failed` is included deliberately even though it is not in the formal
-   * terminal set: nothing in the product can move a failed review — the console
-   * cannot re-approve it — so a flag that said `false` there would invite an
+   * terminal set: nothing in the product can move a failed review: the console
+   * cannot re-approve it: so a flag that said `false` there would invite an
    * agent to wait forever on a row nobody will ever touch.
    *
    * An agent that lost its event cursor (a crash, a fresh process) reads this
@@ -783,7 +809,7 @@ export interface Review {
   send_error?: string;
   /**
    * How the message was released, once sent: `human_reviewed`,
-   * `reviewer_approved`, `graduated_auto` or `agent_direct` — without a turns
+   * `reviewer_approved`, `graduated_auto` or `agent_direct`: without a turns
    * fetch.
    */
   send_path?: string;
@@ -829,7 +855,7 @@ export interface ReviewFeedbackComment {
  * The human's assembled feedback for a review (spec §11), returned by
  * `reviews.feedback(id)`: the unified + structured diff of the human edit, the human
  * comments / rejection feedback, the decision, and the rules born from this review
- * (rule_ ids whose source_review_id is this review). $0 LLM — pure assembly.
+ * (rule_ ids whose source_review_id is this review). $0 LLM: pure assembly.
  */
 export interface ReviewFeedback {
   review_id: string;
@@ -848,7 +874,7 @@ export interface PostReviewChatRequest {
 
 /**
  * Body for posting a new agent draft under a parent_revision CAS (spec §5.2; M5,
- * D17). parent_revision is the PRIMARY CAS — it must equal the draft's current
+ * D17). parent_revision is the PRIMARY CAS: it must equal the draft's current
  * revision, else 409 STALE with NO mutation. version is OPTIONAL belt-and-suspenders.
  */
 export interface SubmitRevisionRequest {
@@ -857,7 +883,7 @@ export interface SubmitRevisionRequest {
   subject?: string;
   /**
    * The redrafted plain-text body. Canonical, matching `text` on send / reply /
-   * forward — the same concept should not have two names in the one flow an
+   * forward: the same concept should not have two names in the one flow an
    * agent runs most.
    */
   text?: string;
@@ -918,7 +944,7 @@ export type ReviewEventReason =
    * cancel, so compose and submit a NEW message rather than retrying this one.
    */
   | "send_failed"
-  /** Withdrawn — by you, by a human, or as the close-out of a failed send. */
+  /** Withdrawn: by you, by a human, or as the close-out of a failed send. */
   | "cancelled"
   /**
    * You were front-run: the review reached a terminal state while you were
@@ -927,9 +953,9 @@ export type ReviewEventReason =
    */
   | "front_run_next"
   // --- reserved: published so the enum is never narrowed, never emitted ------
-  /** RESERVED — never emitted. Terminal success is `sent`. */
+  /** RESERVED: never emitted. Terminal success is `sent`. */
   | "approved"
-  /** RESERVED — no production producer (the D13 staleness detector is unbuilt). */
+  /** RESERVED: no production producer (the D13 staleness detector is unbuilt). */
   | "staleness";
 
 /**
@@ -947,13 +973,13 @@ export interface ReviewEvent {
   created_at: IsoTimestamp;
 }
 
-/** The agent's per-(agent, review) ack frontier — its strict-FIFO position. */
+/** The agent's per-(agent, review) ack frontier: its strict-FIFO position. */
 export interface ReviewEventCursor {
   review_id: string;
   last_acked_seq: number;
 }
 
-/** Drain result for list/wait — un-acked events in FIFO seq order + cursors. */
+/** Drain result for list/wait: un-acked events in FIFO seq order + cursors. */
 export interface ReviewEventsResult {
   events: ReviewEvent[];
   cursors?: ReviewEventCursor[];
@@ -971,7 +997,7 @@ export interface ListReviewEventsParams {
  * A category (cat_…) in the Review Loop registry (D9/D10). `name` + `description`
  * are skill-style metadata the agent fuzzy-matches against; nothing keys on the
  * name (renames never break a reference). Categories are CUSTOMER-scoped and
- * agent-attributed — the deliberate cross-agent-404 exception. Opaque ids only.
+ * agent-attributed: the deliberate cross-agent-404 exception. Opaque ids only.
  */
 export interface Category {
   id: string;
@@ -1003,14 +1029,14 @@ export interface ProposeCategoryRequest {
   scope?: "org_shared" | "agent_private";
 }
 
-/** Rename / re-describe a category — metadata only (spec §5.5; D10). */
+/** Rename / re-describe a category: metadata only (spec §5.5; D10). */
 export interface UpdateCategoryRequest {
   name?: string;
   description?: string;
 }
 
 /**
- * The account-wide default risk dial (Review Loop, D4/D12) — the values a per-
+ * The account-wide default risk dial (Review Loop, D4/D12): the values a per-
  * category null override inherits. The single user-configurable brand-risk lever.
  */
 export interface AccountRiskDial {
@@ -1051,7 +1077,7 @@ export interface CategoryRiskDial {
 
 /**
  * The effective risk dial (Review Loop, agent plane; D4/D12): the account default
- * plus every category's overrides. Read-only for agents — flipping the dial is a
+ * plus every category's overrides. Read-only for agents: flipping the dial is a
  * console (human) action (D16).
  */
 export interface RiskDial {
@@ -1109,7 +1135,7 @@ export type ReviewerAction = "approve" | "edit" | "reject" | "escalate";
  * The REVIEWER's read-only decision surface for a review (BYO review-agent plane;
  * D5/§9), returned by `reviews.decisionContext(id)`: the intent + current draft + the
  * append-only thread + the two-circuit-breaker budget. `force_to_human` is true when
- * EITHER breaker has tripped — the reviewer's next reject would be FORCED to the human
+ * EITHER breaker has tripped: the reviewer's next reject would be FORCED to the human
  * regardless of intent (the human is the only terminal authority, D17).
  */
 export interface ReviewDecisionContext {
@@ -1134,7 +1160,7 @@ export interface ReviewDecisionContext {
 /**
  * Body for a reviewer decision (`reviews.decide(id, req)`; reviewer_decide, D5/§9).
  * `action` is approve|edit|reject|escalate. `revision`/`version` are the optimistic CAS
- * — a mismatch is a 409 STALE with NO mutation (the human always wins, D17). subject/
+ *: a mismatch is a 409 STALE with NO mutation (the human always wins, D17). subject/
  * body carry the edited content for the edit action; feedback is the reviewer's note.
  */
 export interface ReviewerDecisionRequest {
@@ -1152,8 +1178,8 @@ export interface ReviewerDecisionRequest {
 }
 
 /**
- * The outcome of a reviewer decision (D5/§9). `kind=sent` when the platform ACS-sent
- * with the COMPOSER's creds (approve/edit — the reviewer NEVER holds mailbox:send);
+ * The outcome of a reviewer decision (D5/§9). `kind=sent` when the platform sent
+ * with the COMPOSER's creds (approve/edit: the reviewer NEVER holds mailbox:send);
  * `kind=sent_to_human` when the draft returned to the human queue (reject/escalate, or
  * a reject FORCED to the human by a circuit breaker, with `forced_by_breaker` naming it).
  */
@@ -1170,7 +1196,7 @@ export interface ReviewerDecisionResult {
 /**
  * The D19/§8 backlog-reconciliation snapshot for a category (agent-readable, $0-LLM).
  * Counts the QUEUED drafts that are stale vs current-enough against the current
- * category rules-version + house-style version (a pure integer compare). Read-only —
+ * category rules-version + house-style version (a pure integer compare). Read-only :
  * the agent READS the picture; the human / hooks TRIGGER the actual sweep.
  */
 export interface ScanBacklogStatus {
@@ -1195,7 +1221,7 @@ export interface PacingItem {
 }
 
 /**
- * The demand-driven pacing snapshot for a category (agent-readable, $0-LLM — M7 Slice
+ * The demand-driven pacing snapshot for a category (agent-readable, $0-LLM: M7 Slice
  * B/§8): the human review cursor, the effective window/ceiling/interval, the queued
  * count, and each queued draft's in-window/redrafting/behind-cursor classification.
  * Read-only; the cursor advances from the human's console approve/reject/edit actions.
@@ -1208,7 +1234,7 @@ export interface CategoryPacingState {
   cursor_advanced_count: number;
   /** Effective freshness window (default org_settings.lookahead_window=3). */
   lookahead_window: number;
-  /** HARD per-nudge fan-out ceiling (default 10) — one nudge can never fan to 500. */
+  /** HARD per-nudge fan-out ceiling (default 10): one nudge can never fan to 500. */
   rework_batch_max: number;
   /** Per-agent token-bucket interval that coalesces feedback storms (default 5000). */
   nudge_min_interval_ms: number;
@@ -1295,11 +1321,11 @@ export interface RuleSnapshot extends Page<Rule> {
 /**
  * Save / edit a writing rule (append-only by supersession; spec §5.4; D11).
  *
- * Layering (org/project): an agent-plane save is ALWAYS project-layer — the saved
+ * Layering (org/project): an agent-plane save is ALWAYS project-layer: the saved
  * rule's `rule_layer` is `project`, bound to the calling key's project. There is no
  * settable `rule_layer` here: an agent cannot create org-layer / house-style
  * (`rule_layer="org"`) rules in v1; authoring org rules is a console/admin action.
- * (`scope: "general"` still means a house-style rule WITHIN the project layer —
+ * (`scope: "general"` still means a house-style rule WITHIN the project layer :
  * `scope` is the category axis, `rule_layer` is the ownership axis.)
  */
 export interface SaveRuleRequest {
@@ -1322,7 +1348,7 @@ export interface SaveRuleRequest {
   /**
    * D8 retro-propagation HUMAN OPT-IN (default false). When true, a NEW category rule
    * that could apply to pending siblings enqueues ONE propagate_general_rule nudge
-   * (siblings + suggested_batch) so the agent redrafts a FEW at a time — never the
+   * (siblings + suggested_batch) so the agent redrafts a FEW at a time: never the
    * whole queue. Set only after the human said "apply to N pending?".
    */
   propagate_to_pending?: boolean;
@@ -1379,7 +1405,7 @@ export interface SentResult {
   message: { id: string; thread_id?: string };
   /**
    * The review row that governed this send (ADDITIVE). Present on every send the
-   * service routed, i.e. all of them — it is the handle that makes a post-crash
+   * service routed, i.e. all of them: it is the handle that makes a post-crash
    * `reviews.get(id)` possible on the direct path too.
    */
   review?: { id: string; state: ReviewState };
@@ -1398,15 +1424,21 @@ export interface Thread {
   /** Owning inbox address. */
   inbox_id: string;
   subject: string;
-  /** Distinct participant address strings across the thread. */
+  /** List/search summaries use the latest envelope; thread detail may include the full conversation set. */
   participants: string[];
   message_count: number;
   last_message_at: IsoTimestamp;
   /** Most-recent-message preview snippet. */
   snippet: string;
+  /** Whether the latest message is unread. */
+  unread?: boolean;
+  /** Whether the newest message has one or more attachments. */
+  last_message_has_attachments?: boolean;
+  /** Opaque message id for optimistic reply freshness checks. */
+  last_message_id?: string;
 }
 
-/** A thread plus its messages (oldest-first) — `GET /v1/inboxes/{addr}/threads/{id}`. */
+/** A thread plus its messages (oldest-first): `GET /v1/inboxes/{addr}/threads/{id}`. */
 export interface ThreadDetail extends Thread {
   messages: Message[];
 }
@@ -1419,7 +1451,7 @@ export interface ListThreadsParams {
 }
 
 // ---------------------------------------------------------------------------
-// wait_for_email — the killer primitive (§6)
+// wait_for_email: the killer primitive (§6)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1555,7 +1587,7 @@ export interface ContactListEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Suppressions (recipient opt-outs / list-unsubscribe) — customer/org-scoped
+// Suppressions (recipient opt-outs / list-unsubscribe): customer/org-scoped
 // ---------------------------------------------------------------------------
 
 /**
@@ -1617,7 +1649,7 @@ export interface SuppressionEntry {
 /**
  * The result of a pre-check (`GET /v1/suppressions?recipient=…`): whether the
  * caller's OWN org suppresses the recipient, plus the matching org rows. Reflects
- * only the caller's org state — never a global/shared/cross-tenant opt-out.
+ * only the caller's org state: never a global/shared/cross-tenant opt-out.
  */
 export interface SuppressionPrecheck {
   recipient: string;
@@ -1639,10 +1671,10 @@ export interface ListSuppressionsParams {
 }
 
 // ---------------------------------------------------------------------------
-// Agent-facing domains (Slice 5) — privileged (domain:manage scope)
+// Agent-facing domains (Slice 5): privileged (domain:manage scope)
 // ---------------------------------------------------------------------------
 
-/** One DNS record the customer must set (manual mode) or that we serve (ns_delegated). */
+/** One nameserver record the customer must publish for delegated setup. */
 export interface DomainRecord {
   name: string;
   type: string;
@@ -1658,30 +1690,25 @@ export type DomainScope = "org" | "project";
 /**
  * Request body for `POST /v1/domains`. Onboards/adds a domain for the customer.
  *
- * Permissions: every mode needs the `domain:manage` scope (the route gate); `mode:
- * "purchased"` spends money at the registrar and therefore ADDITIONALLY requires the
- * explicit, default-off `domain:purchase` scope (and is capped by the org/project
- * purchased-domain plan limit, enforced before any registrar spend). `manual` and
- * `ns_delegated` need `domain:manage` only.
+ * Requires the `domain:manage` scope. This request only adds a delegated inbox
+ * domain the customer controls; it cannot register one.
+ * New registrations use the separate commerce quote/request workflow.
  */
 export interface OnboardDomainRequest {
   domain: string;
   /**
-   * Onboarding path. Defaults to `ns_delegated` server-side when omitted. `purchased`
-   * additionally requires the `domain:purchase` scope.
+   * Onboarding path. Defaults to `ns_delegated` server-side when omitted.
    */
-  mode?: OnboardingMode;
-  /** A-record IP served at a delegated zone's apex (ns_delegated only). */
-  mail_host_ip?: string;
+  mode?: "ns_delegated";
   /**
    * Domain visibility. Defaults to `org` (org-shared, usable by every project in the
    * org). `project` binds the domain to the key's OWN bound project (never
-   * client-selected) so it is only visible/mintable from that project. A
+   * client-selected) so it is only visible/creatable from that project. A
    * legacy/unscoped key (no bound project) falls back to `org`.
    */
   scope?: DomainScope;
   /**
-   * Optional assertion that must match the key's bound project — NEVER a selector.
+   * Optional assertion that must match the key's bound project: NEVER a selector.
    * A mismatch is a 403. The binding is always derived from the key.
    */
   project_id?: string;
@@ -1689,10 +1716,18 @@ export interface OnboardDomainRequest {
 
 /**
  * The agent-facing view of one onboarded domain (mirrors the Go `domainResponse`).
- * `records` (and `delegation_ns` for ns_delegated) are present on get / onboard /
- * verify and empty on list reads and for shared/purchased modes.
+ * `delegation_ns` is present on get / onboard / verify for delegated domains and
+ * empty on list reads. `records` remains for legacy response compatibility.
  */
 export interface Domain {
+	/** Authoritative outcome. Absent only when talking to an older server; never infer readiness from DKIM. */
+	readiness?: DomainReadiness;
+  /** Customer DNS health, independent of mail provisioning readiness. */
+  delegation?: {
+    status: "pending" | "confirmed" | "rechecking" | "check_delayed" | "action_required";
+    checked_at?: string;
+    confirmed_at?: string;
+  };
   id: string;
   domain: string;
   mode: OnboardingMode;
@@ -1708,10 +1743,41 @@ export interface Domain {
   instruction?: string;
 }
 
+export interface DomainStatusEvent {
+  id: string;
+  type: string;
+  domain: string;
+  summary: string;
+  data: { domain: string; readiness: DomainReadiness };
+  created_at: string;
+}
+export interface DomainStatusEventPage {
+  items: DomainStatusEvent[];
+  next_cursor: string;
+  has_more: boolean;
+  poll_after_seconds: number;
+}
+
+export interface DomainReadiness {
+  status: "waiting_for_dns" | "checking" | "setting_up" | "ready" | "action_required" | "needs_attention";
+  label: string;
+  summary: string;
+  reason: string;
+  action_required_by: "customer" | "extrovert" | "none";
+  next_action: "check_dns_entries" | "restore_dns" | "wait" | "create_inbox" | "use_inbox" | "ask_owner_to_create_inbox";
+  /** Domain configuration only; creating an inbox still requires permission and available plan capacity. */
+  ready_for_inboxes: boolean;
+  checked_at?: IsoTimestamp;
+  next_check_at?: IsoTimestamp;
+  poll_after_seconds: number;
+  /** Omitted without inbox-read permission. Counts never imply organization-wide visibility for an agent. */
+  inboxes?: { scope: "agent" | "project" | "organization"; total: number; ready: number; setting_up: number; needs_attention: number };
+}
+
 /**
  * Result of an ACCEPTED domain offboard (`DELETE /v1/domains/{domain}` → HTTP 202).
- * Teardown — reaping the outbound provider senders + routing rows, then scrubbing
- * the DNS zone/records and the domain row — runs as an async job. Poll `status_url`
+ * Teardown: reaping the outbound provider senders + routing rows, then scrubbing
+ * the DNS zone/records and the domain row: runs as an async job. Poll `status_url`
  * (`GET /v1/jobs/{job_id}`, via {@link Job} / `client.getJob(job_id)`) until
  * `status` is terminal (succeeded/failed/cancelled); the domain is ACCEPTED for
  * offboard, not yet fully torn down when this returns.
@@ -1736,6 +1802,107 @@ export interface Job {
   created_at: IsoTimestamp;
   updated_at: IsoTimestamp;
   finished_at?: IsoTimestamp;
+}
+
+// ---------------------------------------------------------------------------
+// Agent-facing commerce: quote/request/status only; approval is human-only
+// ---------------------------------------------------------------------------
+
+/** One exact reason a commerce request cannot advance automatically. */
+export interface CommerceBlocker {
+  code: string;
+  message: string;
+  scope?: "org" | "project" | "agent" | string;
+  limit_id?: string;
+  used_cents?: number;
+  reserved_cents?: number;
+  limit_cents?: number;
+  requested_cents?: number;
+  used_count?: number;
+  reserved_count?: number;
+  limit_count?: number;
+  reset_at?: IsoTimestamp;
+  manage_url?: string;
+}
+
+/** Request body for the non-spending domain quote endpoint. */
+export interface QuoteDomainRequest {
+  domain: string;
+}
+
+/** Current, expiring domain registration quote. Quoting never purchases. */
+export interface DomainQuote {
+  object: "domain_quote";
+  domain: string;
+  available: boolean;
+  currency: string;
+  quote_cents: number;
+  renewal_cents: number;
+  premium: boolean;
+  quote_expires_at: IsoTimestamp;
+  required_plan?: string;
+  required_plan_price_cents?: number;
+  blockers: CommerceBlocker[];
+}
+
+export type CommerceRequestKind = "domain_purchase" | "plan_change";
+
+export interface RequestDomainPurchaseRequest {
+  domain: string;
+  /** Stable retry identity; sent as the `Idempotency-Key` header, not in the JSON body. */
+  idempotency_key: string;
+  scope?: DomainScope;
+  rationale?: string;
+  auto_renew?: boolean;
+}
+
+export interface RequestPlanChangeRequest {
+  target_plan: "free" | "developer" | "startup";
+  /** Stable retry identity; sent as the `Idempotency-Key` header, not in the JSON body. */
+  idempotency_key: string;
+  rationale?: string;
+}
+
+export interface ListCommerceRequestsParams {
+  limit?: number;
+  page?: string;
+}
+
+/** Durable poll shape for an agent-initiated financial request. */
+export interface CommerceRequest {
+  object: "commerce_request";
+  id: string;
+  project_id?: string;
+  agent_id?: string;
+  kind: CommerceRequestKind;
+  state: string;
+  domain?: string;
+  domain_scope?: DomainScope;
+  target_plan?: string;
+  current_plan?: string;
+  rationale?: string;
+  currency: string;
+  quote_cents: number;
+  renewal_cents: number;
+  approved_max_cents?: number;
+  quote_expires_at?: IsoTimestamp;
+  auto_renew: boolean;
+  required_plan?: string;
+  required_plan_price_cents?: number;
+  blocker_code?: string;
+  blockers: CommerceBlocker[];
+  approval_url?: string;
+  payment_action_url?: string;
+  external_job_id?: string;
+  effective_at?: IsoTimestamp;
+  notification_state?: string;
+  notification_last_error?: string;
+  agent_next_action: string;
+  retry_safe: boolean;
+  poll_after_seconds: number;
+  version: number;
+  created_at: IsoTimestamp;
+  updated_at: IsoTimestamp;
 }
 
 // ---------------------------------------------------------------------------
@@ -1784,13 +1951,13 @@ export interface StreamOptions {
 export interface SignUpRequest {
   /** Human email that receives the one-time verification code. */
   human_email: string;
-  /** Desired local-part for the first inbox (optional; auto-generated when omitted). */
+  /** Desired local part on `free.extrovertmail.com`. It must normalize to at least 5 characters and cannot use a reserved name. */
   username?: string;
 }
 
 /**
  * Response from `POST /v1/agent/sign-up`. The `agent_key` is a LIMITED-scope key
- * (read-only) that expires with the emailed code. Successful verification revokes
+ * (verification-only, with no inbox read or send permission) that expires with the emailed code. Successful verification revokes
  * it and returns a replacement full-scope key. The OTP itself is never returned.
  */
 export interface SignUpResponse {
@@ -1800,7 +1967,7 @@ export interface SignUpResponse {
   agent_key: string;
   key_prefix: string;
   scopes: Scope[];
-  /** The first inbox minted for the agent. */
+  /** The first inbox created for the agent. */
   address: string;
   verified: boolean;
   /** Where the verification code was sent. */
@@ -1854,14 +2021,21 @@ export interface VerifyResponse {
 }
 
 /**
- * Response from `GET /v1/auth/me` — the verified principal behind the key.
+ * Response from `GET /v1/auth/me`: the verified principal behind the key.
  *
  * `org_id`/`project_id` are the FIXED org/project the key is bound to (resolved from
  * the stored key, never client input). There is NO mutable project selector for a
- * scoped key — `whoami` is the canonical project-visibility surface; project
+ * scoped key: `whoami` is the canonical project-visibility surface; project
  * selection happens when the human/admin issues the enrollment token or agent key.
  */
 export interface WhoAmI {
+  connection_status?: "connected";
+  summary?: string;
+  agent_name?: string;
+  organization_name?: string;
+  project_name?: string;
+  /** Granted permissions, not a guarantee of plan capacity or review approval. */
+  capabilities?: { read_domain_status: boolean; connect_owned_domains: boolean; create_inboxes: boolean; read_inboxes: boolean; submit_mail_for_review: boolean; request_purchases: boolean };
   customer_id: string;
   /**
    * The fixed org the key is bound to. Optional to match the OpenAPI contract: a

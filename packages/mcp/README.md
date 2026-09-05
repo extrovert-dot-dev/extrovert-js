@@ -5,17 +5,17 @@
 **A real inbox for your agent, in one call.**
 
 `@extrovert.dev/mcp` is the [Model Context Protocol](https://modelcontextprotocol.io) server for
-[Extrovert](../README.md) — Message Science's agentic-email platform. It gives an AI agent a real,
+[Extrovert](../README.md): Message Science's agentic-email platform. It gives an AI agent a real,
 persistent inbox on a domain Extrovert owns: created in one tool call, sends and receives, behind a
 **scoped key that expires and revokes on its own**. The key is bound to a fixed org + project (call
-`whoami` to see them) — there is no project selector to manage.
+`whoami` to see them): there is no project selector to manage.
 
 > **Prerelease status:** the package is published on npm under the `next` dist-tag. Extrovert also
 > operates `https://mcp.extrovert.dev/mcp` as a stateless Streamable HTTP endpoint with browser OAuth.
 > The same package installs `extrovert-mcp` for transports and `extrovert` for supported setup,
 > authentication, mailbox, review-status, and reviewed-send commands.
 
-The standout tool is **`wait_for_email`** — a blocking call that returns the next matching message
+The standout tool is **`wait_for_email`**: a blocking call that returns the next matching message
 with the **OTP code and verification link already extracted**. Trigger a sign-in elsewhere, then act
 on the code in the same turn. No polling loop, no losing the 5-minute window.
 
@@ -30,7 +30,7 @@ redeem an enrollment key  ->  create_inbox  ->  use it as a sign-up address  -> 
 | Tool | What it does |
 |---|---|
 | `redeem_enrollment` | Exchange an enrollment token (`pk_enroll_…`) for a **scoped agent key** (`pk_agent_…`). |
-| `create_inbox` | Provision an inbox. Omit username/domain for an instant `agent@smtp.extrovert.dev` address. Attach arbitrary metadata. |
+| `create_inbox` | Create an inbox. Paid accounts use `extrovertmail.com`; free signups use `free.extrovertmail.com`. Attach arbitrary metadata. |
 | `list_inboxes` | List the inboxes this agent owns. Project keys need no args; an **org-tier** key must pick a breadth (`project:<id>` or `wildcard:true`). |
 | `get_inbox` | Fetch one inbox by opaque `inbox_id` (`pmbx_…`) or address (with its metadata). |
 | `update_inbox` | Update settings; `daily_send_limit` (1–10,000) sets the enforced rolling-24-hour recipient cap and requires opt-in `mailbox:quota`. |
@@ -38,9 +38,22 @@ redeem an enrollment key  ->  create_inbox  ->  use it as a sign-up address  -> 
 | `send_email` | Send a new email via the inbox's authenticated sender. |
 | `reply_email` | Reply within an existing thread. |
 | `read_messages` | List messages in an inbox (optionally unread-only). |
-| `list_threads` | List conversation threads. |
+| `list_threads` | List conversation threads with cursor pagination. |
+| `search_threads` | Search conversation summaries by subject, participant, or snippet. |
+| `get_thread` | Read the complete oldest-first conversation plus extracted-first context. |
+| `delete_thread` | Move every message in a thread to Trash, or permanently expunge it. |
 | `search` | Full-text search across one or all inboxes. |
 | **`wait_for_email`** | **Block until a matching message arrives; return it + extracted `otp_code` / `verification_link`.** |
+| `quote_domain` | Return a short-lived registration and renewal quote without reserving, charging, or registering. |
+| `request_domain_purchase` | Create an idempotent, durable domain-purchase request for human approval. |
+| `request_plan_change` | Create an idempotent upgrade or downgrade request for human approval. |
+| `get_commerce_request` | Read the exact blocker, approval URL, payment state, progress, and next safe action. |
+| `list_commerce_requests` | Recover and list this agent's purchase and plan requests. |
+| `whoami` | Confirm the connected agent, organization, project, and available actions. |
+| `get_domain` | Answer whether a domain is ready, who needs to act, and how many inboxes this connection can see. |
+| `verify_domain` | Recheck the customer's nameserver entries now and return the latest readiness result. |
+| `wait_for_domain` | Wait for readiness for a bounded interval, then return a clear resumable outcome. |
+| `list_domain_events` | Resume domain updates using the previous cursor, including ready, action-needed, and recovery events. |
 
 Every tool is registered with a typed [zod](https://zod.dev) input schema and behavioural
 annotations (`readOnlyHint`, `destructiveHint`, …) so hosts can present and gate them correctly.
@@ -51,19 +64,25 @@ annotations (`readOnlyHint`, `destructiveHint`, …) so hosts can present and ga
 
 > Don't hand an MCP host your master key. Hand it a scoped key.
 
-An MCP host should never hold the keys to your whole account — it only ever needs a narrow, outbound
+An MCP host should never hold the keys to your whole account: it only ever needs a narrow, outbound
 voice. With Extrovert it receives nothing more than a **scoped agent key**:
 
-- **scoped** — carries only the granted capabilities (e.g. `mailbox:create`, `mailbox:read`,
+- **scoped**: carries only the granted capabilities (e.g. `mailbox:create`, `mailbox:read`,
   `mailbox:send`); quota changes require opt-in `mailbox:quota`, deletion requires
   `mailbox:delete`, and the key may additionally be restricted to fixed domains;
-- **server-enforced** — the inbox counter and revocation live server-side; a cloned key can't
+- **server-enforced**: the inbox counter and revocation live server-side; a cloned key can't
   exceed its `max_mailboxes`;
-- **revocable** — killing one agent's key never rotates anyone else's;
-- **audited** — every action is attributed to the token + agent.
+- **revocable**: killing one agent's key never rotates anyone else's;
+- **audited**: every action is attributed to the token + agent.
 
-This is the deliberate containment of the Postmark-MCP supply-chain blast radius: no org-wide key
-ever reaches the model host. Keep every model host on the narrowest scoped key it needs.
+The safe default for financial actions is no purchasing authority. `commerce:request` lets an agent
+quote, ask, and poll, but there is no MCP approval tool. Extrovert emails the verified billing owner;
+an agent may also send the platform approval URL through the governed Review Loop. Email content and
+replies cannot approve a charge. Only a signed-in console decision or a bounded organization,
+project, or agent spend policy created there can advance the request.
+
+This containment keeps an org-wide key out of the model host. Keep every model host on the
+narrowest scoped key it needs.
 
 ---
 
@@ -96,9 +115,10 @@ npx -y @extrovert.dev/mcp@next --help
 # register the stdio server in Codex or Claude Code
 npx -y @extrovert.dev/mcp@next setup --host codex
 npx -y @extrovert.dev/mcp@next setup --host claude
+npx -y @extrovert.dev/mcp@next setup --host hermes
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.6` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.7` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 
@@ -107,20 +127,51 @@ implementation to keep in sync.
 The CLI uses the same typed client as MCP and prints ordinary message text without a `curl | jq`
 pipeline:
 
+For an existing account, ask its owner for an enrollment key. Enroll the new agent
+in its own profile; do not create another customer account or borrow another agent's key.
+
 ```bash
-extrovert signup --human-email you@example.com --username support
-extrovert verify                         # prompts for the emailed code
+export EXTROVERT_PROFILE=support
+extrovert enroll --agent-handle support  # hidden enrollment-key prompt
+extrovert setup --host hermes           # use the same profile for every command
+extrovert doctor
 extrovert whoami
 extrovert inbox list
-extrovert message list --inbox support@smtp.extrovert.dev
+extrovert message list --inbox support@extrovertmail.com
 extrovert message get msg_…
 extrovert review status rr_…
 ```
 
-`signup` stores the limited key only in `pending-signup.json`. `verify` atomically writes the full
-replacement to `credentials.json` and deletes the pending file. On Unix the directory is mode `0700`
-and both files are mode `0600`. The default is `~/.config/extrovert/`; use
-`EXTROVERT_CONFIG_DIR` for an isolated or managed runtime. `EXTROVERT_API_KEY` always wins when set.
+Enrollment saves the scoped agent credential privately and verifies the connection without printing
+the key. Never paste real keys into chat, tool arguments, or shell history. For unattended enrollment,
+inject `EXTROVERT_ENROLLMENT_KEY` from a secret store or provide one line on private stdin. For an
+already issued agent key, use `extrovert auth login --with-token` and its hidden prompt.
+
+On Unix the credential directory is mode `0700` and credential files are mode `0600`.
+`EXTROVERT_CONFIG_DIR` selects an explicit directory; otherwise Hermes uses its own
+`HERMES_HOME/extrovert` directory, and other runtimes use `~/.config/extrovert/`.
+`EXTROVERT_PROFILE` separates agents within that base. An explicit `EXTROVERT_API_KEY` takes
+precedence. Configuration success alone is not a connection test: restart the host and call `whoami`.
+`doctor` checks the CLI's credential and API access, not the host's separate OAuth grant.
+
+For Hermes hosted OAuth, use `extrovert setup --host hermes --transport hosted`, then
+`hermes mcp login extrovert`. Finish one browser consent flow, restart Hermes, and call `whoami`.
+If consent succeeds but a tool returns an authorization error, do not approve repeatedly or create
+another account. Keep the request ID for support. Self-signup is currently disabled.
+
+### Is my domain ready?
+
+```bash
+extrovert domain status mail.example.com
+extrovert domain recheck mail.example.com
+extrovert domain wait mail.example.com
+```
+
+Status leads with a plain-language answer: whether you need to change DNS, whether Extrovert is
+finishing setup, or whether you can create/use inboxes. `Ready` includes scoped inbox counts and
+the next action. Technical verification/signing fields are diagnostics, not readiness evidence.
+Automatic setup continues after the agent disconnects. A disconnected agent must resume status
+checks or its event cursor to receive updates; a bounded wait does not promise a later callback.
 
 ## Build and run from source
 
@@ -134,7 +185,7 @@ pnpm run build      # compiles to dist/ (excludes tests)
 Two transports, one binary:
 
 ```bash
-# stdio — for local hosts (Claude Desktop, Claude Code, Cursor)
+# stdio: for local hosts (Claude Desktop, Claude Code, Cursor)
 node /absolute/path/to/extrovert/mcp/dist/bin.js
 
 # self-hosted stateless Streamable HTTP at /mcp (default :8787)
@@ -164,7 +215,7 @@ pnpm run dev -- --http  # tsx watch, HTTP
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | `--http` bind. |
 
 > **Offline fixtures are opt-in.** With no `EXTROVERT_API_KEY`, the server still talks to the live
-> API so an agent can start with `sign_up` and receive a short-lived limited key in-session. The
+> API. Self-signup is currently disabled. When enabled, an agent can start with `sign_up` and receive a short-lived limited key in-session. The
 > key expires with the OTP and is revoked when `verify_signup` returns its replacement. Set
 > `EXTROVERT_MOCK=1` to use deterministic in-memory fixtures; `create_inbox`, `send_email`, and
 > `wait_for_email` then operate on one coherent offline dataset.
@@ -200,7 +251,7 @@ npx -y @extrovert.dev/mcp@next setup --host claude
 
 ## Example agent flow
 
-The canonical flow — **redeem → create_inbox → wait_for_email** — as an agent would run it.
+The canonical flow: **redeem → create_inbox → wait_for_email**: as an agent would run it.
 
 **1. Redeem an enrollment key for a scoped agent key.** Skip this if the host already has a key in
 `EXTROVERT_API_KEY`.
@@ -212,14 +263,15 @@ The canonical flow — **redeem → create_inbox → wait_for_email** — as an 
 //      org_id, project_id }
 ```
 
-**2. Mint an inbox.** Omit `username`/`domain` for an instant address on a pre-warmed, verified
-shared subdomain. Optionally tag it with arbitrary `metadata` (string/number/boolean values).
+**2. Create an inbox.** Omit `username` and `domain` to use the account's shared domain.
+Shared local parts must normalize to at least five characters and cannot use a reserved name.
+Optionally tag it with arbitrary `metadata` (string/number/boolean values).
 
 ```jsonc
 // tool: create_inbox
 { "display_name": "Signup Bot", "metadata": { "team": "growth", "vip": true } }
-// -> { object: "inbox", id: "pmbx_… (opaque inbox_id — treat as opaque)",
-//      org_id, project_id, address: "agent3@smtp.extrovert.dev", status: "live",
+// -> { object: "inbox", id: "pmbx_… (opaque inbox_id: treat as opaque)",
+//      org_id, project_id, address: "agent3@extrovertmail.com", status: "live",
 //      sender_verified: true, metadata: { "team": "growth", "vip": true } }
 ```
 
@@ -237,30 +289,30 @@ for the verification email and read the code straight out of the result:
 
 ```jsonc
 // tool: wait_for_email
-{ "inbox": "agent3@smtp.extrovert.dev", "from": "stripe.com", "subject": "verify", "timeout_ms": 120000 }
+{ "inbox": "agent3@extrovertmail.com", "from": "stripe.com", "subject": "verify", "timeout_ms": 120000 }
 // -> { matched: true,
 //      message: { from, subject, text, … },
 //      otp_code: "481920",
 //      verification_link: "https://dashboard.stripe.com/verify?code=481920&id=evt_9" }
 ```
 
-The agent now has the OTP and the link in the same turn — paste the code, or open the link, and
+The agent now has the OTP and the link in the same turn: paste the code, or open the link, and
 continue. No polling, no separate "check the inbox" round-trips.
 
 **4. Keep working.** Send, reply in-thread, search, list:
 
 ```jsonc
 // tool: send_email
-{ "inbox": "agent3@smtp.extrovert.dev", "to": ["founder@acme.example"],
-  "subject": "intro", "text": "Hi — provisioned via Extrovert.",
+{ "inbox": "agent3@extrovertmail.com", "to": ["founder@acme.example"],
+  "subject": "intro", "text": "Hi: provisioned via Extrovert.",
   "intent": { "summary": "Introduce the new agent inbox." }, "client_id": "send-intro-1" }
 
 // tool: reply_email
-{ "inbox": "agent3@smtp.extrovert.dev", "thread_id": "thr_…", "text": "Following up.",
+{ "inbox": "agent3@extrovertmail.com", "thread_id": "thr_…", "text": "Following up.",
   "intent": { "summary": "Continue the existing conversation." }, "client_id": "reply-followup-1" }
 
 // tool: search
-{ "query": "invoice", "inbox": "agent3@smtp.extrovert.dev" }
+{ "query": "invoice", "inbox": "agent3@extrovertmail.com" }
 ```
 
 ---
@@ -269,10 +321,10 @@ continue. No polling, no separate "check the inbox" round-trips.
 
 `extrovert-mcp --http` speaks MCP Streamable HTTP:
 
-- `POST /mcp` — one authenticated client→server request, served by a fresh MCP server instance.
-- `GET /mcp` and `DELETE /mcp` — legacy stateless compatibility responses; no session is retained.
-- `GET /healthz` — liveness, version, transport, and authentication mode.
-- `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 protected-resource metadata when
+- `POST /mcp`: one authenticated client→server request, served by a fresh MCP server instance.
+- `GET /mcp` and `DELETE /mcp`: legacy stateless compatibility responses; no session is retained.
+- `GET /healthz`: liveness, version, transport, and authentication mode.
+- `GET /.well-known/oauth-protected-resource/mcp`: RFC 9728 protected-resource metadata when
   OAuth is enabled.
 
 Each request gets an isolated server + client and emits no `mcp-session-id`, so requests can land on
@@ -296,7 +348,7 @@ src/
   stdio.ts      stdio transport
   http.ts       stateless Streamable HTTP transport (Express, OAuth + scoped keys)
   auth.ts       Clerk OAuth verification, RFC discovery, and agent-key introspection
-  tools.ts      manifest-driven tools — zod schemas, annotations, handlers, registration
+  tools.ts      manifest-driven tools: zod schemas, annotations, handlers, registration
   client.ts     thin typed Extrovert REST client (one method per /v1 endpoint)
   config.ts     env-driven configuration
   types.ts      Extrovert resource types (the REST wire shapes)
@@ -312,7 +364,9 @@ directly. OTP/link extraction is shared by the MCP wait tool and its offline fix
 
 The MCP client talks to the Extrovert Go REST API by default. When `EXTROVERT_MOCK=1`,
 `ExtrovertClient` returns fixture data instead so tests and offline demos can exercise the same
-tool surface without network access. The endpoints the client targets:
+tool surface without network access. Offline domains remain `waiting_for_dns`: fixtures do not
+check real DNS or run background setup, and their event pages stay empty while preserving the
+supplied cursor. Recheck never fabricates confirmation. The endpoints the client targets:
 
 | Tool | Method + path |
 |---|---|
@@ -326,13 +380,16 @@ tool surface without network access. The endpoints the client targets:
 | `reply_email` | `POST /v1/inboxes/{inbox_id}/reply` |
 | `read_messages` | `GET /v1/inboxes/{inbox_id}/messages` |
 | `list_threads` | `GET /v1/inboxes/{inbox_id}/threads` |
+| `search_threads` | `GET /v1/inboxes/{inbox_id}/threads/search` |
+| `get_thread` | `GET /v1/inboxes/{inbox_id}/threads/{thread_id}` |
+| `delete_thread` | `DELETE /v1/inboxes/{inbox_id}/threads/{thread_id}` |
 | `search` | `GET /v1/inboxes/{inbox_id}/messages/search` (fans out across inboxes when none given) |
 | `wait_for_email` | `POST /v1/inboxes/{inbox_id}/wait` (server holds the connection via IMAP IDLE) |
 
 The path key is the canonical opaque **`inbox_id`** (`pmbx_…`); the inbox's email address is accepted
 as a within-project alias. **Scope is in the KEY** (no scope headers): a `pk_agent_proj_…` key's
 project is implicit; a `pk_agent_org_…` key reaches its org subtree and must pick a list breadth
-(`project`/`wildcard`) — a bare org-key list is a `400 breadth_required`. Errors are RFC-9457
+(`project`/`wildcard`): a bare org-key list is a `400 breadth_required`. Errors are RFC-9457
 **problem+json** (`application/problem+json`) with a closed machine `code`
 (`forbidden_scope`, `breadth_required`, `not_found`, `idempotency_conflict`, …); the client surfaces
 that `code` (and any `request_id`) on every tool error, in both live and `EXTROVERT_MOCK=1` modes.

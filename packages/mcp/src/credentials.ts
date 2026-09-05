@@ -63,12 +63,19 @@ export function credentialPaths(env: NodeJS.ProcessEnv = process.env): Credentia
   let directory: string;
   if (explicit) {
     directory = resolve(explicit);
+  } else if (env.HERMES_HOME?.trim()) {
+    directory = join(resolve(env.HERMES_HOME.trim()), "extrovert");
   } else if (process.platform === "win32") {
     const appData = env.APPDATA?.trim();
     directory = join(appData ? resolve(appData) : join(homedir(), "AppData", "Roaming"), "Extrovert");
   } else {
     const xdg = env.XDG_CONFIG_HOME?.trim();
     directory = join(xdg ? resolve(xdg) : join(homedir(), ".config"), "extrovert");
+  }
+  if (!explicit && env.EXTROVERT_PROFILE?.trim()) {
+    const profile = env.EXTROVERT_PROFILE.trim();
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profile)) throw new Error("EXTROVERT_PROFILE must contain 1–64 letters, numbers, underscores or hyphens");
+    directory = join(directory, "profiles", profile);
   }
   return {
     directory,

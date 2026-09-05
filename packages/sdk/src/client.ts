@@ -1,5 +1,5 @@
 /**
- * ExtrovertClient — the entry point.
+ * ExtrovertClient - the entry point.
  *
  * ```ts
  * import { Extrovert } from "@extrovert.dev/sdk";
@@ -18,7 +18,7 @@
 import { HttpClient, type HttpClientConfig, type RetryOptions } from "./http.js";
 import { HttpTransport, MockTransport, type Transport } from "./transport.js";
 import { MockBackend } from "./fixtures.js";
-import { Inboxes, Messages, Threads, Webhooks, ContactLists, Suppressions, Domains, Reviews, Categories, Rules, Projects, InboxHandle } from "./resources/index.js";
+import { Inboxes, Messages, Threads, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, Categories, Rules, Projects, InboxHandle } from "./resources/index.js";
 import type { InboxHandleOptions } from "./resources/inbox-handle.js";
 import { CURRENT_API_VERSION } from "./version.js";
 import { parseKeyTier, type KeyTier } from "./key-tier.js";
@@ -83,28 +83,30 @@ function readEnv(name: string): string | undefined {
 const DEFAULT_RETRY: RetryOptions = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 8000 };
 
 export class ExtrovertClient {
-  /** `extrovert.inboxes` — create / list / get / update / delete inboxes. */
+  /** `extrovert.inboxes` - create / list / get / update / delete inboxes. */
   readonly inboxes: Inboxes;
-  /** `extrovert.messages` — read a message, reply to it (threaded). */
+  /** `extrovert.messages` - read a message, reply to it (threaded). */
   readonly messages: Messages;
-  /** `extrovert.threads` — fetch a conversation thread. */
+  /** `extrovert.threads` - fetch a conversation thread. */
   readonly threads: Threads;
-  /** `extrovert.webhooks` — register HMAC-signed inbound webhooks. */
+  /** `extrovert.webhooks` - register HMAC-signed inbound webhooks. */
   readonly webhooks: Webhooks;
-  /** `extrovert.contactLists` — per-inbox allow/block lists of addresses/domains. */
+  /** `extrovert.contactLists` - per-inbox allow/block lists of addresses/domains. */
   readonly contactLists: ContactLists;
-  /** `extrovert.suppressions` — recipient opt-outs (list-unsubscribe); precheck/list/revoke. */
+  /** `extrovert.suppressions` - recipient opt-outs (list-unsubscribe); precheck/list/revoke. */
   readonly suppressions: Suppressions;
-  /** `extrovert.domains` — the customer's domains (privileged; domain:manage scope). */
+  /** `extrovert.domains` - domain readiness and setup (domain:read or domain:manage to read; domain:manage to change). */
   readonly domains: Domains;
-  /** `extrovert.reviews` — the Review Loop (HITL) agent-plane reads. */
+  /** `extrovert.commerce` - quote/request/cancel/poll financial actions; no agent approval methods. */
+  readonly commerce: Commerce;
+  /** `extrovert.reviews` - the Review Loop (HITL) agent-plane reads. */
   readonly reviews: Reviews;
-  /** `extrovert.categories` — the Review Loop category registry (browse/propose/curate). */
+  /** `extrovert.categories` - the Review Loop category registry (browse/propose/curate). */
   readonly categories: Categories;
-  /** `extrovert.rules` — the Review Loop writing-rule store + house-style + audit/undo. */
+  /** `extrovert.rules` - the Review Loop writing-rule store + house-style + audit/undo. */
   readonly rules: Rules;
   /**
-   * `extrovert.projects` — the CANONICAL project-scoped chain. The headline is
+   * `extrovert.projects` - the CANONICAL project-scoped chain. The headline is
    * `extrovert.projects.inboxes.*` (create/list/get/update/delete/send/...), keyed by
    * the opaque `inbox_id` and scoped to a `{project_id}` path (or `-` for the org
    * wildcard on an org-tier key). The bare `extrovert.inboxes` surface is curl sugar
@@ -121,7 +123,7 @@ export class ExtrovertClient {
   readonly apiVersion: string;
   /**
    * The CEILING tier derived from the configured agent key prefix (`org` | `project`
-   * | `inbox` | `unknown`). Advisory client-side hint only — the server is the source
+   * | `inbox` | `unknown`). Advisory client-side hint only - the server is the source
    * of truth. Lets an app branch (e.g. require a project pick for an org-tier key).
    */
   readonly keyTier: KeyTier;
@@ -176,6 +178,7 @@ export class ExtrovertClient {
     this.contactLists = new ContactLists(ctx);
     this.suppressions = new Suppressions(ctx);
     this.domains = new Domains(ctx);
+    this.commerce = new Commerce(ctx);
     this.reviews = new Reviews(ctx);
     this.categories = new Categories(ctx);
     this.rules = new Rules(ctx);
@@ -183,10 +186,10 @@ export class ExtrovertClient {
   }
 
   /**
-   * Redeem an enrollment token (`pk_enroll_...`) and mint a scoped agent key.
+   * Redeem an enrollment token (`pk_enroll_...`) and issue a scoped agent key.
    *
    * Idempotent on `agent_handle`: redeeming twice with the same handle returns the same agent.
-   * Returns the raw `EnrollResponse` — to immediately use the minted key, prefer
+   * Returns the raw `EnrollResponse` - to immediately use the issued key, prefer
    * {@link ExtrovertClient.enrolled}.
    */
   enroll(req: EnrollRequest, signal?: AbortSignal): Promise<EnrollResponse> {
@@ -194,10 +197,12 @@ export class ExtrovertClient {
   }
 
   /**
-   * Grab a free account in one unauthenticated call (Slice E). Provisions a tenant
-   * + a first inbox and returns a LIMITED-scope (read-only) agent key; a one-time
-   * code is emailed to `human_email`. Call {@link verify} with the code to unlock
-   * full scopes. Idempotent on `human_email`: re-calling rotates the key + resends.
+   * Request a free account in one unauthenticated call. When free signup is
+   * enabled, this provisions a tenant plus a first inbox and returns a
+   * verification-only agent key. That key can only call {@link verify}; it cannot
+   * read or send mail. A one-time code is emailed to `human_email`. Call
+   * {@link verify} with the code to activate the account and receive full scopes.
+   * Idempotent on `human_email`: re-calling rotates the key and resends the code.
    * When free signup is paused, this throws an `ApiError` with status 403 and
    * code `signup_disabled` without creating account state.
    */
@@ -223,7 +228,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Poll the status of an async job (`GET /v1/jobs/{job_id}`) — currently only
+   * Poll the status of an async job (`GET /v1/jobs/{job_id}`) - currently only
    * the domain-offboard teardown started by {@link Domains.offboard} enqueues
    * one. `status` is terminal on succeeded/failed/cancelled; keep polling
    * otherwise. An unknown or foreign job id is a {@link NotFoundError}.
@@ -233,8 +238,8 @@ export class ExtrovertClient {
   }
 
   /**
-   * Redeem an enrollment token and return a *new* client already authenticated with the minted
-   * agent key — the natural "redeem then act" flow for an agent.
+   * Redeem an enrollment token and return a *new* client already authenticated with the issued
+   * agent key - the natural "redeem then act" flow for an agent.
    *
    * ```ts
    * const bootstrap = new Extrovert({ apiKey: enrollmentToken });
@@ -262,7 +267,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Get an ergonomic handle to an existing inbox by address — without an extra round-trip. Use this
+   * Get an ergonomic handle to an existing inbox by address - without an extra round-trip. Use this
    * when you already know the address (e.g. from a previous create) and want to send/wait/reply.
    * Call {@link InboxHandle.refresh} to load the full record.
    */

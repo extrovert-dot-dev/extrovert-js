@@ -7,7 +7,7 @@
  *
  * The mock honors the same request/response models as the real API and reproduces the few behaviors
  * the SDK ergonomics depend on (enrollment cap, idempotency on `client_id`, wait_for_email returning
- * an OTP). It is intentionally simple — not a full server — and never reaches the network.
+ * an OTP). It is intentionally simple - not a full server - and never reaches the network.
  */
 
 import type {
@@ -17,10 +17,12 @@ import type {
   AttachmentInput,
   BatchUpdateResult,
   Category,
+  CommerceRequest,
   ContactListEntry,
   CreateInboxRequest,
   DeleteResult,
   Domain,
+  DomainQuote,
   DomainRecord,
   EnrollRequest,
   EnrollResponse,
@@ -33,11 +35,16 @@ import type {
   AckReviewEventRequest,
   AckReviewEventResult,
   Job,
+  ListCommerceRequestsParams,
   OnboardDomainRequest,
+  QuoteDomainRequest,
+  RequestDomainPurchaseRequest,
+  RequestPlanChangeRequest,
   ListCategoriesParams,
   ListInboxesParams,
   ProjectInboxListParams,
   ListMessagesParams,
+  ListThreadsParams,
   ListReviewEventsParams,
   ListReviewsParams,
   ProposeCategoryRequest,
@@ -110,7 +117,7 @@ import { toArray } from "./recipients.js";
 
 /**
  * Opaque-cursor helpers for the mock's project-prefixed list. The real cursor is
- * server-minted and opaque; the mock encodes a bounded offset behind base64url so
+ * server-issued and opaque; the mock encodes a bounded offset behind base64url so
  * the SDK iteration helpers exercise an opaque (non-integer) token end to end.
  */
 function encodeMockCursor(offset: number): string {
@@ -147,12 +154,17 @@ function mailboxQuickstart(address: string): VerifyResponse["mailbox_quickstart"
   };
 }
 
-const SHARED_SUBDOMAIN = "smtp.extrovert.dev";
+const PAID_SHARED_DOMAIN = "extrovertmail.com";
+const FREE_SHARED_DOMAIN = "free.extrovertmail.com";
+const RESERVED_SHARED_LOCAL_PARTS = new Set([
+  "postmaster", "admin", "webadmin", "legal", "fraudmark", "fraudmarc", "keith",
+  "melissa", "richard", "sydney", "syd", "john", "johnny",
+]);
 
 /**
  * The fixed org/project the offline mock binds every key to. The mock has a single
  * org + project (mirroring the FIXED, key-bound org/project the real API resolves
- * from the stored key — there is no mutable selector). A `project_id` assertion on a
+ * from the stored key - there is no mutable selector). A `project_id` assertion on a
  * request must match {@link MOCK_PROJECT_ID} or the mock throws a 403, mirroring the
  * server's assertion-not-selector contract.
  */
@@ -177,6 +189,14 @@ function rid(prefix: string): string {
 
 function randomHandle(): string {
   return `agent${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+function validatedSharedLocalPart(value: string): string {
+  const normalized = value.toLowerCase().trim().replace(/[^a-z0-9._-]/g, "").replace(/^[._-]+|[._-]+$/g, "").slice(0, 40);
+  if (normalized.length < 5 || RESERVED_SHARED_LOCAL_PARTS.has(normalized)) {
+    throw new ValidationError({ status: 400, code: "invalid", message: "Shared-domain usernames must normalize to at least 5 characters and cannot use a reserved name." });
+  }
+  return normalized;
 }
 
 /**
@@ -298,6 +318,10 @@ interface MockState {
   /** job id -> async job status (mock mirror of extrovert_jobs; currently only
    *  the domain-offboard teardown enqueues one). */
   jobs: Map<string, Job>;
+  /** request id -> agent-initiated commerce request. */
+  commerceRequests: Map<string, CommerceRequest>;
+  /** request kind + stable Idempotency-Key -> request id. */
+  commerceByIdempotency: Map<string, string>;
   /** suppression id -> recipient opt-out row (mock mirror of extrovert_suppressions). */
   suppressions: Map<string, SuppressionEntry>;
   /**
@@ -305,7 +329,7 @@ interface MockState {
    * extrovert_org_settings.review_policy).
    *
    * It defaults to `require_review` because that is the column default on the
-   * REAL server for every org that has never touched it — i.e. every org. The
+   * REAL server for every org that has never touched it - i.e. every org. The
    * mock used to model no policy at all, so a bare `send()` sailed through
    * offline while the same call against production is refused 422. A mock that
    * cannot reproduce the platform's default posture is a mock that certifies
@@ -383,6 +407,8 @@ function freshState(): MockState {
     contactLists: new Map(),
     domains: new Map(),
     jobs: new Map(),
+    commerceRequests: new Map(),
+    commerceByIdempotency: new Map(),
     suppressions: seedSuppressions(),
     orgReviewPolicy: "require_review",
     inboxReviewPolicy: new Map(),
@@ -446,7 +472,7 @@ interface ReplyEnvelope {
  * `require_review` always does. `allow_direct` keeps `direct` iff the agent
  * ACTUALLY asserted it. `auto_send_graduated` is decided per-message by the
  * gates, so the conservative treatment is "review unless direct under
- * allow_direct" — the intent is still required, because the message may well end
+ * allow_direct" - the intent is still required, because the message may well end
  * up in the human queue and the summary is the reviewer's only context.
  */
 function resolvedModeIsReview(policy: ReviewPolicy, mode: "review" | "direct"): boolean {
@@ -466,7 +492,7 @@ const CLOSED_REVIEW_STATES: ReadonlySet<ReviewState> = new Set<ReviewState>([
 ]);
 
 /**
- * The states that answer 409 `terminal` rather than `wrong_state` — a review that
+ * The states that answer 409 `terminal` rather than `wrong_state` - a review that
  * has finished for good, where the answer is STOP, not "try a different verb".
  * `failed` is deliberately NOT here: an agent may still `cancel_review` it, which
  * is its one legal close-out.
@@ -479,7 +505,7 @@ const TERMINAL_REVIEW_STATES: ReadonlySet<ReviewState> = new Set<ReviewState>([
 
 /**
  * The verbs a COMPOSING agent may legally call against a draft in this state,
- * most actionable first, reads last — the mock's mirror of the server's
+ * most actionable first, reads last - the mock's mirror of the server's
  * `AllowedAgentActions`, which is what fills a 409's `allowed_action` hints.
  *
  * The reads are unconditional, which is why the list is never empty: from a
@@ -488,7 +514,7 @@ const TERMINAL_REVIEW_STATES: ReadonlySet<ReviewState> = new Set<ReviewState>([
  */
 function allowedAgentActions(state: ReviewState): string[] {
   const actions: string[] = [];
-  // submit_revision targets needs_review WITH a revision bump — including the
+  // submit_revision targets needs_review WITH a revision bump - including the
   // needs_review self-edge, which is a legal redraft (a revision bump IS a change).
   if (state === "needs_review" || state === "in_review" || state === "chatting" ||
       state === "stale" || state === "rejected") {
@@ -552,7 +578,7 @@ function problemError(problem: Problem, message?: string): ApiError {
  * The full recipe lives in `detail` (not only in `errors[]`) for the same reason
  * it does on the server: the MCP tool surface renders only the message, so
  * anything that exists only in `errors[]` is invisible to the model that has to
- * fix the request. `errors[]` carries the machine-readable duplicate — including
+ * fix the request. `errors[]` carries the machine-readable duplicate - including
  * `retry_with`, the literal JSON to splice into the original body.
  */
 function intentRequiredError(policy: ReviewPolicy, inboxOverride: boolean): ApiError {
@@ -590,7 +616,7 @@ export const INTENT_RETRY_EXAMPLE =
 /**
  * A review-loop 409 carrying the recovery FACTS the agent needs: the live state,
  * the CAS keys a legal retry must quote, and the verbs that ARE legal now. The
- * split between `stale` / `wrong_state` / `terminal` is the whole point — only
+ * split between `stale` / `wrong_state` / `terminal` is the whole point - only
  * `stale` and `born_stale` are worth retrying.
  */
 function reviewConflict(
@@ -611,7 +637,7 @@ function reviewConflict(
     }
   } else {
     fields.push(
-      { field: "revision", code: String(review.revision), detail: "current revision — use as parent_revision" },
+      { field: "revision", code: String(review.revision), detail: "current revision - use as parent_revision" },
       { field: "version", code: String(review.version), detail: "current row version" },
     );
   }
@@ -672,13 +698,13 @@ export class MockBackend {
       this.state.agentByHandle.set(req.agent_handle, agentId);
     }
     // Mirror the frozen EnrollResult wire shape EXACTLY (agent_id, agent_key, scopes,
-    // org_id, project_id) so SDK tests exercise the same fields the live server emits —
+    // org_id, project_id) so SDK tests exercise the same fields the live server emits  -
     // no agent_key_prefix/expires_at/mailboxes_* (those are NOT in the contract).
     return {
       agent_id: agentId,
       agent_key: `pk_agent_proj_${agentId.slice(4)}_${rid("sk").slice(3)}`,
       scopes: ["mailbox:create", "mailbox:read", "mailbox:send", "webhook:write"],
-      // The minted key is bound to the token's resolved org/project; the agent cannot change it.
+      // The issued key is bound to the token's resolved org/project; the agent cannot change it.
       org_id: MOCK_ORG_ID,
       project_id: MOCK_PROJECT_ID,
     };
@@ -695,7 +721,7 @@ export class MockBackend {
     const customerId = existing?.customerId ?? `cus_pn_signup_${rid("c").slice(2)}`;
     const agentId = existing?.agentId ?? rid("agt");
     const address =
-      existing?.address ?? `${req.username ?? randomHandle()}@smtp.extrovert.dev`;
+      existing?.address ?? `${validatedSharedLocalPart(req.username ?? randomHandle())}@${FREE_SHARED_DOMAIN}`;
     // Stable offline code keeps the full signup → mailbox handoff executable in
     // examples and contract tests without ever weakening the live API's CSPRNG.
     const otp = "492013";
@@ -761,8 +787,10 @@ export class MockBackend {
     }
     // Validate (and snapshot) the create-time metadata: no null deletes on create.
     const metadata = req.metadata ? mergeMetadata({}, req.metadata) : {};
-    const username = req.username ?? randomHandle();
-    const domain = req.domain ?? SHARED_SUBDOMAIN;
+    const domain = req.domain ?? PAID_SHARED_DOMAIN;
+    const normalizedDomain = domain.trim().toLowerCase();
+    const isSharedDomain = normalizedDomain === PAID_SHARED_DOMAIN || normalizedDomain === FREE_SHARED_DOMAIN;
+    const username = isSharedDomain ? validatedSharedLocalPart(req.username ?? randomHandle()) : (req.username ?? randomHandle());
     const id = rid("ibx");
     const inbox: Inbox = {
       object: "inbox",
@@ -777,6 +805,7 @@ export class MockBackend {
       onboarding_mode: req.domain ? "ns_delegated" : "shared",
       agent_id: null,
       daily_send_limit: DEFAULT_DAILY_SEND_LIMIT,
+      direct_smtp_enabled: false,
       webhook_url: req.webhook_url ?? null,
       metadata,
       created_at: now(),
@@ -813,7 +842,7 @@ export class MockBackend {
   getInbox(address: string): Inbox | undefined {
     const inbox = this.state.inboxes.get(address);
     if (!inbox) return undefined;
-    // effective_review_policy rides the SINGLE-inbox read only — the list path
+    // effective_review_policy rides the SINGLE-inbox read only - the list path
     // omits it on the server (it would be one settings read per row for a value
     // identical across the org), so the mock omits it there too. Reading it once at
     // start-up is how an agent plans its first send instead of discovering the
@@ -825,7 +854,7 @@ export class MockBackend {
    * Normalize an inbox ref (opaque id OR address alias) to the canonical address the
    * mock keys its message/thread/contact maps on. The SDK now routes inbox ops by the
    * canonical opaque `id` when it holds a full record (matching the contract's
-   * canonical-key semantics), so the mock must resolve an id back to its address —
+   * canonical-key semantics), so the mock must resolve an id back to its address  -
    * both key `state.inboxes` (same object), `state.messages` keys by address only.
    * Unknown refs pass through unchanged so the existing not-found paths still fire.
    */
@@ -894,7 +923,7 @@ export class MockBackend {
   }
 
   createInboxInProject(projectId: string, req: CreateInboxRequest): Inbox {
-    // A bare org wildcard create needs a concrete project (breadth_required) — the
+    // A bare org wildcard create needs a concrete project (breadth_required) - the
     // mock has a single project, so "-" still resolves to it for ergonomics.
     this.resolveProjectSegment(projectId);
     return this.createInbox(req);
@@ -1065,8 +1094,8 @@ export class MockBackend {
 
   /**
    * Submit a new message for review (mock). Rides the SAME endpoint as `send` on
-   * the real server, so it is literally the same call here: the resolved policy —
-   * not which SDK method you picked — decides whether the message is queued
+   * the real server, so it is literally the same call here: the resolved policy  -
+   * not which SDK method you picked - decides whether the message is queued
    * (`kind:"queued_for_review"`) or delivered.
    */
   submitForReview(address: string, req: SendRequest): SendOutcome {
@@ -1102,15 +1131,15 @@ export class MockBackend {
     const policy = this.reviewPolicyFor(address);
 
     // A caller "opted in" by mentioning the review loop at all. It decides the
-    // RESPONSE SHAPE and the mode default — never whether the policy applies.
+    // RESPONSE SHAPE and the mode default - never whether the policy applies.
     const optedIn =
       req.mode !== undefined || req.intent !== undefined || (req.category_id ?? "") !== "";
 
     // POLICY-AWARE MODE DEFAULT. Order is load-bearing: an explicit assertion wins
     // (the policy may still refuse it); then a caller that supplied any review field
     // but no mode keeps the historical opt-in meaning ("queue this"); only then does
-    // an allow_direct org's bare send stay direct; everything else — require_review,
-    // auto_send_graduated, and any policy value we do not recognize — falls to
+    // an allow_direct org's bare send stay direct; everything else - require_review,
+    // auto_send_graduated, and any policy value we do not recognize - falls to
     // review. Unknown policies MUST land there: a value a newer node wrote must
     // never be read by an older client as permission.
     let mode: "review" | "direct";
@@ -1146,7 +1175,7 @@ export class MockBackend {
     // ROUTING. Two auto-send paths reach delivery without a human:
     //   - allow_direct + an asserted (or defaulted) `direct` mode
     //   - auto_send_graduated + a category the agent named
-    // Everything else — including auto_send_graduated with NO category — is held,
+    // Everything else - including auto_send_graduated with NO category - is held,
     // and the gate_outcome records why so the agent is not left guessing.
     const directAuto = policy === "allow_direct" && mode === "direct";
     const graduatedAuto = policy === "auto_send_graduated" && (req.category_id ?? "") !== "";
@@ -1164,7 +1193,7 @@ export class MockBackend {
 
     if (!optedIn) {
       // The LEGACY 202 body, byte-shape-identical to what the server still returns
-      // for a caller that never mentioned the review loop — plus the additive
+      // for a caller that never mentioned the review loop - plus the additive
       // `review_id`, which is the only handle a crashed agent has on this path.
       // Note the asymmetry, and that it is the server's, not ours: `send` answers
       // {status, message_id, review_id} with NO thread_id; reply/forward answer
@@ -1202,7 +1231,7 @@ export class MockBackend {
     this.enqueueTerminalNudge(review);
   }
 
-  /** Raw delivery for a send — no policy, only reachable from submitOutbound. */
+  /** Raw delivery for a send - no policy, only reachable from submitOutbound. */
   private deliverSend(address: string, req: SendRequest): SendResult {
     return this.deliverRaw(address, {
       to: toArray(req.to),
@@ -1215,7 +1244,7 @@ export class MockBackend {
     });
   }
 
-  /** Raw delivery for a reply — no policy, only reachable from submitOutbound. */
+  /** Raw delivery for a reply - no policy, only reachable from submitOutbound. */
   private deliverReply(address: string, req: ReplyRequest, env: ReplyEnvelope): SendResult {
     return this.deliverRaw(address, {
       to: env.to,
@@ -1266,6 +1295,13 @@ export class MockBackend {
    * the server does before it writes the review row.
    */
   private deriveReplyEnvelope(address: string, req: ReplyRequest): ReplyEnvelope {
+    if (Boolean(req.thread_id) === Boolean(req.message_id)) {
+      throw new ValidationError({
+        status: 400,
+        code: "bad_request",
+        message: "provide exactly one of thread_id or message_id",
+      });
+    }
     const all = this.state.messages.get(address) ?? [];
     let parent: Message | undefined;
     let threadId = req.thread_id;
@@ -1281,6 +1317,13 @@ export class MockBackend {
         status: 400,
         code: "bad_request",
         message: "thread_id or message_id is required",
+      });
+    }
+    if (req.thread_id && req.expected_last_message_id && parent?.id !== req.expected_last_message_id) {
+      throw new ConflictError({
+        status: 409,
+        code: "conflict",
+        message: `thread advanced; latest message is ${parent?.id ?? "unknown"}`,
       });
     }
     const to: string[] = [];
@@ -1399,8 +1442,8 @@ export class MockBackend {
       );
     }
     // needs_review IS a legal source for an AGENT question (D-5). The old guard's
-    // rationale was right — an agent must not conjure a reviewer for a queued draft
-    // — but its effect was wrong: after a reviewer-reject lands a draft back in
+    // rationale was right - an agent must not conjure a reviewer for a queued draft
+    // - but its effect was wrong: after a reviewer-reject lands a draft back in
     // needs_review WITH feedback, the skill tells the agent to ask when the feedback
     // is ambiguous, and it could not. So the question is appended and the state is
     // deliberately NOT changed: `in_review` is a soft lock meaning a real human has
@@ -1432,7 +1475,7 @@ export class MockBackend {
       review.updated_at = now();
       this.state.reviews.set(reviewId, review);
     }
-    // No nudge for the agent's OWN question — feedback_added is a HUMAN signal, and
+    // No nudge for the agent's OWN question - feedback_added is a HUMAN signal, and
     // waking a composer with its own message is how a drain loop starts spinning.
     if (key) this.state.chatByIdempotencyKey.set(key, review);
     return review;
@@ -1460,7 +1503,7 @@ export class MockBackend {
       );
     }
     // WRONG_STATE: the draft is still live but this VERB is illegal from here.
-    // Never retry the same verb — read the allowed_action hints and pick another.
+    // Never retry the same verb - read the allowed_action hints and pick another.
     // needs_review IS legal (D-1): a redraft bumps the revision, which IS a change,
     // so the self-edge that used to be banned is exactly the loop a reviewer-reject
     // hands back to the composer.
@@ -1497,7 +1540,7 @@ export class MockBackend {
     review.version += 1;
     this.setReviewState(review, "needs_review");
     if (req.subject !== undefined) review.proposed_subject = req.subject;
-    // `text` is canonical, `body` a permanent alias — resolved here EXACTLY as the
+    // `text` is canonical, `body` a permanent alias - resolved here EXACTLY as the
     // server does, including the conflicting_alias rejection. The mock must not be
     // more permissive than the wire: a fixture that quietly accepts what the server
     // refuses is how a 67-day-old send bug stayed invisible behind green demos.
@@ -1613,7 +1656,7 @@ export class MockBackend {
    * review id so a test can drive the reviewer decision plane offline. `createdAtMs`
    * (optional) backdates created_at so a test can trip the hard review_deadline breaker.
    */
-  seedReviewerHeldReview(opts: { fromAddress: string; createdAtMs?: number } = { fromAddress: "rep@smtp.extrovert.dev" }): string {
+  seedReviewerHeldReview(opts: { fromAddress: string; createdAtMs?: number } = { fromAddress: "reviewer@extrovertmail.com" }): string {
     const review = this.createReviewRecord(opts.fromAddress, {
       kind: "send",
       subject: "Pilot proposal",
@@ -1704,7 +1747,7 @@ export class MockBackend {
       this.setReviewState(review, "sent");
       review.version += 1;
       review.sent_message_id = `<${rid("mid")}@acme.test>`;
-      // A BYO reviewer approve is still a delivery the COMPOSER has to learn about —
+      // A BYO reviewer approve is still a delivery the COMPOSER has to learn about  -
       // send_path is what tells the two release paths apart on the terminal nudge.
       review.send_path = "reviewer_approved";
         review.sent_at = now();
@@ -1735,7 +1778,7 @@ export class MockBackend {
 
   /**
    * Browse the registry (mock), newest-first, excluding merged/soft-deleted. `match`
-   * is a pure lexical filter (every token must appear in name+description) — NO LLM,
+   * is a pure lexical filter (every token must appear in name+description) - NO LLM,
    * mirroring the server.
    */
   listCategories(params: ListCategoriesParams = {}): Page<Category> {
@@ -1781,7 +1824,7 @@ export class MockBackend {
     return cat;
   }
 
-  /** Rename / re-describe a category (mock) — metadata only (D10). */
+  /** Rename / re-describe a category (mock) - metadata only (D10). */
   updateCategory(categoryId: string, req: UpdateCategoryRequest): Category | undefined {
     const cat = this.state.categories.get(categoryId);
     if (!cat) return undefined;
@@ -1792,7 +1835,7 @@ export class MockBackend {
     return cat;
   }
 
-  // ---- Graduation + risk dial (Review Loop, D16/D6/D17) — agent READ + PROPOSE --
+  // ---- Graduation + risk dial (Review Loop, D16/D6/D17) - agent READ + PROPOSE --
 
   /** The mock account-default risk dial (mirrors the server defaults). */
   private accountDial(): RiskDial["account"] {
@@ -1810,7 +1853,7 @@ export class MockBackend {
   /**
    * Read the effective risk dial (mock): the account default + every category with an
    * inherited (null override) effective dial. The mock category carries no overrides,
-   * so every category inherits — effective == account.
+   * so every category inherits - effective == account.
    */
   getRiskDial(): RiskDial {
     const account = this.accountDial();
@@ -1870,7 +1913,7 @@ export class MockBackend {
 
   /**
    * Propose graduating a category (mock): returns the current gate status without
-   * changing the category state (D16 — an agent can never flip the bit).
+   * changing the category state (D16 - an agent can never flip the bit).
    */
   proposeGraduation(categoryId: string, _req: ProposeGraduationRequest): GraduationStatus | undefined {
     return this.getGraduationStatus(categoryId);
@@ -1880,7 +1923,7 @@ export class MockBackend {
    * Read the D19/§8 backlog-reconciliation status (mock): counts the QUEUED drafts in a
    * category that are stale vs current-enough against the current rules-version. The
    * mock has no per-draft composed_* stamps on its Review fixtures, so every queued
-   * draft reads as current-enough (composed 0 vs current 0) — the contract shape is
+   * draft reads as current-enough (composed 0 vs current 0) - the contract shape is
    * exercised; the integer-compare logic is covered by the Go tests.
    */
   getScanBacklogStatus(categoryId: string): ScanBacklogStatus | undefined {
@@ -1910,7 +1953,7 @@ export class MockBackend {
   }
 
   /**
-   * Read the demand-driven pacing state (mock — M7 Slice B/§8): the cursor + effective
+   * Read the demand-driven pacing state (mock - M7 Slice B/§8): the cursor + effective
    * window/ceiling/interval + each queued draft's classification. The mock has no cursor
    * (nothing reviewed) and no composed_* stamps, so every queued draft reads in-window-
    * fresh until the window fills, then ahead; the contract shape is exercised (the
@@ -1958,7 +2001,7 @@ export class MockBackend {
     return [hard, spec, human, r.rev, r.priority];
   }
 
-  /** Get the ORDERED active rule set (mock) — §7 ladder + category-before-general. */
+  /** Get the ORDERED active rule set (mock) - §7 ladder + category-before-general. */
   getRules(params: GetRulesParams = {}): RuleSnapshot {
     const active = [...this.state.rules.values()].filter((r) => r.status === "active");
     const byRank = (a: Rule, b: Rule): number => {
@@ -1991,7 +2034,7 @@ export class MockBackend {
     };
   }
 
-  /** Save / edit a rule (mock) — append-only by supersession (D11). */
+  /** Save / edit a rule (mock) - append-only by supersession (D11). */
   saveRule(req: SaveRuleRequest): Rule {
     const text = req.rule_text.trim();
     if (!text) {
@@ -2082,7 +2125,7 @@ export class MockBackend {
     return next;
   }
 
-  /** Retire a rule (mock) — soft delete, or undefined when unknown. */
+  /** Retire a rule (mock) - soft delete, or undefined when unknown. */
   retireRule(ruleId: string): Rule | undefined {
     const rule = this.state.rules.get(ruleId);
     if (!rule) return undefined;
@@ -2102,7 +2145,7 @@ export class MockBackend {
     return { items, total: items.length };
   }
 
-  /** Undo a rule change (mock) — restore the prior version; idempotent (re-undo 409). */
+  /** Undo a rule change (mock) - restore the prior version; idempotent (re-undo 409). */
   undoRuleChange(udoId: string): Rule {
     const entry = this.state.ruleAudit.get(udoId);
     if (!entry) throw new NotFoundError({ status: 404, code: "not_found", message: "audit row not found" });
@@ -2223,7 +2266,7 @@ export class MockBackend {
   }
 
   /**
-   * Enqueue `front_run_next` — the signal that the review reached a terminal state
+   * Enqueue `front_run_next` - the signal that the review reached a terminal state
    * while the agent was still trying to act on it.
    *
    * Deduped on (review, terminal state, parent revision) so a retry loop hitting
@@ -2266,8 +2309,8 @@ export class MockBackend {
 
   /**
    * Mock-only: mirror an approved draft whose delivery then FAILED at the provider.
-   * This is the case the composing agent was previously never told about — the
-   * console showed the error and the agent's queue stayed silent — so the loop test
+   * This is the case the composing agent was previously never told about - the
+   * console showed the error and the agent's queue stayed silent - so the loop test
    * that matters most drives this path.
    */
   simulateSendFailed(reviewId: string, error = "provider rejected the message"): Review | undefined {
@@ -2357,7 +2400,7 @@ export class MockBackend {
 
   /**
    * Long-poll for a review event (mock). Offline there is nothing to wait FOR, so it
-   * returns the immediate drain (empty when caught up) — the server's "empty on
+   * returns the immediate drain (empty when caught up) - the server's "empty on
    * timeout" contract.
    */
   waitForReviewEvent(params: WaitForReviewEventParams = {}): ReviewEventsResult {
@@ -2479,7 +2522,7 @@ export class MockBackend {
       html: opts.html ?? null,
       extracted_text: opts.text.trim() || null,
       extracted_html: opts.html?.trim() || null,
-      message_id: `<${id}@${address.split("@")[1] ?? SHARED_SUBDOMAIN}>`,
+      message_id: `<${id}@${address.split("@")[1] ?? PAID_SHARED_DOMAIN}>`,
       folder: opts.direction === "inbound" ? "INBOX" : "Sent",
       seen: opts.direction === "outbound",
       date: now(),
@@ -2612,10 +2655,10 @@ export class MockBackend {
     return result;
   }
 
-  listThreads(address: string): Page<Thread> {
+  listThreads(address: string, params: ListThreadsParams = {}): Page<Thread> {
     address = this.addrOf(address);
     const items = this.threadsFor(address);
-    return { items, total: items.length };
+    return this.paginateThreads(items, params);
   }
 
   /** Thread-level search (subject / snippet / participant substring). */
@@ -2628,7 +2671,21 @@ export class MockBackend {
         t.snippet.toLowerCase().includes(q) ||
         t.participants.join(" ").toLowerCase().includes(q),
     );
-    return { items, total: items.length };
+    return this.paginateThreads(items, params);
+  }
+
+  private paginateThreads(
+    items: Thread[],
+    params: Pick<ListThreadsParams, "limit" | "offset" | "cursor">,
+  ): Page<Thread> {
+    const total = items.length;
+    const cursorOffset = params.cursor === undefined ? undefined : Number(params.cursor);
+    const offset = params.offset ?? (Number.isFinite(cursorOffset) ? cursorOffset! : 0);
+    const limit = params.limit ?? 25;
+    const page = items.slice(offset, offset + limit);
+    const result: Page<Thread> = { items: page, total };
+    if (offset + page.length < total) result.next_cursor = String(offset + page.length);
+    return result;
   }
 
   /** Fetch one thread (with messages, oldest-first) by id under an inbox. */
@@ -2712,18 +2769,19 @@ export class MockBackend {
       arr.push(m);
       byThread.set(m.thread_id, arr);
     }
-    const items = [...byThread.entries()].map(([id, ms]) => this.buildThread(address, id, ms));
+    const items = [...byThread.entries()].map(([id, ms]) => this.buildThread(address, id, ms, true));
     items.sort((a, b) => b.last_message_at.localeCompare(a.last_message_at));
     return items;
   }
 
-  private buildThread(address: string, id: string, ms: Message[]): Thread {
+  private buildThread(address: string, id: string, ms: Message[], summary = false): Thread {
     const sorted = [...ms].sort((a, b) => a.date.localeCompare(b.date));
     const last = sorted[sorted.length - 1]!;
     const seen = new Set<string>();
     const participants: string[] = [];
-    for (const m of sorted) {
-      for (const a of [m.from, ...m.to]) {
+    const participantMessages = summary ? [last] : sorted;
+    for (const m of participantMessages) {
+      for (const a of [m.from, ...m.to, ...(m.cc ?? []), ...(m.reply_to ?? [])]) {
         const key = a.email.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
@@ -2738,6 +2796,9 @@ export class MockBackend {
       message_count: sorted.length,
       last_message_at: last.date,
       snippet: (last.text ?? last.html ?? "").slice(0, 120),
+      unread: !last.seen,
+      last_message_has_attachments: (this.state.attachments.get(last.id)?.length ?? 0) > 0,
+      last_message_id: last.id,
     };
   }
 
@@ -2915,7 +2976,7 @@ export class MockBackend {
 
   // ---- domains (Slice 5) ------------------------------------------------
 
-  /** Onboard a domain, mirroring the server's per-mode record set + status. Idempotent on the name. */
+  /** Add a delegated domain and return only the customer-published nameservers. */
   onboardDomain(req: OnboardDomainRequest): Domain {
     // project_id is an assertion (never a selector): a mismatch is 403. The domain's
     // project binding is always derived from the key, not from client input.
@@ -2923,22 +2984,23 @@ export class MockBackend {
     const name = req.domain.trim().toLowerCase();
     const existing = this.state.domains.get(name);
     if (existing) return { ...existing };
-    const mode = req.mode ?? "ns_delegated";
+    const mode = "ns_delegated";
     const domain: Domain = {
       id: rid("dom"),
       domain: name,
       mode,
-      verification_status:
-        mode === "shared" ? "verified" : mode === "manual" ? "pending" : "verifying",
-      dkim_status: mode === "shared" ? "configured" : mode === "manual" ? "pending" : "configured",
-      shared: mode === "shared",
+      verification_status: "verifying",
+      dkim_status: "configured",
+      shared: false,
       created_at: now(),
-      records: mode === "manual" || mode === "ns_delegated" ? domainRecordSet(name) : undefined,
-      delegation_ns: mode === "ns_delegated" ? domainDelegationNS(name) : undefined,
-      instruction:
-        mode === "shared"
-          ? "Shared domain ready. No DNS changes required."
-          : "Add the records, then trigger verification.",
+      delegation_ns: domainDelegationNS(name),
+      instruction: "Add the nameserver entries at your domain provider. We check automatically; use Recheck DNS for an immediate check.",
+      readiness: {
+        status: "waiting_for_dns", label: "Waiting for DNS", summary: "We have not confirmed your nameserver entries yet. Add them at your domain provider; we will finish setup automatically.",
+        reason: "dns_entries_unconfirmed", action_required_by: "customer", next_action: "check_dns_entries",
+        ready_for_inboxes: false, poll_after_seconds: 30,
+        inboxes: { scope: "agent", total: 0, ready: 0, setting_up: 0, needs_attention: 0 },
+      },
     };
     this.state.domains.set(name, domain);
     return { ...domain };
@@ -2992,6 +3054,136 @@ export class MockBackend {
     return job ? { ...job } : undefined;
   }
 
+  // ---- commerce (quote/request/status; no human approval mutation) ------
+
+  quoteDomain(req: QuoteDomainRequest): DomainQuote {
+    const domain = req.domain.trim().toLowerCase();
+    return {
+      object: "domain_quote",
+      domain,
+      available: !domain.startsWith("unavailable."),
+      currency: "usd",
+      quote_cents: 2500,
+      renewal_cents: 2500,
+      premium: false,
+      quote_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      blockers: [],
+    };
+  }
+
+  requestDomainPurchase(req: RequestDomainPurchaseRequest): CommerceRequest {
+    const idem = `domain_purchase:${req.idempotency_key.trim()}`;
+    const replayId = this.state.commerceByIdempotency.get(idem);
+    if (replayId) return { ...this.state.commerceRequests.get(replayId)! };
+    const quote = this.quoteDomain({ domain: req.domain });
+    const timestamp = now();
+    const id = rid("creq");
+    const approvalUrl = `https://app.extrovert.dev/commerce/requests/${id}`;
+    const request: CommerceRequest = {
+      object: "commerce_request",
+      id,
+      kind: "domain_purchase",
+      state: "awaiting_human_approval",
+      domain: quote.domain,
+      domain_scope: req.scope ?? "org",
+      rationale: req.rationale,
+      currency: quote.currency,
+      quote_cents: quote.quote_cents,
+      renewal_cents: quote.renewal_cents,
+      quote_expires_at: quote.quote_expires_at,
+      auto_renew: req.auto_renew ?? true,
+      blocker_code: "human_approval_required",
+      blockers: [
+        {
+          code: "human_approval_required",
+          message: "A human billing administrator must approve this domain purchase.",
+          manage_url: approvalUrl,
+        },
+      ],
+      approval_url: approvalUrl,
+      agent_next_action: "Share approval_url with the human, then poll this request after approval.",
+      retry_safe: true,
+      poll_after_seconds: 10,
+      version: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    this.state.commerceRequests.set(id, request);
+    this.state.commerceByIdempotency.set(idem, id);
+    return { ...request };
+  }
+
+  requestPlanChange(req: RequestPlanChangeRequest): CommerceRequest {
+    const idem = `plan_change:${req.idempotency_key.trim()}`;
+    const replayId = this.state.commerceByIdempotency.get(idem);
+    if (replayId) return { ...this.state.commerceRequests.get(replayId)! };
+    const timestamp = now();
+    const id = rid("creq");
+    const approvalUrl = `https://app.extrovert.dev/commerce/requests/${id}`;
+    const request: CommerceRequest = {
+      object: "commerce_request",
+      id,
+      kind: "plan_change",
+      state: "awaiting_human_approval",
+      target_plan: req.target_plan,
+      current_plan: "developer",
+      rationale: req.rationale,
+      currency: "usd",
+      quote_cents: 0,
+      renewal_cents: 0,
+      auto_renew: true,
+      blocker_code: "human_approval_required",
+      blockers: [
+        {
+          code: "human_approval_required",
+          message: "A human billing administrator must approve this plan change.",
+          manage_url: approvalUrl,
+        },
+      ],
+      approval_url: approvalUrl,
+      agent_next_action: "Share approval_url with the human, then poll this request after approval.",
+      retry_safe: true,
+      poll_after_seconds: 10,
+      version: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    this.state.commerceRequests.set(id, request);
+    this.state.commerceByIdempotency.set(idem, id);
+    return { ...request };
+  }
+
+  getCommerceRequest(requestId: string): CommerceRequest | undefined {
+    const request = this.state.commerceRequests.get(requestId);
+    return request ? { ...request } : undefined;
+  }
+
+  cancelCommerceRequest(requestId: string): CommerceRequest | undefined {
+    const request = this.state.commerceRequests.get(requestId);
+    if (!request) return undefined;
+    if (!["awaiting_human_approval", "blocked", "approved", "payment_action_required", "payment_failed"].includes(request.state)) {
+      throw new ValidationError({ status: 409, code: "conflict", message: "this request can no longer be cancelled" });
+    }
+    request.state = "cancelled";
+    request.blocker_code = undefined;
+    request.blockers = [];
+    request.agent_next_action = "The request is cancelled. Create a new request only if the purchase is still needed.";
+    request.version += 1;
+    request.updated_at = now();
+    return { ...request };
+  }
+
+  listCommerceRequests(params: ListCommerceRequestsParams = {}): Page<CommerceRequest> {
+    let items = [...this.state.commerceRequests.values()];
+    items.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const total = items.length;
+    const offset = params.page ? Math.max(0, Number.parseInt(params.page, 10) || 0) : 0;
+    const limit = Math.max(1, Math.min(params.limit ?? 50, 100));
+    const page = items.slice(offset, offset + limit).map((request) => ({ ...request }));
+    const next = offset + page.length;
+    return { items: page, total, next_cursor: next < total ? String(next) : undefined };
+  }
+
   // ---- suppressions (recipient opt-outs / list-unsubscribe) --------------
 
   /**
@@ -3043,7 +3235,7 @@ export class MockBackend {
   /**
    * Reject the WHOLE send if ANY recipient has an active org-scope suppression,
    * naming exactly the suppressed addresses (never the scope/origin) so the caller
-   * can drop them and retry — mirroring the live `recipient_suppressed` (422) path.
+   * can drop them and retry - mirroring the live `recipient_suppressed` (422) path.
    */
   private enforceSuppression(recipients: string[]): void {
     const active = new Set(
@@ -3146,19 +3338,7 @@ function redactSecret(w: Webhook): Webhook {
   return rest;
 }
 
-/** The MX/SPF/DMARC/DKIM record set a customer must set (mirrors the Go manualRecordSet). */
-function domainRecordSet(domain: string): DomainRecord[] {
-  const dkimSuffix = domain.replace(/\./g, "-");
-  return [
-    { name: domain, type: "MX", value: "smtp.extrovert.dev", priority: 10, ttl: 3600 },
-    { name: domain, type: "TXT", value: "v=spf1 include:spf.protection.outlook.com -all", ttl: 3600 },
-    { name: `_dmarc.${domain}`, type: "TXT", value: "v=DMARC1; p=none; rua=mailto:dmarc@smtp.extrovert.dev", ttl: 3600 },
-    { name: `selector1._domainkey.${domain}`, type: "CNAME", value: `selector1-${dkimSuffix}._domainkey.azurecomm.net`, ttl: 3600 },
-    { name: `selector2._domainkey.${domain}`, type: "CNAME", value: `selector2-${dkimSuffix}._domainkey.azurecomm.net`, ttl: 3600 },
-  ];
-}
-
-/** The single NS delegation (one row per public nameserver) for ns_delegated mode. */
+/** The nameserver records for delegated setup. */
 function domainDelegationNS(domain: string): DomainRecord[] {
   return [
     { name: domain, type: "NS", value: "ns1.extrovert.dev", ttl: 300 },

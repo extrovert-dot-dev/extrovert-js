@@ -1,5 +1,5 @@
 /**
- * stdio transport — for local MCP hosts (Claude Desktop, Claude Code, Cursor).
+ * stdio transport - for local MCP hosts (Claude Desktop, Claude Code, Cursor).
  *
  * The host spawns this process and speaks MCP over stdin/stdout. Diagnostics go
  * to stderr only; stdout is reserved for the JSON-RPC stream.
@@ -37,9 +37,9 @@ export async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  const auth = config.apiKey ? "authenticated" : "ready for sign_up";
+  const auth = config.apiKey ? "credential loaded; call whoami to verify access" : "ready for enrollment or an existing agent key";
   const mode = config.mock ? "offline fixtures" : `live API ${config.apiBaseUrl} · ${auth}`;
-  process.stderr.write(`extrovert-mcp: stdio transport ready — ${mode}\n`);
+  process.stderr.write(`extrovert-mcp: stdio transport ready - ${mode}\n`);
 
   const shutdown = async (): Promise<void> => {
     await server.close().catch(() => {});

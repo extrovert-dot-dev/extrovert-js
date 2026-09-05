@@ -11,7 +11,7 @@
 
 /**
  * The CLOSED problem code enum (mirrors `components.schemas.Problem.code` in the
- * frozen OpenAPI). Adding a member is a contract change — keep it in lockstep with
+ * frozen OpenAPI). Adding a member is a contract change - keep it in lockstep with
  * the Go `ProblemCode` enum.
  */
 export type ProblemCode =
@@ -35,7 +35,7 @@ export type ProblemCode =
   // Before these members every review-loop failure answered a bare `409
   // "conflict"` (or, on the send path, no machine code at all), so a stale CAS,
   // an illegal verb and a review a human had already closed were
-  // indistinguishable — and a retry loop written against `status === 409`
+  // indistinguishable - and a retry loop written against `status === 409`
   // retried all three, including the one that can never succeed. Each member
   // below exists because the agent must take a DIFFERENT action on it; see
   // {@link REVIEW_PROBLEM_RETRYABLE} for which are worth retrying at all.
@@ -86,11 +86,11 @@ export const PROBLEM_CODES: readonly ProblemCode[] = [
  * compare-and-set (`stale`) and a redraft built against an older rule high-water
  * (`born_stale`) describe a situation a retry can fix, and each only a bounded
  * number of times (re-read, re-apply on top of the other party's change,
- * resubmit). `wrong_state` means the verb is wrong, not the timing — read the
+ * resubmit). `wrong_state` means the verb is wrong, not the timing - read the
  * `allowed_action` hints and pick another one. `terminal` means the review is
  * finished forever; a `front_run_next` nudge is already waiting on the queue
  * with the outcome. `send_needs_reconciliation` means a delivery attempt is
- * unconfirmed — resending is precisely how a message goes out twice.
+ * unconfirmed - resending is precisely how a message goes out twice.
  *
  * `intent_required` is listed false because retrying the SAME bytes fails
  * identically: the fix is to ADD an `intent` and send a different request. The

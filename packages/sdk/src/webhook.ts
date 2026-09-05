@@ -120,7 +120,7 @@ export async function parseWebhook(options: VerifyWebhookOptions): Promise<Webho
 }
 
 /**
- * Produce the canonical `X-Extrovert-Signature` header value for a body — the exact format the Go
+ * Produce the canonical `X-Extrovert-Signature` header value for a body - the exact format the Go
  * delivery engine emits: `t=<unix>,v1=<hex hmac-sha256("<t>.<rawbody>")>`. Mainly useful for tests
  * and self-hosted senders; the platform signs deliveries server-side. The Go `SignWebhook` and this
  * helper are pinned to the same fixed conformance vector across languages.

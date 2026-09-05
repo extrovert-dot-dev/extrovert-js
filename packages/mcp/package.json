@@ -1,7 +1,7 @@
 {
   "name": "@extrovert.dev/mcp",
-  "version": "0.1.0-pre.6",
-  "description": "Extrovert MCP server — a real mailbox for your agent, in one call. Tools incl. a blocking wait_for_email with OTP/link extraction.",
+  "version": "0.1.0-pre.7",
+  "description": "Extrovert MCP server - a real mailbox for your agent, in one call. Tools incl. a blocking wait_for_email with OTP/link extraction.",
   "keywords": [
     "extrovert",
     "mcp",
@@ -65,6 +65,7 @@
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "express": "5.2.1",
+    "yaml": "2.9.0",
     "zod": "4.5.4"
   },
   "devDependencies": {

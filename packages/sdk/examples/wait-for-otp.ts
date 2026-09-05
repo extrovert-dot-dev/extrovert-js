@@ -1,8 +1,8 @@
 /**
- * wait_for_email — the killer primitive.
+ * wait_for_email - the killer primitive.
  *
  * An agent provisions an inbox, kicks off a sign-up somewhere that emails an OTP, then *blocks*
- * until the code lands — and gets it extracted as a structured field. No polling loop.
+ * until the code lands - and gets it extracted as a structured field. No polling loop.
  *
  *   EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
  */

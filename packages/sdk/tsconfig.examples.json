@@ -1,6 +1,6 @@
 {
   // Typecheck the examples. They are the first code a new user runs, so a sample
-  // that does not compile — or that teaches a call the server now refuses — is a
+  // that does not compile - or that teaches a call the server now refuses - is a
   // defect, not a cosmetic issue. Keeping `examples` out of the typecheck program
   // is how a bare-send sample survived the change set that made review the default.
   //

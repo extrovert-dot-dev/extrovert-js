@@ -1,5 +1,5 @@
 /**
- * Narrowing helpers for {@link SendOutcome} — the three shapes a send can answer.
+ * Narrowing helpers for {@link SendOutcome} - the three shapes a send can answer.
  *
  * `inbox.send()` used to be typed as one struct with a REQUIRED `thread_id`, which
  * the direct-send response has never carried. The type checked; the value was
@@ -10,7 +10,7 @@
  * has been delivered**. A human has to approve it first, and the delivery outcome
  * arrives later as a `sent` / `send_failed` review event. Code that treats every
  * 2xx from `send()` as "the mail went out" is wrong under the default
- * `require_review` policy — which is every account that has not changed it.
+ * `require_review` policy - which is every account that has not changed it.
  */
 
 import type {
@@ -30,7 +30,7 @@ export function isQueuedForReview(res: SendOutcome): res is QueuedForReviewResul
 }
 
 /**
- * True when the message was delivered immediately — either the review-loop
+ * True when the message was delivered immediately - either the review-loop
  * `{kind:"sent"}` body or the legacy body a bare send gets under `allow_direct`.
  */
 export function isSentImmediately(res: SendOutcome): res is SendResult | SentResult {
@@ -40,7 +40,7 @@ export function isSentImmediately(res: SendOutcome): res is SendResult | SentRes
 /**
  * The delivered message id, or `undefined` when the message was queued instead.
  *
- * `undefined` here is NOT an error — it is the normal answer under
+ * `undefined` here is NOT an error - it is the normal answer under
  * `require_review`. Pair it with {@link reviewIdOf} to follow the message to its
  * outcome.
  */

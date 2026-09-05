@@ -17,7 +17,7 @@ import { parseProblem, type Problem } from "./problem.js";
 import { API_VERSION_HEADER, CURRENT_API_VERSION } from "./version.js";
 
 /** The library version, surfaced in the User-Agent. Kept in sync with package.json by build. */
-export const SDK_VERSION = "0.1.0-pre.6";
+export const SDK_VERSION = "0.1.0-pre.7";
 
 export interface RetryOptions {
   /** Max retry attempts for idempotent requests on 429/5xx/network errors. Default 2. */
@@ -203,7 +203,7 @@ export class HttpClient {
       } catch (err) {
         cancel();
         if (err instanceof ApiError) {
-          // Already a typed API error (thrown above) — propagate.
+          // Already a typed API error (thrown above) - propagate.
           if (!(err.isServerError && retryable && attempt < maxAttempts - 1)) throw err;
           lastError = err;
           await sleep(this.backoff(attempt, err), options.signal);
@@ -314,9 +314,9 @@ export class HttpClient {
 
 /** One parsed Server-Sent-Events frame: the `id:`, `event:`, and joined `data:`. */
 export interface SseFrame {
-  /** The `id:` field — the monotonic resume token (Last-Event-ID). */
+  /** The `id:` field - the monotonic resume token (Last-Event-ID). */
   id?: string;
-  /** The `event:` field — the event type. Defaults to `"message"` per the SSE spec. */
+  /** The `event:` field - the event type. Defaults to `"message"` per the SSE spec. */
   event: string;
   /** The joined `data:` lines (newline-separated, per the SSE spec). */
   data: string;
@@ -391,19 +391,19 @@ async function toApiError(response: Response): Promise<ApiError> {
         body = { error: { code, message }, request_id: parsedProblem.problem.request_id };
       } else if (parsed && typeof parsed === "object") {
         // LEGACY envelope. Two shapes are in the wild and BOTH must parse, or the
-        // caller gets `http_409` and no server message — which is exactly what
+        // caller gets `http_409` and no server message - which is exactly what
         // happened until now, and why review-loop code could only branch on
         // `err.status`:
         //
-        //   (a) `{ error: { code, message } }` — the nested form this parser was
+        //   (a) `{ error: { code, message } }` - the nested form this parser was
         //       written for.
-        //   (b) `{ error: "conflict", message: "…" }` — what the Go `writeError`
+        //   (b) `{ error: "conflict", message: "…" }` - what the Go `writeError`
         //       helper actually emits (a STRING `error` plus a TOP-LEVEL
         //       `message`), still used by every `/v1/admin/*` route.
         //
         // Reading only (a) against a (b) body yields `undefined` for BOTH halves.
         // The code fell back to `http_<status>` and the message to the generic
-        // "request failed with status N" — losing the one string that says WHY.
+        // "request failed with status N" - losing the one string that says WHY.
         const legacy = parsed as {
           error?: string | { code?: string; message?: string; details?: Record<string, unknown> };
           message?: string;

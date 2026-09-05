@@ -25,7 +25,7 @@ const api = createServer((request, response) => {
     assert.equal(request.headers.authorization, "Bearer pk_agent_proj_smoke_full");
     return json(response, 200, whoamiResponse());
   }
-  if (url.pathname === "/v1/inboxes/extrovert%40smtp.extrovert.dev/messages") {
+  if (url.pathname === "/v1/inboxes/extrovert%40extrovertmail.com/messages") {
     assert.equal(request.headers.authorization, "Bearer pk_agent_proj_smoke_full");
     return json(response, 200, { items: [messageResponse()], total: 1 });
   }
@@ -67,7 +67,7 @@ try {
 
     const messages = await second.client.callTool({
       name: "read_messages",
-      arguments: { inbox: "extrovert@smtp.extrovert.dev", limit: 20, unread_only: false },
+      arguments: { inbox: "extrovert@extrovertmail.com", limit: 20, unread_only: false },
     });
     assert.match(toolText(messages), /msg_smoke_reply/);
 
@@ -117,7 +117,7 @@ function signupResponse() {
     agent_id: "pagt_smoke",
     agent_key: "pk_agent_proj_smoke_limited",
     scopes: ["mailbox:read"],
-    address: "extrovert@smtp.extrovert.dev",
+    address: "extrovert@extrovertmail.com",
     verified: false,
     otp_sent_to: "human@example.test",
     otp_expires_at: "2026-09-01T00:15:00Z",
@@ -130,14 +130,14 @@ function verifyResponse() {
     agent_id: "pagt_smoke",
     agent_key: "pk_agent_proj_smoke_full",
     scopes: ["mailbox:create", "mailbox:read", "mailbox:send", "webhook:write"],
-    address: "extrovert@smtp.extrovert.dev",
+    address: "extrovert@extrovertmail.com",
     verified: true,
     message: "verified",
     mailbox_quickstart: {
-      inbox: "extrovert@smtp.extrovert.dev",
-      list_mail: { tool: "read_messages", arguments: { inbox: "extrovert@smtp.extrovert.dev" } },
+      inbox: "extrovert@extrovertmail.com",
+      list_mail: { tool: "read_messages", arguments: { inbox: "extrovert@extrovertmail.com" } },
       read_message: { tool: "get_message", arguments: { id: "<message_id>" } },
-      wait_for_mail: { tool: "wait_for_email", arguments: { inbox: "extrovert@smtp.extrovert.dev" } },
+      wait_for_mail: { tool: "wait_for_email", arguments: { inbox: "extrovert@extrovertmail.com" } },
     },
   };
 }
@@ -158,10 +158,10 @@ function messageResponse() {
   return {
     id: "msg_smoke_reply",
     thread_id: "thr_smoke",
-    inbox: "extrovert@smtp.extrovert.dev",
+    inbox: "extrovert@extrovertmail.com",
     direction: "inbound",
     from: { email: "admin@example.test" },
-    to: [{ email: "extrovert@smtp.extrovert.dev" }],
+    to: [{ email: "extrovert@extrovertmail.com" }],
     subject: "Re: Hello",
     text: "Write me a little poem about email and agents.",
     extracted_text: "Write me a little poem about email and agents.",
@@ -179,7 +179,7 @@ function reviewResponse() {
     mode: "review",
     effective_mode: "review",
     kind: "send",
-    from_address: "extrovert@smtp.extrovert.dev",
+    from_address: "extrovert@extrovertmail.com",
     agent_id: "pagt_smoke",
     intent_summary: "say hello",
     revision: 1,

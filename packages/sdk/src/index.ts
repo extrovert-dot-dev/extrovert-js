@@ -1,5 +1,5 @@
 /**
- * @extrovert.dev/sdk — TypeScript SDK for the Extrovert agent-email API.
+ * @extrovert.dev/sdk - TypeScript SDK for the Extrovert agent-email API.
  *
  * A real, persistent inbox for your agent, in one call. Behind a scoped key that expires and
  * revokes on its own. fetch-based, dependency-light, runs in Node 18+ and at the edge.
@@ -32,7 +32,7 @@ export { ExtrovertClient, ExtrovertClient as Extrovert, DEFAULT_BASE_URL, MOCK_B
 export type { ExtrovertClientOptions } from "./client.js";
 
 // Resource classes (for advanced typing / DI).
-export { Inboxes, Messages, Threads, Webhooks, ContactLists, Suppressions, Domains, Reviews, ReviewEvents, Categories, Rules, Projects, ProjectInboxes, InboxHandle } from "./resources/index.js";
+export { Inboxes, Messages, Threads, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, ReviewEvents, Categories, Rules, Projects, ProjectInboxes, InboxHandle } from "./resources/index.js";
 
 // Transport-level types surfaced to callers (attachment download payload).
 export type { AttachmentDownload } from "./transport.js";
@@ -99,7 +99,7 @@ export type { InboxInclude, ReviewInclude } from "./include.js";
 // OTP / verification-link extraction (also usable standalone).
 export { extractCredentials, extractOtp, extractLink } from "./extract.js";
 
-// Inbound webhook verification + signing (HMAC, Web Crypto — Node + edge).
+// Inbound webhook verification + signing (HMAC, Web Crypto - Node + edge).
 export {
   verifyWebhookSignature,
   parseWebhook,
@@ -112,6 +112,8 @@ export {
 export { MockBackend } from "./fixtures.js";
 
 // All request/response models.
+export type { DomainWaitResult } from "./domain-wait.js";
+
 export type {
   // primitives
   IsoTimestamp,
@@ -233,12 +235,24 @@ export type {
   SuppressionEntry,
   SuppressionPrecheck,
   ListSuppressionsParams,
-  // domains (privileged; domain:manage scope, + domain:purchase for mode: purchased)
+  // domains the customer already controls (privileged; domain:manage scope)
   DomainRecord,
   DomainScope,
   OnboardDomainRequest,
   Domain,
+  DomainReadiness,
+  DomainStatusEvent,
+  DomainStatusEventPage,
   DomainOffboard,
+  // commerce request plane (quote/request/cancel/poll; human approval remains console-only)
+  CommerceBlocker,
+  QuoteDomainRequest,
+  DomainQuote,
+  CommerceRequestKind,
+  RequestDomainPurchaseRequest,
+  RequestPlanChangeRequest,
+  ListCommerceRequestsParams,
+  CommerceRequest,
   // async job poll surface (currently only domain-offboard teardown)
   Job,
   // real-time event stream (SSE)
@@ -257,11 +271,11 @@ export type {
 export { SDK_VERSION } from "./http.js";
 
 // ---------------------------------------------------------------------------
-// Open contract (HITL D14) — the published, VERSIONED Review-Loop surface.
+// Open contract (HITL D14) - the published, VERSIONED Review-Loop surface.
 //
 // The stable agent-facing JSON shapes (spec §11 + the full M1–M8 surface) are
 // published here as a documented, versioned contract that agents and third-party
-// harnesses code against — explicitly an SDK + skill contract, NOT a wire
+// harnesses code against - explicitly an SDK + skill contract, NOT a wire
 // protocol (D14). `CONTRACT_VERSION` is a PROVISIONAL 0.x version aligned to the
 // SDK package version + the openapi info.version; `CONTRACT_MANIFEST` is the
 // machine-readable list of shapes a harness can pin. See `./contract`.

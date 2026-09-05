@@ -81,38 +81,38 @@ export class ApiError extends Error {
   }
 }
 
-/** 401 — the agent key / enrollment token was missing, malformed, expired, or revoked. */
+/** 401 - the agent key / enrollment token was missing, malformed, expired, or revoked. */
 export class AuthenticationError extends ApiError {}
 
-/** 403 — authenticated, but the key's scopes don't permit this action (capability denied). */
+/** 403 - authenticated, but the key's scopes don't permit this action (capability denied). */
 export class PermissionError extends ApiError {}
 
 /**
- * 403 `forbidden_scope` — the call is outside the key's CEILING (e.g. a non-org key
- * on the org-wide wildcard, or a mint that would escalate). A redesign-specific
+ * 403 `forbidden_scope` - the call is outside the key's CEILING (e.g. a non-org key
+ * on the org-wide wildcard, or an issuance that would escalate). A redesign-specific
  * subclass of {@link PermissionError} so existing `instanceof PermissionError`
  * branches keep working.
  */
 export class ForbiddenScopeError extends PermissionError {}
 
 /**
- * 400 `breadth_required` — an org-tier key/operator issued a bare list that needs a
+ * 400 `breadth_required` - an org-tier key/operator issued a bare list that needs a
  * breadth pick; the problem `errors`/`detail` name the next call
  * (`/v1/projects/{id}/inboxes` or `/v1/projects/-/inboxes`).
  */
 export class BreadthRequiredError extends ApiError {}
 
-/** 404 — the inbox, message, thread, or webhook does not exist (or isn't visible to this tenant). */
+/** 404 - the inbox, message, thread, or webhook does not exist (or isn't visible to this tenant). */
 export class NotFoundError extends ApiError {}
 
-/** 409 — a conflicting state, e.g. an enrollment token that already minted its max of N inboxes. */
+/** 409 - a conflicting state, e.g. an enrollment token that already created its maximum number of inboxes. */
 export class ConflictError extends ApiError {}
 
-/** 422 — the request body failed validation; see `body.error.details`. */
+/** 422 - the request body failed validation; see `body.error.details`. */
 export class ValidationError extends ApiError {}
 
 /**
- * 422 `recipient_suppressed` — a send/reply/forward was rejected because one or
+ * 422 `recipient_suppressed` - a send/reply/forward was rejected because one or
  * more recipients have opted out (list-unsubscribe / suppression). The whole send
  * is rejected (never a silent partial drop). {@link suppressedRecipients} lists the
  * exact addresses to drop; retry the send without them. The scope/origin of the
@@ -120,7 +120,7 @@ export class ValidationError extends ApiError {}
  * existing `instanceof ValidationError` branches keep working.
  */
 export class RecipientSuppressedError extends ValidationError {
-  /** The recipient addresses that are suppressed — drop these and retry. */
+  /** The recipient addresses that are suppressed - drop these and retry. */
   readonly suppressedRecipients: string[];
   constructor(args: ConstructorParameters<typeof ApiError>[0]) {
     super(args);
@@ -144,7 +144,7 @@ function suppressedRecipientsFromProblem(problem: Problem | undefined): string[]
 }
 
 // ---------------------------------------------------------------------------
-// Review Loop taxonomy — the 422 remediation and the split 409.
+// Review Loop taxonomy - the 422 remediation and the split 409.
 //
 // The server carries an error's recovery FACTS as repeated `{field, code,
 // detail}` problem hints (the same triple `breadth_required` and
@@ -158,7 +158,7 @@ function suppressedRecipientsFromProblem(problem: Problem | undefined): string[]
 //      learn it.
 //   2. Only StaleError and BornStaleError are retryable, and each only a bounded
 //      number of times. TerminalError and WrongStateError must never be retried
-//      with the same verb — that infinite loop is the bug this taxonomy exists to
+//      with the same verb - that infinite loop is the bug this taxonomy exists to
 //      make impossible.
 // ---------------------------------------------------------------------------
 
@@ -196,7 +196,7 @@ function hintInt(problem: Problem | undefined, field: string): number | undefine
 }
 
 /**
- * 422 `intent_required` — the inbox's resolved review policy requires a human to
+ * 422 `intent_required` - the inbox's resolved review policy requires a human to
  * see this message before it goes out, and the request carried no `intent`.
  *
  * **Nothing was sent and nothing was queued.** The server checks this before it
@@ -205,7 +205,7 @@ function hintInt(problem: Problem | undefined, field: string): number | undefine
  * splice in, and the human-readable remediation (the full recipe, including how
  * to monitor the resulting review) is on `.message` / `.problem.detail`.
  *
- * Under `require_review` — the default for every account — this is the FIRST
+ * Under `require_review` - the default for every account - this is the FIRST
  * thing most agents hit. Read `effective_review_policy` on
  * `GET /v1/inboxes/{id}` once at start-up and compose an intent up front instead
  * of learning the policy by being refused. A subclass of {@link ValidationError}
@@ -214,7 +214,7 @@ function hintInt(problem: Problem | undefined, field: string): number | undefine
 export class IntentRequiredError extends ValidationError {
   /** The resolved review policy, e.g. `require_review`. */
   readonly policy: string | undefined;
-  /** Where the policy came from — a per-inbox override or the account default. */
+  /** Where the policy came from - a per-inbox override or the account default. */
   readonly policySource: string | undefined;
   /** Literal JSON to merge into the original request body, then retry once. */
   readonly retryWith: string | undefined;
@@ -242,7 +242,7 @@ export class IntentRequiredError extends ValidationError {
 export class ReviewConflictError extends ConflictError {
   /** The review's CURRENT state (`needs_review`, `approved`, `sent`, …). */
   readonly currentState: string | undefined;
-  /** The current revision — pass it as `parent_revision` on a legal retry. */
+  /** The current revision - pass it as `parent_revision` on a legal retry. */
   readonly currentRevision: number | undefined;
   /** The current row version (the optional belt-and-braces CAS). */
   readonly currentVersion: number | undefined;
@@ -257,7 +257,7 @@ export class ReviewConflictError extends ConflictError {
   }
   /**
    * Whether retrying the same call could ever succeed. False for every subclass
-   * except {@link StaleError} and {@link BornStaleError} — and true there only
+   * except {@link StaleError} and {@link BornStaleError} - and true there only
    * after re-reading and re-applying on top of the other party's change.
    */
   get isRetryable(): boolean {
@@ -266,7 +266,7 @@ export class ReviewConflictError extends ConflictError {
 }
 
 /**
- * 409 `stale` — the `(revision[, version])` you named is no longer current
+ * 409 `stale` - the `(revision[, version])` you named is no longer current
  * because a human or reviewer moved the draft. **Nothing was mutated.**
  *
  * The one genuinely retryable conflict, and bounded (≤3): re-read the draft and
@@ -282,7 +282,7 @@ export class StaleError extends ReviewConflictError {
 }
 
 /**
- * 409 `wrong_state` — this VERB is illegal from the review's current state, but
+ * 409 `wrong_state` - this VERB is illegal from the review's current state, but
  * the draft is still live.
  *
  * **Never retry the same verb**; the timing is not the problem, the choice of
@@ -291,7 +291,7 @@ export class StaleError extends ReviewConflictError {
 export class WrongStateError extends ReviewConflictError {}
 
 /**
- * 409 `terminal` — the review has already finished (sent / auto_sent /
+ * 409 `terminal` - the review has already finished (sent / auto_sent /
  * cancelled). Nothing will EVER succeed on it.
  *
  * **Stop.** A `front_run_next` review event is waiting on the durable queue with
@@ -309,12 +309,12 @@ export class TerminalError extends ReviewConflictError {
 }
 
 /**
- * 409 `born_stale` — the redraft was composed against an OLDER writing-rule
+ * 409 `born_stale` - the redraft was composed against an OLDER writing-rule
  * high-water than the one now in force. **Nothing was mutated** and the composer
  * has been re-nudged.
  *
  * Retryable at most once per rule high-water: re-read the rules, re-apply them,
- * resubmit — or `restamp_review` when re-reading shows nothing genuinely needed
+ * resubmit - or `restamp_review` when re-reading shows nothing genuinely needed
  * to change. Restamping when the body DID need to change makes the draft lie to
  * the born-stale accounting, so do it only for a true no-op.
  */
@@ -325,7 +325,7 @@ export class BornStaleError extends ReviewConflictError {
 }
 
 /**
- * 409 `send_needs_reconciliation` — a delivery attempt reached (or may have
+ * 409 `send_needs_reconciliation` - a delivery attempt reached (or may have
  * reached) the mail provider and the process died before recording the outcome,
  * so the review is parked for recover-by-Message-ID.
  *
@@ -336,17 +336,17 @@ export class BornStaleError extends ReviewConflictError {
 export class SendNeedsReconciliationError extends ReviewConflictError {}
 
 /**
- * 409 `idempotency_conflict` — the same `Idempotency-Key` was replayed with a
+ * 409 `idempotency_conflict` - the same `Idempotency-Key` was replayed with a
  * DIFFERENT request body within the same scope. The replay key is a hash of the
  * raw bytes, so "same message, different spelling" counts as different.
  *
  * A caller bug, not a race: do not retry under that key. Either send the byte-
- * identical body, or mint a new key for the genuinely new message.
+ * identical body, or use a new key for the genuinely new message.
  */
 export class IdempotencyConflictError extends ConflictError {}
 
 /**
- * 503 `unavailable` — a dependency could not be read, so the request was failed
+ * 503 `unavailable` - a dependency could not be read, so the request was failed
  * CLOSED rather than served on a guess. On the send path this specifically means
  * the account's review policy was unreadable: relaying unsupervised mail for a
  * customer whose stated policy we could not see is the failure that would be
@@ -364,7 +364,7 @@ export class UnavailableError extends ApiError {
   }
 }
 
-/** 402 — payment required (x402 test-mode). `paymentRequired` holds the raw challenge header. */
+/** 402 - payment required (x402 test-mode). `paymentRequired` holds the raw challenge header. */
 export class PaymentRequiredError extends ApiError {
   /** The raw `PAYMENT-REQUIRED` header challenge to sign + retry (EIP-3009, Base Sepolia). */
   readonly paymentRequired: string | undefined;
@@ -374,7 +374,7 @@ export class PaymentRequiredError extends ApiError {
   }
 }
 
-/** 429 — rate limited. `retryAfter` is the server's hint in seconds, when provided. */
+/** 429 - rate limited. `retryAfter` is the server's hint in seconds, when provided. */
 export class RateLimitError extends ApiError {
   /** Seconds to wait before retrying, parsed from the `Retry-After` header. */
   readonly retryAfter: number | undefined;

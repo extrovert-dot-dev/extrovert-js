@@ -1,4 +1,4 @@
-import { createClerkClient } from "@clerk/backend";
+import { createClerkClient, type AuthObject } from "@clerk/backend";
 import {
   OAuthError,
   OAuthErrorCode,
@@ -12,16 +12,7 @@ const DEFAULT_PUBLIC_URL = "https://mcp.extrovert.dev/mcp";
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const AGENT_KEY_ATTESTATION_SECONDS = 300;
 
-interface ClerkOAuthAuth {
-  isAuthenticated: true;
-  tokenType: "oauth_token";
-  subject: string;
-  scopes: string[];
-  oauth_token: {
-    userId: string;
-    clientId: string;
-  };
-}
+type ClerkOAuthAuth = Extract<AuthObject, { tokenType: "oauth_token"; isAuthenticated: true }>;
 
 interface ClerkRequestState {
   isAuthenticated: boolean;
@@ -85,23 +76,23 @@ export class ExtrovertTokenVerifier implements OAuthTokenVerifier {
     if (!state.isAuthenticated) throw invalidToken("OAuth access token is invalid or expired");
     const auth = state.toAuth();
     if (!isClerkOAuthAuth(auth)) {
-      throw invalidToken("Bearer token is not a Clerk OAuth access token");
+      throw invalidToken("Sign-in could not be connected to Extrovert. Run the connection check in your MCP host; if it persists, contact support with the response request ID.");
     }
     const expiresAt = jwtExpiry(token);
-    if (expiresAt === undefined) {
+    if (expiresAt === undefined || expiresAt <= Math.floor(Date.now() / 1000)) {
       // Production is deliberately configured for Clerk JWT access tokens. The
       // MCP bearer gate requires a concrete expiry and must not invent one.
-      throw invalidToken("OAuth access token has no verifiable expiration");
+      throw invalidToken("This sign-in has expired or has no valid expiry. Reconnect using your MCP host's sign-in command.");
     }
     return {
       token,
-      clientId: auth.oauth_token.clientId,
+      clientId: auth.clientId,
       scopes: auth.scopes,
       expiresAt,
       resource: this.resourceUrl,
       extra: {
         tokenType: "oauth_token",
-        userId: auth.oauth_token.userId,
+        userId: auth.userId,
         subject: auth.subject,
       },
     };
@@ -225,9 +216,8 @@ function isClerkOAuthAuth(value: unknown): value is ClerkOAuthAuth {
     candidate.tokenType === "oauth_token" &&
     typeof candidate.subject === "string" &&
     Array.isArray(candidate.scopes) &&
-    !!candidate.oauth_token &&
-    typeof candidate.oauth_token.userId === "string" &&
-    typeof candidate.oauth_token.clientId === "string"
+    typeof candidate.userId === "string" && candidate.userId.length > 0 &&
+    typeof candidate.clientId === "string" && candidate.clientId.length > 0
   );
 }
 

@@ -2,7 +2,7 @@
  * The canonical project-scoped chain: `x.projects.inboxes.*`.
  *
  * Scope lives in the KEY; a broad (org-tier) key narrows to one project by PATH.
- * This is the contract-canonical surface — the bare `x.inboxes.*` is curl sugar that
+ * This is the contract-canonical surface - the bare `x.inboxes.*` is curl sugar that
  * resolves to the key's default project.
  *
  * Run offline against the built-in fixtures:

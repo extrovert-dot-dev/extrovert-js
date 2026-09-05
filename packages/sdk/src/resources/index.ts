@@ -5,7 +5,8 @@
  */
 
 import type { AttachmentDownload, Transport } from "../transport.js";
-import { BreadthRequiredError } from "../errors.js";
+import { BreadthRequiredError, ValidationError } from "../errors.js";
+import { waitForDomain, type DomainWaitResult } from "../domain-wait.js";
 import { tierNeedsExplicitBreadth, type KeyTier } from "../key-tier.js";
 import { InboxHandle, type InboxHandleOptions } from "./inbox-handle.js";
 import type {
@@ -16,19 +17,28 @@ import type {
   BatchUpdateMessagesRequest,
   BatchUpdateResult,
   Category,
+  CommerceRequest,
   ContactListEntry,
   CreateInboxRequest,
   DeleteResult,
   Domain,
+  DomainStatusEventPage,
+  DomainQuote,
   DomainOffboard,
   Inbox,
   ListCategoriesParams,
+  ListCommerceRequestsParams,
   ListInboxesParams,
   ListReviewEventsParams,
   ListReviewsParams,
+  ListThreadsParams,
   MarkReadRequest,
   Message,
   OnboardDomainRequest,
+  QuoteDomainRequest,
+  RequestDomainPurchaseRequest,
+  RequestPlanChangeRequest,
+  ReplyRequest,
   Page,
   ProposeCategoryRequest,
   ProposeGraduationRequest,
@@ -52,11 +62,14 @@ import type {
   ReviewFeedback,
   ReviewTurn,
   ScanBacklogStatus,
+  SearchMessagesParams,
+  SendOutcome,
   SubmitRevisionRequest,
   SuppressionEntry,
   SuppressionPrecheck,
   ListSuppressionsParams,
   ThreadDetail,
+  Thread,
   UpdateCategoryRequest,
   UpdateInboxRequest,
   UpdateWebhookRequest,
@@ -78,13 +91,14 @@ interface ResourceContext {
   keyTier: KeyTier;
 }
 
-/** `extrovert.inboxes` — create, list, get, update, delete inboxes. */
+/** `extrovert.inboxes`: create, list, get, update, delete inboxes. */
 export class Inboxes {
   constructor(private readonly ctx: ResourceContext) {}
 
   /**
-   * Create an inbox. The default path mints an address on a pre-verified shared subdomain of
-   * `smtp.extrovert.dev`, so it returns a live, send-and-receive-capable inbox in one call.
+   * Create an inbox. The default path creates an address on `extrovertmail.com`
+   * for paid accounts or `free.extrovertmail.com` for free signups, so it returns
+   * a live inbox in one call.
    *
    * Pass `metadata` to attach arbitrary key-value data, and `client_id` for idempotent creation
    * (re-calling with the same id returns the same inbox, with its metadata replayed verbatim).
@@ -95,12 +109,12 @@ export class Inboxes {
   }
 
   /**
-   * List inboxes visible to the calling key (the bare curl-sugar surface — resolves
+   * List inboxes visible to the calling key (the bare curl-sugar surface: resolves
    * to the key's default project). An org-tier key has no single default project, so
    * the bare list is ambiguous: fail fast client-side with a BreadthRequiredError that
    * names the next call, matching the MCP surface, instead of round-tripping to a 400.
    * Use `extrovert.projects.inboxes.list("<project_id>")` or `"-"` (org subtree) for
-   * an org key. The check is advisory — the server stays authoritative.
+   * an org key. The check is advisory: the server stays authoritative.
    */
   list(params: ListInboxesParams = {}, signal?: AbortSignal): Promise<Page<Inbox>> {
     if (tierNeedsExplicitBreadth(this.ctx.keyTier)) {
@@ -146,7 +160,7 @@ export class Inboxes {
 }
 
 /**
- * `extrovert.messages` — read a message, fetch its raw bytes, mark it read.
+ * `extrovert.messages`: read a message, fetch its raw bytes, mark it read.
  *
  * Reply and forward are inbox-scoped (the server resolves the parent and derives
  * recipients), so they live on the {@link InboxHandle} (`inbox.reply(...)`,
@@ -231,15 +245,34 @@ export class Messages {
 }
 
 /**
- * `extrovert.threads` — fetch a conversation thread (with its messages) by id,
- * scoped to its owning inbox.
+ * `extrovert.threads`: list, search, read, reply to, and delete conversations,
+ * scoped to their owning inbox.
  */
 export class Threads {
   constructor(private readonly ctx: ResourceContext) {}
 
+  /** List conversations newest-active first. Pass `next_cursor` back as `cursor` for the next page. */
+  list(inbox: string, params: ListThreadsParams = {}, signal?: AbortSignal): Promise<Page<Thread>> {
+    return this.ctx.transport.listThreads(inbox, params, signal);
+  }
+
+  /** Search thread subjects, snippets, and participants. Cursor pagination matches {@link list}. */
+  search(
+    inbox: string,
+    params: SearchMessagesParams,
+    signal?: AbortSignal,
+  ): Promise<Page<Thread>> {
+    return this.ctx.transport.searchThreads(inbox, params, signal);
+  }
+
   /** Fetch one thread (+ its messages, oldest-first) by id under its owning inbox address. */
   get(inbox: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail> {
     return this.ctx.transport.getThread(inbox, threadId, signal);
+  }
+
+  /** Reply in a thread; recipients and RFC reply headers are derived server-side. */
+  reply(inbox: string, req: ReplyRequest, signal?: AbortSignal): Promise<SendOutcome> {
+    return this.ctx.transport.reply(inbox, req, signal);
   }
 
   /**
@@ -256,7 +289,7 @@ export class Threads {
   }
 }
 
-/** `extrovert.webhooks` — register / list / get / update / delete HMAC-signed inbound webhooks. */
+/** `extrovert.webhooks`: register / list / get / update / delete HMAC-signed inbound webhooks. */
 export class Webhooks {
   constructor(private readonly ctx: ResourceContext) {}
 
@@ -292,7 +325,7 @@ export class Webhooks {
 }
 
 /**
- * `extrovert.contactLists` — per-inbox allow/block lists of addresses/domains.
+ * `extrovert.contactLists`: per-inbox allow/block lists of addresses/domains.
  * A `block` entry rejects a send to a matching recipient; once an `allow` entry
  * exists for an inbox, sends from it are restricted to matching recipients
  * (allowlist mode). Entries are addressable by their opaque id (`lst_…`).
@@ -317,12 +350,12 @@ export class ContactLists {
 }
 
 /**
- * `extrovert.suppressions` — recipient opt-outs (list-unsubscribe). A recipient
+ * `extrovert.suppressions`: recipient opt-outs (list-unsubscribe). A recipient
  * that has unsubscribed cannot be mailed by this org: a send to them is rejected
  * with `recipient_suppressed` ({@link RecipientSuppressedError}). Use `precheck`
  * before composing to skip a would-be-rejected recipient, `list` to browse the
  * org's opt-outs, and `revoke` (reason required, audit-logged) to re-enable a
- * recipient. All reads/writes are scoped to the caller's OWN org — a
+ * recipient. All reads/writes are scoped to the caller's OWN org: a
  * platform-global or shared-domain opt-out is never surfaced here.
  */
 export class Suppressions {
@@ -330,7 +363,7 @@ export class Suppressions {
 
   /**
    * Pre-check whether the caller's org already suppresses a recipient, BEFORE
-   * composing. `suppressed: true` means a send to them would be rejected — skip
+   * composing. `suppressed: true` means a send to them would be rejected: skip
    * that recipient. Returns the matching org rows too (never a global/shared row).
    */
   precheck(recipient: string, signal?: AbortSignal): Promise<SuppressionPrecheck> {
@@ -353,31 +386,40 @@ export class Suppressions {
 }
 
 /**
- * `extrovert.domains` — the customer's domains (privileged; the agent key must
- * carry the `domain:manage` scope). Onboard (shared | ns_delegated | manual |
- * purchased), read status + the DNS records to set inline, trigger/refresh
- * verification, and offboard. `mode: "purchased"` spends money at the registrar and
- * ADDITIONALLY requires the explicit, default-off `domain:purchase` scope (and is
- * capped by the org/project purchased-domain plan limit). Set `scope: "project"` to
- * bind the domain to the key's project; it defaults to `org` (org-shared).
+ * `extrovert.domains`: read with domain:read or domain:manage; changes require
+ * domain:manage. Add delegated inbox domains the customer
+ * controls, read status + nameserver records inline, trigger/refresh
+ * verification, and offboard. New registrations use `extrovert.commerce`: quote
+ * first, create a request, then poll its status. Set `scope: "project"` to bind a
+ * customer-controlled domain to the key's project; it defaults to `org`.
  */
 export class Domains {
   constructor(private readonly ctx: ResourceContext) {}
 
   /** List the customer's onboarded domains and their status. */
-  list(signal?: AbortSignal): Promise<Page<Domain>> {
-    return this.ctx.transport.listDomains(signal);
+  list(paramsOrSignal: { page?: string; limit?: number } | AbortSignal = {}, signal?: AbortSignal): Promise<Page<Domain>> {
+    if ("aborted" in paramsOrSignal) return this.ctx.transport.listDomains(paramsOrSignal);
+    return this.ctx.transport.listDomains(signal, paramsOrSignal);
   }
 
-  /** Get one domain's detail + verification status + the DNS records to set, inline. */
+  /** Get one domain's detail, verification status, and nameserver records. */
   get(domain: string, signal?: AbortSignal): Promise<Domain> {
     return this.ctx.transport.getDomain(domain, signal);
   }
 
+  /** Wait up to 50 seconds, then return an explicit resumable outcome. No DNS writes. */
+  wait(domain: string, options: { timeout_seconds?: number; signal?: AbortSignal } = {}): Promise<DomainWaitResult> {
+    return waitForDomain((signal) => this.ctx.transport.getDomain(domain, signal), options);
+  }
+
+  /** Resume durable updates for this domain using the previous next_cursor as after. */
+  events(domain: string, params: { after?: string; limit?: number } = {}, signal?: AbortSignal): Promise<DomainStatusEventPage> {
+    return this.ctx.transport.listDomainEvents(domain, params, signal);
+  }
+
   /**
-   * Onboard (add) a domain. `mode` defaults to ns_delegated. `mode: "purchased"`
-   * requires the `domain:purchase` scope (in addition to `domain:manage`). Returns
-   * the record set / NS instruction.
+   * Add a delegated inbox domain the customer controls. Returns the nameserver
+   * records to publish and never spends money.
    */
   onboard(req: OnboardDomainRequest, signal?: AbortSignal): Promise<Domain> {
     return this.ctx.transport.onboardDomain(req, signal);
@@ -400,7 +442,65 @@ export class Domains {
 }
 
 /**
- * `extrovert.reviews` — the Review Loop (HITL) agent-plane reads. A sending agent
+ * `extrovert.commerce`: quote, request, cancel, and poll financial operations. Agents
+ * can never approve a request through this resource; approval is a human console
+ * action. Every create requires a stable idempotency key.
+ */
+export class Commerce {
+  constructor(private readonly ctx: ResourceContext) {}
+
+  private requireIdempotencyKey(value: string): void {
+    if (value.trim().length < 8) {
+      throw new ValidationError({
+        status: 400,
+        code: "bad_request",
+        message:
+          "idempotency_key must be a stable value of at least 8 characters; reuse it for retries of the same intent.",
+      });
+    }
+  }
+
+  /** Quote a domain without purchasing, reserving, or approving it. */
+  quoteDomain(req: QuoteDomainRequest, signal?: AbortSignal): Promise<DomainQuote> {
+    return this.ctx.transport.quoteDomain(req, signal);
+  }
+
+  /** Create a durable domain-purchase request for human approval. */
+  requestDomainPurchase(
+    req: RequestDomainPurchaseRequest,
+    signal?: AbortSignal,
+  ): Promise<CommerceRequest> {
+    this.requireIdempotencyKey(req.idempotency_key);
+    return this.ctx.transport.requestDomainPurchase(req, signal);
+  }
+
+  /** Create a durable plan-upgrade or downgrade request for human approval. */
+  requestPlanChange(req: RequestPlanChangeRequest, signal?: AbortSignal): Promise<CommerceRequest> {
+    this.requireIdempotencyKey(req.idempotency_key);
+    return this.ctx.transport.requestPlanChange(req, signal);
+  }
+
+  /** Poll one request's exact blockers, approval URL, and next-action guidance. */
+  get(requestId: string, signal?: AbortSignal): Promise<CommerceRequest> {
+    return this.ctx.transport.getCommerceRequest(requestId, signal);
+  }
+
+  /** Withdraw this agent's request while its durable state still permits cancellation. */
+  cancel(requestId: string, signal?: AbortSignal): Promise<CommerceRequest> {
+    return this.ctx.transport.cancelCommerceRequest(requestId, signal);
+  }
+
+  /** List visible commerce requests using the API's opaque page token. */
+  list(
+    params: ListCommerceRequestsParams = {},
+    signal?: AbortSignal,
+  ): Promise<Page<CommerceRequest>> {
+    return this.ctx.transport.listCommerceRequests(params, signal);
+  }
+}
+
+/**
+ * `extrovert.reviews`: the Review Loop (HITL) agent-plane reads. A sending agent
  * monitors its submissions in the human-review queue: list/get a review request and
  * read its append-only thread of turns (intent, drafts, human comments/edits/
  * decisions, captured diffs). Submitting FOR review rides `inbox.send` /
@@ -409,7 +509,7 @@ export class Domains {
  */
 export class Reviews {
   /**
-   * `extrovert.reviews.events` — the Review Loop (HITL) realtime plane: drain,
+   * `extrovert.reviews.events`: the Review Loop (HITL) realtime plane: drain,
    * long-poll, and ack the durable nudge queue (the AUTHORITATIVE liveness source;
    * SSE/webhook are best-effort fast paths on top of it).
    */
@@ -437,7 +537,7 @@ export class Reviews {
   /**
    * Get the human's assembled feedback (M5): the diff + comments + decision + the
    * rules born from this review. Read it after a rejected/edited nudge to learn what
-   * the human wanted. $0 LLM — pure assembly on our side.
+   * the human wanted. $0 LLM: pure assembly on our side.
    */
   feedback(reviewId: string, signal?: AbortSignal): Promise<ReviewFeedback> {
     return this.ctx.transport.getReviewFeedback(reviewId, signal);
@@ -446,7 +546,7 @@ export class Reviews {
   /**
    * Post a chat turn on a review's thread (M5): an agent question to the human
    * reviewer; flips in_review -> chatting on the first turn. Idempotent on the
-   * optional `idempotencyKey` (the `Idempotency-Key` header). $0 LLM — you compose it.
+   * optional `idempotencyKey` (the `Idempotency-Key` header). $0 LLM: you compose it.
    */
   chat(
     reviewId: string,
@@ -460,8 +560,8 @@ export class Reviews {
   /**
    * Post a new agent draft under a parent_revision CAS (M5; D17). parent_revision
    * must equal the draft's current revision, else a 409 STALE with NO mutation (the
-   * human always wins — re-read, re-apply, retry). On success the draft is re-rendered
-   * in place (revision++) and returns to needs_review. $0 LLM — you compose the redraft.
+   * human always wins: re-read, re-apply, retry). On success the draft is re-rendered
+   * in place (revision++) and returns to needs_review. $0 LLM: you compose the redraft.
    */
   revise(reviewId: string, req: SubmitRevisionRequest, signal?: AbortSignal): Promise<Review> {
     return this.ctx.transport.submitRevision(reviewId, req, signal);
@@ -486,9 +586,9 @@ export class Reviews {
    * assert "I reviewed this against rules vX and no change is needed", advancing the
    * draft's composed_* versions with no new draft, no revision bump, no nudge. A
    * born-stale draft re-stamped to the current version becomes current-enough and
-   * releasable on the next reconciliation sweep — the cheap counterpart to revise().
+   * releasable on the next reconciliation sweep: the cheap counterpart to revise().
    * against_version above the category's current rules-version is 400; a terminal draft
-   * 409s. $0 LLM — you judged.
+   * 409s. $0 LLM: you judged.
    */
   restamp(reviewId: string, req: RestampReviewRequest, signal?: AbortSignal): Promise<Review> {
     return this.ctx.transport.restampReview(reviewId, req, signal);
@@ -509,13 +609,13 @@ export class Reviews {
 
   /**
    * Submit a reviewer decision (M8 Slice B; reviewer_decide, D5/§9). approve/edit → the
-   * PLATFORM ACS-sends with the COMPOSER's credentials (the reviewer NEVER holds
-   * mailbox:send on an inbox it doesn't own — the credential boundary); reject → back to
+   * PLATFORM sends with the COMPOSER's credentials (the reviewer NEVER holds
+   * mailbox:send on an inbox it doesn't own: the credential boundary); reject → back to
    * the composer (needs_review, hop_count++); escalate → the human queue. revision/
-   * version are the CAS (409 STALE on mismatch, NO mutation — the human always wins,
+   * version are the CAS (409 STALE on mismatch, NO mutation: the human always wins,
    * D17). The two circuit breakers (hop_count ≥ max_hops, or the hard review_deadline)
-   * FORCE a reject to the human regardless of intent — `forced_by_breaker` names it. $0
-   * LLM — you judged; we route, send, and enforce the breakers.
+   * FORCE a reject to the human regardless of intent: `forced_by_breaker` names it. $0
+   * LLM: you judged; we route, send, and enforce the breakers.
    */
   decide(
     reviewId: string,
@@ -527,11 +627,11 @@ export class Reviews {
 }
 
 /**
- * `extrovert.reviews.events` — drain / long-poll / ack the durable review nudge
+ * `extrovert.reviews.events`: drain / long-poll / ack the durable review nudge
  * queue (spec §5.9). `list` is a non-blocking, side-effect-free drain of the next
  * un-acked nudges in FIFO seq order (strict per review); `wait` long-polls
  * (~25–55s) for the next one; `ack` advances the per-(agent, review) cursor
- * monotonically (idempotent — re-acking an older seq is a no-op).
+ * monotonically (idempotent: re-acking an older seq is a no-op).
  */
 export class ReviewEvents {
   constructor(private readonly ctx: ResourceContext) {}
@@ -553,10 +653,10 @@ export class ReviewEvents {
 }
 
 /**
- * `extrovert.categories` — the Review Loop category registry (D9/D10). Browse and
+ * `extrovert.categories`: the Review Loop category registry (D9/D10). Browse and
  * MATCH an existing category before composing (like a skills registry), or propose
  * a new one. Categories are CUSTOMER-scoped and agent-attributed (the deliberate
- * cross-agent-404 exception); identity is opaque cat_ ids — nothing keys on the
+ * cross-agent-404 exception); identity is opaque cat_ ids: nothing keys on the
  * name, so renames never break a reference. `match` is a pure lexical filter (NO
  * LLM on our side); the agent does the semantic matching. Merging / deleting a
  * category is a human (console) action, not exposed here (D17).
@@ -579,7 +679,7 @@ export class Categories {
     return this.ctx.transport.proposeCategory(req, signal);
   }
 
-  /** Rename / re-describe a category — metadata only (D10). */
+  /** Rename / re-describe a category: metadata only (D10). */
   update(categoryId: string, req: UpdateCategoryRequest, signal?: AbortSignal): Promise<Category> {
     return this.ctx.transport.updateCategory(categoryId, req, signal);
   }
@@ -587,7 +687,7 @@ export class Categories {
   /**
    * Read the effective risk dial (D4/D12): the account default + every category's
    * overrides (each with its resolved effective value; null override = inherit).
-   * Read-only — agents read but NEVER flip the dial; setting it is a human (console)
+   * Read-only: agents read but NEVER flip the dial; setting it is a human (console)
    * action (D16).
    */
   riskDial(signal?: AbortSignal): Promise<RiskDial> {
@@ -605,7 +705,7 @@ export class Categories {
 
   /**
    * Propose graduating a category (D16/D6): RECORDS the request (durable evidence) and
-   * returns the current gate status. It does NOT change the category state — flipping
+   * returns the current gate status. It does NOT change the category state: flipping
    * the bit is a human (console) action; an agent only proposes.
    */
   proposeGraduation(
@@ -619,7 +719,7 @@ export class Categories {
   /**
    * Read the D19/§8 backlog-reconciliation status: how many of the category's QUEUED
    * drafts are stale vs current-enough against the current rules-version (a pure
-   * integer compare, $0 LLM). Read-only — you READ the picture; the human (console
+   * integer compare, $0 LLM). Read-only: you READ the picture; the human (console
    * scan-backlog) or the graduate/rule-change hooks TRIGGER the actual reconciliation
    * sweep that releases current-enough drafts and nudges stale ones to redraft.
    */
@@ -641,14 +741,14 @@ export class Categories {
 }
 
 /**
- * `extrovert.rules` — the Review Loop writing-rule store + house-style + the §7
+ * `extrovert.rules`: the Review Loop writing-rule store + house-style + the §7
  * precedence ladder + audit/undo (D2/D11). ANY agent in the customer may write,
- * edit, promote, retire, and undo rules (the deliberate cross-agent exception — the
+ * edit, promote, retire, and undo rules (the deliberate cross-agent exception: the
  * shared house-style is the whole pitch). `get()` returns the ORDERED active rule
  * set with the precedence ladder applied SERVER-SIDE (NO LLM on our side); the agent
  * reconciles the list semantically. Rules are append-only by supersession; undo
  * restores the prior version as a forward 'restore' supersession. Identity is opaque
- * rule_/rln_/udo_ ids — nothing keys on a name.
+ * rule_/rln_/udo_ ids: nothing keys on a name.
  */
 export class Rules {
   constructor(private readonly ctx: ResourceContext) {}
@@ -662,7 +762,7 @@ export class Rules {
    * Save / edit a rule (append-only by supersession; D11). An agent-plane save is
    * ALWAYS project-layer: the saved rule's `rule_layer` is `project`, bound to the
    * key's project. Agents cannot author org-layer / house-style (`rule_layer:"org"`)
-   * rules in v1 — that is a console/admin action.
+   * rules in v1: that is a console/admin action.
    */
   save(req: SaveRuleRequest, signal?: AbortSignal): Promise<Rule> {
     return this.ctx.transport.saveRule(req, signal);
@@ -673,7 +773,7 @@ export class Rules {
     return this.ctx.transport.promoteRule(ruleId, toScope, signal);
   }
 
-  /** Retire a rule — soft delete; the history survives as training data. */
+  /** Retire a rule: soft delete; the history survives as training data. */
   retire(ruleId: string, signal?: AbortSignal): Promise<Rule> {
     return this.ctx.transport.retireRule(ruleId, signal);
   }
@@ -683,7 +783,7 @@ export class Rules {
     return this.ctx.transport.getRuleAudit(params, signal);
   }
 
-  /** Undo a rule change by its audit-row id (udo_…) — restore the prior version. */
+  /** Undo a rule change by its audit-row id (udo_…): restore the prior version. */
   undo(udoId: string, signal?: AbortSignal): Promise<Rule> {
     return this.ctx.transport.undoRuleChange(udoId, signal);
   }

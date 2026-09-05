@@ -2,7 +2,7 @@
  * Runtime configuration, resolved from environment variables.
  *
  * The MCP host (Claude Desktop / Claude Code / Cursor) passes these via the
- * server's `env` block. The agent key is a scoped agent key — never an
+ * server's `env` block. The agent key is a scoped agent key - never an
  * org-wide master key (spec §14: "No org-wide key ever reaches an MCP host").
  */
 
@@ -49,7 +49,7 @@ function parseReviewPolicy(value: string | undefined): ReviewPolicy {
 
 const DEFAULT_API_BASE_URL = "https://api.extrovert.dev";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_WAIT_MS = 300_000; // 5 minutes — OTP windows are 5–10 min.
+const DEFAULT_MAX_WAIT_MS = 300_000; // 5 minutes - OTP windows are 5–10 min.
 
 function parseBool(value: string | undefined): boolean {
   if (!value) return false;
@@ -66,10 +66,10 @@ function parseIntEnv(value: string | undefined, fallback: number): number {
  * Resolve config from `process.env`. Accepts an override map for testing.
  *
  * Env vars (per task spec):
- *   EXTROVERT_API_BASE_URL  — base URL of the REST API
- *   EXTROVERT_API_KEY       — scoped agent/enrollment key
- *   EXTROVERT_REQUEST_TIMEOUT_MS, EXTROVERT_MAX_WAIT_MS, EXTROVERT_MOCK — tuning
- *   EXTROVERT_MOCK_REVIEW_POLICY — the policy the offline store enforces
+ *   EXTROVERT_API_BASE_URL  - base URL of the REST API
+ *   EXTROVERT_API_KEY       - scoped agent/enrollment key
+ *   EXTROVERT_REQUEST_TIMEOUT_MS, EXTROVERT_MAX_WAIT_MS, EXTROVERT_MOCK - tuning
+ *   EXTROVERT_MOCK_REVIEW_POLICY - the policy the offline store enforces
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ExtrovertConfig {
   const apiKey = (env.EXTROVERT_API_KEY ?? "").trim();
@@ -87,4 +87,4 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ExtrovertConfi
 }
 
 export const SERVER_NAME = "extrovert";
-export const SERVER_VERSION = "0.1.0-pre.6";
+export const SERVER_VERSION = "0.1.0-pre.7";

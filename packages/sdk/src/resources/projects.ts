@@ -1,5 +1,5 @@
 /**
- * `extrovert.projects` — the CANONICAL project-scoped resource chain (redesign §4).
+ * `extrovert.projects`: the CANONICAL project-scoped resource chain (redesign §4).
  *
  * Scope lives in the KEY; a broad (org-tier) key narrows to one project by PATH.
  * The headline chain is `x.projects.inboxes.*`, mirroring
@@ -14,7 +14,7 @@
  *
  * Operations are keyed by the OPAQUE `inbox_id` (the inbox's email address is also
  * accepted as a within-project alias). `projectId` may be `"-"` for the org-wide
- * wildcard — only an org-tier key may use it (others get 403 `forbidden_scope`).
+ * wildcard: only an org-tier key may use it (others get 403 `forbidden_scope`).
  *
  * The bare `x.inboxes.*` / `x.inbox(address)` surface is curl-style sugar that
  * resolves to the key's default project; this chain is the contract-canonical one.
@@ -58,7 +58,7 @@ interface ProjectsContext {
 }
 
 /**
- * `x.projects.inboxes` — create / list / get / update / delete inboxes, plus the
+ * `x.projects.inboxes`: create / list / get / update / delete inboxes, plus the
  * send / reply / message / thread / wait operations, all scoped to one project (or
  * the `-` org wildcard for an org-tier key). List returns a {@link ListPage} that
  * auto-paginates over the opaque-cursor {@link import("../pagination.js").List} envelope.
@@ -139,8 +139,8 @@ export class ProjectInboxes {
    * Returns a three-way {@link SendOutcome}: `kind:"queued_for_review"` means a
    * human has to approve it and NOTHING has been delivered yet; anything else was
    * delivered. Under the default `require_review` policy a call WITHOUT an
-   * `intent` raises `IntentRequiredError` (422) instead — nothing sent, nothing
-   * queued — so pass one, or read `inbox.record.effective_review_policy` first.
+   * `intent` raises `IntentRequiredError` (422) instead: nothing sent, nothing
+   * queued: so pass one, or read `inbox.record.effective_review_policy` first.
    */
   send(
     projectId: string,
@@ -288,14 +288,14 @@ export class ProjectInboxes {
    *
    * The frozen contract project-prefixes ONLY the inbox collection/item/credentials
    * routes (`/v1/projects/{project_id}/inboxes[/{inbox_id}][/credentials]`); the
-   * send/reply/forward/message/thread/wait sub-ops have NO project-prefixed path —
+   * send/reply/forward/message/thread/wait sub-ops have NO project-prefixed path :
    * they address the inbox by its opaque id directly (`/v1/inboxes/{inbox_id}/…`),
    * where the project is implicit in (and enforced by) the inbox id server-side.
    *
    * So for these sub-ops `projectId` cannot be carried on the URL and is NOT a URL
    * selector. The adversarial review flagged that silently discarding it makes the
    * signature misleading. CHOICE: keep the arg (dropping it would break the chain's
-   * symmetry with create/list/get/update/delete — the more disruptive option) but
+   * symmetry with create/list/get/update/delete: the more disruptive option) but
    * VALIDATE it rather than ignore it. We reject the two client mistakes we can catch
    * without a round-trip:
    *   - a blank / whitespace-only `projectId` (a required selector everywhere else in
@@ -328,12 +328,12 @@ export class ProjectInboxes {
 }
 
 /**
- * `extrovert.projects` — the canonical project-scoped resource namespace. Today it
+ * `extrovert.projects`: the canonical project-scoped resource namespace. Today it
  * exposes the `inboxes` chain (`x.projects.inboxes.*`); future project-scoped
  * resources (domains, agents) hang off the same namespace.
  */
 export class Projects {
-  /** `x.projects.inboxes.*` — the canonical inbox chain. */
+  /** `x.projects.inboxes.*`: the canonical inbox chain. */
   readonly inboxes: ProjectInboxes;
 
   constructor(ctx: ProjectsContext) {

@@ -3,7 +3,7 @@
  *
  * Every redesign collection endpoint (the canonical `x.projects.inboxes.*` chain
  * and beyond) returns {@link List}: `{ object: "list", data, has_more, next_cursor }`.
- * `next_cursor` is OPAQUE — treat it as a token and pass it back verbatim as
+ * `next_cursor` is OPAQUE - treat it as a token and pass it back verbatim as
  * `?cursor` to fetch the next page. {@link ListPage} wraps a raw {@link List} with
  * ergonomic iteration (`for await … of`) and a `nextPage()` cursor walker so callers
  * never thread cursors by hand.
@@ -66,7 +66,7 @@ export class ListPage<T> implements AsyncIterable<T> {
   }
 
   /**
-   * Fetch the next page. Throws if there is none — guard with {@link hasMore}.
+   * Fetch the next page. Throws if there is none - guard with {@link hasMore}.
    */
   async nextPage(signal?: AbortSignal): Promise<ListPage<T>> {
     if (!this.hasMore || this.nextCursor === null) {

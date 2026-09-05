@@ -1,5 +1,5 @@
 /**
- * Inbox in one call — then queue a message for a human.
+ * Inbox in one call - then queue a message for a human.
  *
  * Run offline against the built-in fixtures (no API key needed):
  *   EXTROVERT_API_BASE_URL=mock npx tsx examples/mailbox-in-one-call.ts
@@ -32,7 +32,7 @@ async function main() {
   console.log(`review policy: ${policy}`);
 
   // `intent.summary` is what the human reviewer reads first, so it carries the
-  // why — not a restatement of the subject. It is REQUIRED once review resolves.
+  // why - not a restatement of the subject. It is REQUIRED once review resolves.
   const outcome = await inbox.send({
     to: "ops@acme.test",
     subject: "agent online",
@@ -45,7 +45,7 @@ async function main() {
   if (isQueuedForReview(outcome)) {
     // The normal outcome. Nothing has been delivered yet.
     console.log(`queued for review: ${outcome.review.id} (state: ${outcome.review.state})`);
-    console.log("a human approves, edits, or rejects it next — watch the review");
+    console.log("a human approves, edits, or rejects it next - watch the review");
     console.log("with wait_for_review_event / list_review_events until it closes.");
   } else {
     // Only reachable on an `allow_direct` inbox, or a graduated category that

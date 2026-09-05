@@ -20,12 +20,15 @@ import type {
   BatchUpdateMessagesRequest,
   BatchUpdateResult,
   Category,
+  CommerceRequest,
   ContactListEntry,
   AckReviewEventRequest,
   AckReviewEventResult,
   CreateInboxRequest,
   DeleteResult,
   Domain,
+  DomainStatusEventPage,
+  DomainQuote,
   DomainOffboard,
   EnrollRequest,
   EnrollResponse,
@@ -34,7 +37,11 @@ import type {
   Inbox,
   InboxCredentials,
   Job,
+  ListCommerceRequestsParams,
   OnboardDomainRequest,
+  QuoteDomainRequest,
+  RequestDomainPurchaseRequest,
+  RequestPlanChangeRequest,
   ListCategoriesParams,
   ListInboxesParams,
   ProjectInboxListParams,
@@ -190,13 +197,14 @@ export interface Transport {
   ): Promise<ContactListEntry>;
   listContactLists(address: string, signal?: AbortSignal): Promise<Page<ContactListEntry>>;
   deleteContactListEntry(address: string, entryId: string, signal?: AbortSignal): Promise<void>;
-  // Suppressions (recipient opt-outs) — customer/org-scoped, not inbox-keyed.
+  // Suppressions (recipient opt-outs) - customer/org-scoped, not inbox-keyed.
   // precheck is the read-only "is this recipient opted out of MY org's mail?"; the
   // list pages the caller's own org rows; revoke re-enables one row (reason required).
   precheckSuppression(recipient: string, signal?: AbortSignal): Promise<SuppressionPrecheck>;
   listSuppressions(params: ListSuppressionsParams, signal?: AbortSignal): Promise<Page<SuppressionEntry>>;
   revokeSuppression(id: string, reason: string, signal?: AbortSignal): Promise<SuppressionEntry>;
-  listDomains(signal?: AbortSignal): Promise<Page<Domain>>;
+  listDomains(signal?: AbortSignal, params?: { page?: string; limit?: number }): Promise<Page<Domain>>;
+  listDomainEvents(domain: string, params: { after?: string; limit?: number }, signal?: AbortSignal): Promise<DomainStatusEventPage>;
   getDomain(domain: string, signal?: AbortSignal): Promise<Domain>;
   onboardDomain(req: OnboardDomainRequest, signal?: AbortSignal): Promise<Domain>;
   verifyDomain(domain: string, signal?: AbortSignal): Promise<Domain>;
@@ -204,7 +212,14 @@ export interface Transport {
   // Poll surface for an async job the agent enqueued (currently only the
   // domain-offboard teardown's status_url).
   getJob(jobId: string, signal?: AbortSignal): Promise<Job>;
-  // Review Loop (HITL): submit-for-review rides send/reply — literally the same
+  // Commerce request plane. These methods never expose human approval mutations.
+  quoteDomain(req: QuoteDomainRequest, signal?: AbortSignal): Promise<DomainQuote>;
+  requestDomainPurchase(req: RequestDomainPurchaseRequest, signal?: AbortSignal): Promise<CommerceRequest>;
+  requestPlanChange(req: RequestPlanChangeRequest, signal?: AbortSignal): Promise<CommerceRequest>;
+  getCommerceRequest(requestId: string, signal?: AbortSignal): Promise<CommerceRequest>;
+  cancelCommerceRequest(requestId: string, signal?: AbortSignal): Promise<CommerceRequest>;
+  listCommerceRequests(params: ListCommerceRequestsParams, signal?: AbortSignal): Promise<Page<CommerceRequest>>;
+  // Review Loop (HITL): submit-for-review rides send/reply - literally the same
   // endpoints, so it answers the same SendOutcome union. It stays a distinct
   // method because it NAMES the intent of the call; a submit that omits `intent`
   // under require_review raises IntentRequiredError from either entry point.
@@ -228,7 +243,7 @@ export interface Transport {
   restampReview(reviewId: string, req: RestampReviewRequest, signal?: AbortSignal): Promise<Review>;
   // BYO review-agent DECISION plane (M8 Slice B; D5/§9). The reviewer (review:act + a
   // matching active link) reads its decision context, then decides approve|edit|reject|
-  // escalate. On approve/edit the PLATFORM ACS-sends with the COMPOSER's creds (the
+  // escalate. On approve/edit the PLATFORM sends with the COMPOSER's creds (the
   // reviewer NEVER holds mailbox:send); the two circuit breakers force a maxed-out
   // review to the human regardless of intent.
   getReviewDecisionContext(reviewId: string, signal?: AbortSignal): Promise<ReviewDecisionContext>;
@@ -283,8 +298,8 @@ export interface Transport {
 //
 // The SDK's request types are ergonomic (`to` may be a bare string) and carry one
 // field that is NOT a body field at all (`idempotency_key`, which belongs in a
-// header). Shipping the caller's object verbatim — which is what these methods
-// used to do — sent both problems straight to a server that decodes with
+// header). Shipping the caller's object verbatim - which is what these methods
+// used to do - sent both problems straight to a server that decodes with
 // DisallowUnknownFields and `[]string` recipients, so a documented, typechecked
 // call 400'd on the wire. These builders are the one boundary where the
 // ergonomic shape becomes the wire shape:
@@ -294,7 +309,7 @@ export interface Transport {
 //      must not be there: the replay key is a hash of the raw body, so a key
 //      carried inside its own hashed payload is self-referential noise.
 //   2. `to` / `cc` / `bcc` are widened from `string | string[]` to `string[]`.
-//      An absent field stays absent — emitting `cc: []` would add a key the
+//      An absent field stays absent - emitting `cc: []` would add a key the
 //      caller never wrote.
 //   3. Nothing is RENAMED. `text` is the canonical name on both sides; that is
 //      the whole reason `text` was chosen over the server's old `body`.
@@ -740,7 +755,7 @@ export class HttpTransport implements Transport {
   }
 
   listSuppressions(params: ListSuppressionsParams, signal?: AbortSignal): Promise<Page<SuppressionEntry>> {
-    // Note: no `recipient` here — that param switches the server to the pre-check.
+    // Note: no `recipient` here - that param switches the server to the pre-check.
     return this.call({
       method: "GET",
       path: "/v1/suppressions",
@@ -763,8 +778,12 @@ export class HttpTransport implements Transport {
     });
   }
 
-  listDomains(signal?: AbortSignal): Promise<Page<Domain>> {
-    return this.call({ method: "GET", path: "/v1/domains", signal });
+  listDomains(signal?: AbortSignal, params: { page?: string; limit?: number } = {}): Promise<Page<Domain>> {
+    return this.call({ method: "GET", path: "/v1/domains", query: params, signal });
+  }
+
+  listDomainEvents(domain: string, params: { after?: string; limit?: number }, signal?: AbortSignal): Promise<DomainStatusEventPage> {
+    return this.call({ method: "GET", path: `/v1/domains/${encodeURIComponent(domain)}/events`, query: params, signal });
   }
 
   getDomain(domain: string, signal?: AbortSignal): Promise<Domain> {
@@ -775,6 +794,8 @@ export class HttpTransport implements Transport {
     return this.call({ method: "POST", path: "/v1/domains", body: req, signal });
   }
 
+  // Delegated domains perform an immediate authoritative DNS check. Inspect
+  // delegation.status separately from mail readiness; 429 requests may be retried.
   verifyDomain(domain: string, signal?: AbortSignal): Promise<Domain> {
     return this.call({
       method: "POST",
@@ -802,6 +823,66 @@ export class HttpTransport implements Transport {
 
   getJob(jobId: string, signal?: AbortSignal): Promise<Job> {
     return this.call({ method: "GET", path: `/v1/jobs/${encodeURIComponent(jobId)}`, signal });
+  }
+
+  quoteDomain(req: QuoteDomainRequest, signal?: AbortSignal): Promise<DomainQuote> {
+    return this.call({ method: "POST", path: "/v1/commerce/domain-quotes", body: req, signal });
+  }
+
+  requestDomainPurchase(
+    req: RequestDomainPurchaseRequest,
+    signal?: AbortSignal,
+  ): Promise<CommerceRequest> {
+    const { idempotency_key, ...body } = req;
+    return this.call({
+      method: "POST",
+      path: "/v1/commerce/requests/domain-purchases",
+      body,
+      idempotencyKey: idempotency_key,
+      signal,
+    });
+  }
+
+  requestPlanChange(req: RequestPlanChangeRequest, signal?: AbortSignal): Promise<CommerceRequest> {
+    const { idempotency_key, ...body } = req;
+    return this.call({
+      method: "POST",
+      path: "/v1/commerce/requests/plan-changes",
+      body,
+      idempotencyKey: idempotency_key,
+      signal,
+    });
+  }
+
+  getCommerceRequest(requestId: string, signal?: AbortSignal): Promise<CommerceRequest> {
+    return this.call({
+      method: "GET",
+      path: `/v1/commerce/requests/${encodeURIComponent(requestId)}`,
+      signal,
+    });
+  }
+
+  cancelCommerceRequest(requestId: string, signal?: AbortSignal): Promise<CommerceRequest> {
+    return this.call({
+      method: "POST",
+      path: `/v1/commerce/requests/${encodeURIComponent(requestId)}/cancel`,
+      signal,
+    });
+  }
+
+  listCommerceRequests(
+    params: ListCommerceRequestsParams,
+    signal?: AbortSignal,
+  ): Promise<Page<CommerceRequest>> {
+    return this.call({
+      method: "GET",
+      path: "/v1/commerce/requests",
+      query: {
+        limit: params.limit,
+        page: params.page,
+      },
+      signal,
+    });
   }
 
   submitForReview(address: string, req: SendRequest, signal?: AbortSignal): Promise<SendOutcome> {
@@ -1223,8 +1304,8 @@ export class MockTransport implements Transport {
   async searchMessages(address: string, params: SearchMessagesParams): Promise<Page<Message>> {
     return this.backend.searchMessages(address, params);
   }
-  async listThreads(address: string, _params: ListThreadsParams): Promise<Page<Thread>> {
-    return this.backend.listThreads(address);
+  async listThreads(address: string, params: ListThreadsParams): Promise<Page<Thread>> {
+    return this.backend.listThreads(address, params);
   }
   async searchThreads(address: string, params: SearchMessagesParams): Promise<Page<Thread>> {
     return this.backend.searchThreads(address, params);
@@ -1293,8 +1374,17 @@ export class MockTransport implements Transport {
     if (!row) throw notFound("suppression", id);
     return row;
   }
-  async listDomains(): Promise<Page<Domain>> {
-    return this.backend.listDomains();
+  async listDomains(_signal?: AbortSignal, params: { page?: string; limit?: number } = {}): Promise<Page<Domain>> {
+    const page = this.backend.listDomains();
+    const offset = Number(params.page ?? 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Invalid page cursor");
+    const items = page.items.slice(offset, offset + (params.limit ?? 50));
+    return { items, total: page.total, next_cursor: offset + items.length < page.items.length ? String(offset + items.length) : undefined };
+  }
+
+  async listDomainEvents(domain: string, params: { after?: string; limit?: number }): Promise<DomainStatusEventPage> {
+    if (!this.backend.getDomain(domain)) throw notFound("domain", domain);
+    return { items: [], next_cursor: params.after ?? "0", has_more: false, poll_after_seconds: 30 };
   }
   async getDomain(domain: string): Promise<Domain> {
     const d = this.backend.getDomain(domain);
@@ -1320,6 +1410,28 @@ export class MockTransport implements Transport {
     const job = this.backend.getJob(jobId);
     if (!job) throw notFound("job", jobId);
     return job;
+  }
+  async quoteDomain(req: QuoteDomainRequest): Promise<DomainQuote> {
+    return this.backend.quoteDomain(req);
+  }
+  async requestDomainPurchase(req: RequestDomainPurchaseRequest): Promise<CommerceRequest> {
+    return this.backend.requestDomainPurchase(req);
+  }
+  async requestPlanChange(req: RequestPlanChangeRequest): Promise<CommerceRequest> {
+    return this.backend.requestPlanChange(req);
+  }
+  async getCommerceRequest(requestId: string): Promise<CommerceRequest> {
+    const request = this.backend.getCommerceRequest(requestId);
+    if (!request) throw notFound("commerce request", requestId);
+    return request;
+  }
+  async cancelCommerceRequest(requestId: string): Promise<CommerceRequest> {
+    const request = this.backend.cancelCommerceRequest(requestId);
+    if (!request) throw notFound("commerce request", requestId);
+    return request;
+  }
+  async listCommerceRequests(params: ListCommerceRequestsParams): Promise<Page<CommerceRequest>> {
+    return this.backend.listCommerceRequests(params);
   }
   async submitForReview(address: string, req: SendRequest): Promise<SendOutcome> {
     return this.backend.submitForReview(address, req);

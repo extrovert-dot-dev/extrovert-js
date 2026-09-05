@@ -49,7 +49,7 @@ export { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from ".
 export { registerTools, TOOL_NAMES } from "./tools.js";
 export { extractOtpCode, extractVerificationLink, extractSignals } from "./extract.js";
 
-// Open contract (HITL D14) — the published, versioned Review-Loop surface. The
+// Open contract (HITL D14) - the published, versioned Review-Loop surface. The
 // MCP server mirrors the SDK contract: same provisional 0.x version + manifest so
 // an MCP host can pin it. Not a wire protocol (D14).
 export { CONTRACT_VERSION, CONTRACT_MANIFEST } from "./contract.js";

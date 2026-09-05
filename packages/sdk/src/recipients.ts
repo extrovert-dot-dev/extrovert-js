@@ -2,7 +2,7 @@
  * Recipient-list normalization, shared by the live transport and the offline mock.
  *
  * `SendRequest.to` / `cc` / `bcc` accept `string | string[]` because passing one
- * address should not require a one-element array — and the flagship quickstart
+ * address should not require a one-element array - and the flagship quickstart
  * does exactly that. The server, however, decodes them as `[]string` and rejects
  * a bare string with a 400. So the scalar form has to be widened somewhere, and
  * the honest place is the client: there is no deployed caller relying on a scalar

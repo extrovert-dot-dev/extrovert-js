@@ -8,6 +8,7 @@
  */
 
 import type { Server } from "node:http";
+import { randomUUID } from "node:crypto";
 
 import {
   createMcpHandler,
@@ -85,6 +86,17 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
       ])
     : undefined;
   const app = createMcpExpressApp({ host, allowedHosts, jsonLimit: "4mb" });
+  app.use((req, res, next) => {
+    const requestId = randomUUID();
+    res.setHeader("X-Request-Id", requestId);
+    res.once("finish", () => {
+      if (req.path === "/mcp" && res.statusCode >= 400) {
+        // Never log headers, callback URLs, bearer tokens or request bodies.
+        process.stderr.write(`${JSON.stringify({ event: "mcp_connection_failed", request_id: requestId, status: res.statusCode, method: req.method })}\n`);
+      }
+    });
+    next();
+  });
 
   const handler = createMcpHandler(
     ({ authInfo }) => {
@@ -153,7 +165,7 @@ export async function runHttp(options: HttpServerOptions = {}): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const httpServer = runtime.app.listen(port, host, () => {
       process.stderr.write(
-        `extrovert-mcp: stateless HTTP listening on http://${host}:${port}/mcp — ${
+        `extrovert-mcp: stateless HTTP listening on http://${host}:${port}/mcp - ${
           runtime.authEnabled ? "OAuth + scoped agent keys" : "local mode"
         }\n`,
       );

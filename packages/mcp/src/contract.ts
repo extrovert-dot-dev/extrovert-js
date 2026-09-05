@@ -1,14 +1,14 @@
 /**
- * The Extrovert Review-Loop **open contract** (HITL D14, spec §11) — MCP mirror.
+ * The Extrovert Review-Loop **open contract** (HITL D14, spec §11) - MCP mirror.
  *
  * The MCP server is a thin, stateless mirror of the agent plane; this module
  * mirrors the SDK's published contract surface so an MCP host pins the SAME
  * provisional 0.x version + manifest the SDK and openapi do. It defines no new
- * wire shapes — the §11 shapes already live in `./types` (ReviewIntent,
+ * wire shapes - the §11 shapes already live in `./types` (ReviewIntent,
  * ReviewFeedback, Rule, ReviewEvent, …); here we name the `diff_json` object and
  * publish the version + manifest.
  *
- * D14: this is an SDK + skill contract, versioned WITH the SDK — NOT a wire
+ * D14: this is an SDK + skill contract, versioned WITH the SDK - NOT a wire
  * protocol and NOT a standalone protocol endpoint. {@link CONTRACT_VERSION} is a
  * PROVISIONAL, pre-1.0 (0.x) version aligned to the SDK package version, the MCP
  * `SERVER_VERSION`, and the openapi `info.version`.
@@ -37,7 +37,7 @@ export interface DiffJson {
 }
 
 // ---------------------------------------------------------------------------
-// §11 CORE — re-export the canonical MCP types (mirrors the SDK contract.ts).
+// §11 CORE - re-export the canonical MCP types (mirrors the SDK contract.ts).
 //
 // These re-exports give the CONTRACT_MANIFEST.shapes names a COMPILE-TIME link to
 // the actual MCP types in ./types: if a §11 type is renamed/removed in ./types,
@@ -47,18 +47,24 @@ export interface DiffJson {
 // (ReviewIntent / ReviewFeedback / Rule / ReviewEvent), so no aliasing is needed.
 // ---------------------------------------------------------------------------
 export type { ReviewIntent, ReviewFeedback, Rule, ReviewEvent } from "./types.js";
+export type {
+  CommerceBlocker,
+  DomainQuote,
+  CommerceRequestKind,
+  CommerceRequest,
+} from "./types.js";
 
 /**
  * The published version of the Extrovert Review-Loop open contract (D14).
- * `0.1.0-pre.6` — PROVISIONAL, pre-1.0; aligned to the SDK package version + the MCP
+ * `0.1.0-pre.7` - PROVISIONAL, pre-1.0; aligned to the SDK package version + the MCP
  * `SERVER_VERSION` + the openapi `info.version`.
  */
-export const CONTRACT_VERSION = "0.1.0-pre.6" as const;
+export const CONTRACT_VERSION = "0.1.0-pre.7" as const;
 
 /** The stability posture of a published contract version. */
 export type ContractStability = "provisional" | "stable";
 
-/** The machine-readable manifest of the open contract (D14) — mirrors the SDK. */
+/** The machine-readable manifest of the open contract (D14) - mirrors the SDK. */
 export interface ContractManifest {
   readonly name: "extrovert.review-loop";
   readonly version: string;
@@ -115,12 +121,17 @@ export const CONTRACT_MANIFEST: ContractManifest = {
     "ScanBacklogStatus",
     "CategoryPacingState",
     "PacingItem",
-    // rules + audit (M4) — "Rule" is already listed in the §11-core block above.
+    // rules + audit (M4) - "Rule" is already listed in the §11-core block above.
     "RuleAuditEntry",
     // BYO reviewer decision (M8)
     "ReviewerAction",
     "ReviewDecisionContext",
     "ReviewerDecisionResult",
+    // agent commerce request plane
+    "CommerceBlocker",
+    "DomainQuote",
+    "CommerceRequestKind",
+    "CommerceRequest",
   ],
   // The complete Review Loop behavior lives in the send skill; writing-rule
   // governance remains independently installable and part of this contract.

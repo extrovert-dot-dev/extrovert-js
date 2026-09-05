@@ -12,17 +12,35 @@
  */
 
 import { extractSignals } from "./extract.js";
+import { ExtrovertApiError } from "./client.js";
+
+const PAID_SHARED_DOMAIN = "extrovertmail.com";
+const FREE_SHARED_DOMAIN = "free.extrovertmail.com";
+const RESERVED_SHARED_LOCAL_PARTS = new Set([
+  "postmaster", "admin", "webadmin", "legal", "fraudmark", "fraudmarc", "keith",
+  "melissa", "richard", "sydney", "syd", "john", "johnny",
+]);
+
+function validatedSharedLocalPart(value: string): string {
+  const normalized = value.toLowerCase().trim().replace(/[^a-z0-9._-]/g, "").replace(/^[._-]+|[._-]+$/g, "").slice(0, 40);
+  if (normalized.length < 5 || RESERVED_SHARED_LOCAL_PARTS.has(normalized)) {
+    throw new ExtrovertApiError("Shared-domain usernames must normalize to at least 5 characters and cannot use a reserved name.", 400, "invalid");
+  }
+  return normalized;
+}
 import type {
   Attachment,
   AttachmentDownload,
   AttachmentInput,
   BatchUpdateResult,
   Category,
+  CommerceRequest,
   ContactListDirection,
   ContactListEntry,
   ContactListKind,
   DeleteResult,
   Domain,
+  DomainQuote,
   DomainOffboard,
   DomainRecord,
   EnrollmentResult,
@@ -75,8 +93,11 @@ import type {
   InboxMetadataPatch,
   ListReviewEventsInput,
   ListReviewsInput,
+  ListCommerceRequestsInput,
   PostReviewChatInput,
   ProposeCategoryInput,
+  RequestDomainPurchaseInput,
+  RequestPlanChangeInput,
   RestampReviewInput,
   ReviewerDecideInput,
   SaveRuleInput,
@@ -96,7 +117,7 @@ function nextId(prefix: string): string {
 
 /**
  * The FIXED org/project the mock agent key is bound to. There is no mutable
- * project selector — these are the offline mirror of the values the live key
+ * project selector - these are the offline mirror of the values the live key
  * resolves from its stored binding (surfaced by whoami / enroll, stamped onto
  * project-layer rules).
  */
@@ -137,7 +158,7 @@ export const SEEDED_SUPPRESSED_RECIPIENT = "unsubscribed@example.com";
  * `approved -> failed` edge and its terminal `send_failed` nudge are drivable
  * offline. Without it the mock could only ever demonstrate the happy path, and a
  * drain loop that never sees `send_failed` is a drain loop nobody proved
- * terminates on failure — which is exactly how the missing terminal nudges
+ * terminates on failure - which is exactly how the missing terminal nudges
  * survived unnoticed.
  */
 export const SEEDED_SEND_FAILURE_RECIPIENT = "bounce@example.com";
@@ -146,14 +167,14 @@ export const SEEDED_SEND_FAILURE_RECIPIENT = "bounce@example.com";
 const MOCK_SEND_FAILURE_ERROR = "delivery rejected by the recipient's mail server (550 mailbox unavailable)";
 
 /**
- * The mock mirror of `reviewloop.AllowedAgentActions` — the verbs that ARE legal
+ * The mock mirror of `reviewloop.AllowedAgentActions` - the verbs that ARE legal
  * from a given state. A `wrong_state` / `terminal` 409 carries these so the agent
  * is told what to do instead of being left to guess; from a terminal state the
  * reads are the only honest answer.
  */
 function allowedAgentActions(state: ReviewState): string[] {
   const actions: string[] = [];
-  // submit_revision targets needs_review WITH a revision bump — including the
+  // submit_revision targets needs_review WITH a revision bump - including the
   // needs_review self-edge, which is legal precisely because a redraft bumps the
   // revision and rewrites the draft.
   if (["needs_review", "in_review", "chatting", "rejected", "stale", "stalled"].includes(state)) {
@@ -173,7 +194,7 @@ function allowedAgentActions(state: ReviewState): string[] {
 const TERMINAL_REVIEW_STATES: readonly ReviewState[] = ["sent", "auto_sent", "cancelled"];
 
 /**
- * `closed` — the DEFINITIVE "am I done?" answer. `failed` is included even though
+ * `closed` - the DEFINITIVE "am I done?" answer. `failed` is included even though
  * it is not formally terminal: the console cannot re-approve it, so an agent told
  * `closed:false` would wait forever on a row nobody is going to move.
  */
@@ -184,7 +205,7 @@ function reviewClosed(state: ReviewState): boolean {
 /**
  * Enforce the project_id assertion contract (mock): a request `project_id` is an
  * ASSERTION, never a selector. The mock binds every key to {@link MOCK_PROJECT_ID},
- * so a non-matching assertion is a 403 — mirroring the SDK MockBackend and the
+ * so a non-matching assertion is a 403 - mirroring the SDK MockBackend and the
  * real server (assertProjectMatch). Offline parity prevents the bug from only
  * surfacing in production.
  */
@@ -270,6 +291,10 @@ export class FixtureStore {
   /** job id -> async job status (mock mirror of extrovert_jobs; currently only
    *  the domain-offboard teardown enqueues one). */
   private jobs = new Map<string, Job>();
+  /** request id -> agent-initiated commerce request. Human approval is never mocked as an agent action. */
+  private commerceRequests = new Map<string, CommerceRequest>();
+  /** create kind + Idempotency-Key -> request id. */
+  private commerceIdempotency = new Map<string, string>();
   /** suppression id -> recipient opt-out row (mock mirror of extrovert_suppressions). */
   private suppressions = new Map<string, SuppressionEntry>();
   /** review id -> review request (mock mirror of extrovert_review_requests). */
@@ -318,7 +343,7 @@ export class FixtureStore {
    * The org's review policy, mirrored offline so the mock enforces the SAME tree
    * the server does.
    *
-   * The default is `require_review` — deliberately, and matching the column
+   * The default is `require_review` - deliberately, and matching the column
    * default every real account gets. A mock that defaulted to `allow_direct` would
    * teach every offline agent that a bare send just sends, which is precisely the
    * lie that let the wire bug live for months: the mock passed while the real API
@@ -346,7 +371,7 @@ export class FixtureStore {
 
   /**
    * Persist a review and recompute the derived `closed` flag from its state. Every
-   * mutation goes through here so `closed` can never drift from `state` — an agent
+   * mutation goes through here so `closed` can never drift from `state` - an agent
    * polling `closed` after a crash is trusting exactly this.
    */
   private commitReview(review: Review): Review {
@@ -359,7 +384,7 @@ export class FixtureStore {
    * The mock mirror of the submit-time D3 gate. A resolved-review send REQUIRES an
    * intent; a bare send/reply/forward has none by construction, so under anything
    * but an explicitly-asserted direct mode on an `allow_direct` account it is
-   * refused — nothing sent, nothing queued.
+   * refused - nothing sent, nothing queued.
    */
   private resolvedModeIsReview(mode: "review" | "direct"): boolean {
     return !(this.reviewPolicy === "allow_direct" && mode === "direct");
@@ -423,7 +448,7 @@ export class FixtureStore {
     const existing = this.signups.get(email);
     const customerId = existing?.customerId ?? nextId("cus");
     const agentId = existing?.agentId ?? nextId("agt");
-    const address = existing?.address ?? `${input.username ?? "agent" + shortLabel()}@smtp.extrovert.dev`;
+    const address = existing?.address ?? `${validatedSharedLocalPart(input.username ?? "agent" + shortLabel())}@${FREE_SHARED_DOMAIN}`;
     // Stable offline code keeps the full signup → mailbox handoff executable in
     // examples and contract tests without ever weakening the live API's CSPRNG.
     const otp = "492013";
@@ -515,8 +540,12 @@ export class FixtureStore {
       const existing = existingId ? this.inboxes.get(existingId) : undefined;
       if (existing) return existing;
     }
-    const username = (opts.username ?? `agent${this.inboxes.size + 1}`).toLowerCase();
-    const domain = opts.domain ?? `${shortLabel()}.smtp.extrovert.dev`;
+    const domain = opts.domain ?? PAID_SHARED_DOMAIN;
+    const normalizedDomain = domain.trim().toLowerCase();
+    const isSharedDomain = normalizedDomain === PAID_SHARED_DOMAIN || normalizedDomain === FREE_SHARED_DOMAIN;
+    const username = isSharedDomain
+      ? validatedSharedLocalPart(opts.username ?? `agent${this.inboxes.size + 1}`)
+      : (opts.username ?? `agent${this.inboxes.size + 1}`).toLowerCase();
     const inbox: Inbox = {
       object: "inbox",
       // Mint the canonical opaque inbox id with the LIVE prefix (`pmbx_…`,
@@ -532,6 +561,7 @@ export class FixtureStore {
       created_at: new Date().toISOString(),
       sender_verified: true,
       daily_send_limit: DEFAULT_DAILY_SEND_LIMIT,
+      direct_smtp_enabled: false,
       // Metadata is always an object on a read (`{}` when none is set); a create
       // patch drops any `null` values per the merge-null-clear semantics.
       metadata: applyMetadataPatch({}, opts.metadata),
@@ -554,7 +584,7 @@ export class FixtureStore {
     const projectSegment = o.wildcard ? "-" : o.project;
     if (projectSegment === undefined) {
       // Bare list. An org key must pick a breadth; project/inbox keys default to
-      // their (implicit) project — exactly today's behavior.
+      // their (implicit) project - exactly today's behavior.
       if (this.keyTier === "org") {
         throw new BreadthRequiredError(
           "An org-tier key must pick a list breadth: pass a project id or wildcard=true (the org subtree).",
@@ -580,7 +610,7 @@ export class FixtureStore {
   getInbox(idOrAddress: string): Inbox | undefined {
     const inbox = this.resolveInbox(idOrAddress);
     if (!inbox) return undefined;
-    // Only the SINGLE-inbox read carries the policy — the list path omits it
+    // Only the SINGLE-inbox read carries the policy - the list path omits it
     // because the value is identical for every inbox in the org.
     return { ...inbox, effective_review_policy: this.reviewPolicy };
   }
@@ -649,7 +679,7 @@ export class FixtureStore {
   // ---- messages ---------------------------------------------------------
 
   /**
-   * A BARE send — no mode/intent/category_id. Policy-gated exactly like the live
+   * A BARE send - no mode/intent/category_id. Policy-gated exactly like the live
    * endpoint: only an `allow_direct` account delivers here; under `require_review`
    * (the default) this is 422 `intent_required` with the remediation attached, and
    * nothing is sent or queued.
@@ -720,12 +750,13 @@ export class FixtureStore {
   /**
    * Thread-aware reply (mock). Resolves the parent by message_id or the latest
    * message in thread_id, derives recipients/subject server-side, and returns the
-   * canonical `{message_id, thread_id}` — matching the real API contract.
+   * canonical `{message_id, thread_id}` - matching the real API contract.
    */
   replyEmail(opts: {
     inbox: string;
     threadId?: string;
     messageId?: string;
+    expectedLastMessageId?: string;
     text?: string;
     html?: string;
     cc?: string[];
@@ -744,6 +775,7 @@ export class FixtureStore {
     inbox: string;
     threadId?: string;
     messageId?: string;
+    expectedLastMessageId?: string;
     text?: string;
     html?: string;
     cc?: string[];
@@ -753,6 +785,9 @@ export class FixtureStore {
     attachments?: AttachmentInput[];
   }): SendResult {
     const inbox = this.requireInbox(opts.inbox);
+    if (Boolean(opts.threadId) === Boolean(opts.messageId)) {
+      throw new ExtrovertApiError("provide exactly one of thread_id or message_id", 400, "invalid_argument");
+    }
     const all = this.messages.get(inbox.id) ?? [];
     let parent: Message | undefined;
     let threadId = opts.threadId;
@@ -764,6 +799,13 @@ export class FixtureStore {
       parent = all.filter((m) => m.thread_id === opts.threadId).at(-1);
     } else {
       throw new NotFoundError("reply requires thread_id or message_id");
+    }
+    if (opts.threadId && opts.expectedLastMessageId && parent?.id !== opts.expectedLastMessageId) {
+      throw new ExtrovertApiError(
+        `thread advanced; latest message is ${parent?.id ?? "unknown"}`,
+        409,
+        "conflict",
+      );
     }
     const to: string[] = [];
     if (parent) {
@@ -847,7 +889,7 @@ export class FixtureStore {
     // require_review is downgraded to review, which is what makes the policy
     // binding rather than advisory.
     const asserted = input.mode === "direct" ? "direct" : "review";
-    // Pre-flight BEFORE the intent gate — see preflight()'s note on the ordering.
+    // Pre-flight BEFORE the intent gate - see preflight()'s note on the ordering.
     this.preflight(inbox.address, [...input.to, ...(input.cc ?? []), ...(input.bcc ?? [])]);
     const isReview = this.resolvedModeIsReview(asserted);
     if (isReview && !input.intent?.summary?.trim()) {
@@ -908,6 +950,7 @@ export class FixtureStore {
         inbox: input.inbox,
         threadId: input.thread_id,
         messageId: input.message_id,
+        expectedLastMessageId: input.expected_last_message_id,
         text: input.text,
         html: input.html,
         cc: input.cc,
@@ -918,10 +961,17 @@ export class FixtureStore {
       });
       return { kind: "sent", message: { id: res.message_id, thread_id: res.thread_id } };
     }
-    // The reply's envelope is materialized AT SUBMIT — subject and recipients are
-    // derived here, not at approval — so the human reviews a message that actually
+    // The reply's envelope is materialized AT SUBMIT - subject and recipients are
+    // derived here, not at approval - so the human reviews a message that actually
     // has a subject line and recipients. A queued reply used to store neither.
     const parent = this.resolveReplyParent(inbox.id, input.thread_id, input.message_id);
+    if (input.thread_id && input.expected_last_message_id && parent?.id !== input.expected_last_message_id) {
+      throw new ExtrovertApiError(
+        `thread advanced; latest message is ${parent?.id ?? "unknown"}`,
+        409,
+        "conflict",
+      );
+    }
     const to = parent ? [parent.from.email] : [];
     if (parent && input.reply_all) {
       for (const participant of parent.to) {
@@ -982,8 +1032,8 @@ export class FixtureStore {
       bcc: input.bcc,
       intent: input.intent,
       categoryId: input.category_id,
-      // A forward is NOT threaded to its parent — the new recipients were never in
-      // that conversation — but the delivered forward still answers with the
+      // A forward is NOT threaded to its parent - the new recipients were never in
+      // that conversation - but the delivered forward still answers with the
       // parent's thread id, matching the direct forward path.
       replyThreadId: parent.thread_id,
     });
@@ -992,6 +1042,9 @@ export class FixtureStore {
 
   /** Resolve a reply's parent by message id, else the latest message in a thread. */
   private resolveReplyParent(inboxId: string, threadId?: string, messageId?: string): Message | undefined {
+    if (Boolean(threadId) === Boolean(messageId)) {
+      throw new ExtrovertApiError("provide exactly one of thread_id or message_id", 400, "invalid_argument");
+    }
     const all = this.messages.get(inboxId) ?? [];
     if (messageId) {
       const parent = all.find((m) => m.id === messageId);
@@ -1043,7 +1096,7 @@ export class FixtureStore {
    * The invariant a drain loop is written against: every review that reaches
    * `sent`, `auto_sent`, `failed` or `cancelled` emits exactly one terminal nudge,
    * and it is the last and highest-`seq` nudge that review will ever produce. The
-   * payload carries everything the agent needs to stop — including WHY a send
+   * payload carries everything the agent needs to stop - including WHY a send
    * failed, which was previously stored and exposed on no surface at all.
    */
   private enqueueTerminalNudge(review: Review, reason: "sent" | "send_failed" | "cancelled"): void {
@@ -1064,8 +1117,8 @@ export class FixtureStore {
       return;
     }
     // ONE `sent` reason covers both delivery flavors: `payload.state` distinguishes
-    // a human-reviewed `sent` from a `auto_sent`, and the agent's action — record
-    // the message id, ack, stop polling — is identical either way.
+    // a human-reviewed `sent` from a `auto_sent`, and the agent's action - record
+    // the message id, ack, stop polling - is identical either way.
     this.enqueueReviewEvent(review.id, "sent", {
       state: review.state,
       message_id: review.sent_message_id ?? "",
@@ -1105,7 +1158,7 @@ export class FixtureStore {
       this.enqueueFrontRunNudge(review, parentRevision);
       throw new TerminalError(
         `${verb} is not legal on a ${review.state} review: it is terminal and nothing will ever succeed. ` +
-          "STOP retrying — a front_run_next nudge is waiting for you.",
+          "STOP retrying - a front_run_next nudge is waiting for you.",
         review,
       );
     }
@@ -1204,7 +1257,7 @@ export class FixtureStore {
     this.assertMutable(review, "post_review_chat", review.revision);
     // needs_review is legal for an AGENT actor: an agent asking a question does not
     // open the draft or assign a reviewer, so it stays in the queue. (A HUMAN
-    // comment on a needs_review draft DOES open it — that asymmetry is the point.)
+    // comment on a needs_review draft DOES open it - that asymmetry is the point.)
     if (!["needs_review", "in_review", "chatting"].includes(review.state)) {
       throw new WrongStateError(
         `post_review_chat is not legal while the draft is in '${review.state}'.`,
@@ -1244,7 +1297,7 @@ export class FixtureStore {
     const review = this.reviews.get(input.id);
     if (!review) throw new NotFoundError(`Review not found: ${input.id}`);
     // TERMINAL first: nothing will ever move this row, so this must never be
-    // retried — a distinct code from the stale CAS below, which MUST be.
+    // retried - a distinct code from the stale CAS below, which MUST be.
     this.assertMutable(review, "submit_revision", input.parent_revision);
     // needs_review is a LEGAL source: the reviewer-reject, born-stale and
     // recheck_category paths all hand the composer a needs_review draft and nudge
@@ -1252,12 +1305,12 @@ export class FixtureStore {
     if (!["needs_review", "in_review", "chatting", "rejected", "stale", "stalled"].includes(review.state)) {
       throw new WrongStateError(
         `submit_revision is not legal while the draft is in '${review.state}'. Read the allowed_action hints and ` +
-          "pick a legal verb — do NOT retry this one.",
+          "pick a legal verb - do NOT retry this one.",
         review,
       );
     }
     if (review.revision !== input.parent_revision) {
-      // STALE, not wrong_state: the draft is still live and the retry IS the fix —
+      // STALE, not wrong_state: the draft is still live and the retry IS the fix  -
       // re-read, re-apply your edit on top of theirs, resubmit with the new
       // parent_revision. Bounded (<=3): the human always wins (D17).
       throw new StaleError("parent_revision is stale; re-read the review and retry", review);
@@ -1389,7 +1442,7 @@ export class FixtureStore {
       throw new ConflictError(`cannot decide a terminal review (${review.state})`);
     }
     // needs_review is a legal source: a reviewer (or a human on the console) may
-    // approve/reject straight from the QUEUE without opening the draft first —
+    // approve/reject straight from the QUEUE without opening the draft first  -
     // needs_review -> approved and needs_review -> rejected are both real edges.
     if (!["needs_review", "in_review", "chatting"].includes(review.state)) {
       throw new WrongStateError(
@@ -1459,7 +1512,7 @@ export class FixtureStore {
   /**
    * Browse the registry (mock), newest-first, excluding merged/soft-deleted
    * (merged_into set). `match` is a pure lexical filter (every token must appear in
-   * name+description) — NO LLM, mirroring the server.
+   * name+description) - NO LLM, mirroring the server.
    */
   listCategories(match?: string): Page<Category> {
     let items = [...this.categories.values()]
@@ -1504,7 +1557,7 @@ export class FixtureStore {
     return cat;
   }
 
-  /** Rename / re-describe a category (mock) — metadata only (D10). */
+  /** Rename / re-describe a category (mock) - metadata only (D10). */
   updateCategory(input: UpdateCategoryInput): Category {
     const cat = this.categories.get(input.id);
     if (!cat) throw new NotFoundError(`Category not found: ${input.id}`);
@@ -1515,7 +1568,7 @@ export class FixtureStore {
     return cat;
   }
 
-  // ---- Graduation + risk dial (Review Loop, D16/D6/D17) — agent READ + PROPOSE --
+  // ---- Graduation + risk dial (Review Loop, D16/D6/D17) - agent READ + PROPOSE --
 
   /** The mock account-default risk dial (mirrors the server defaults). */
   private accountDial() {
@@ -1533,7 +1586,7 @@ export class FixtureStore {
   /**
    * Read the effective risk dial (mock): the account default + every category with
    * an inherited (null override) effective dial. The mock category carries no risk-
-   * dial overrides, so every category inherits — effective == account.
+   * dial overrides, so every category inherits - effective == account.
    */
   getRiskDial(): RiskDial {
     const account = this.accountDial();
@@ -1596,7 +1649,7 @@ export class FixtureStore {
 
   /**
    * Propose graduating a category (mock): records nothing mutating and returns the
-   * current gate status. It does NOT flip the bit (D16) — the category state is
+   * current gate status. It does NOT flip the bit (D16) - the category state is
    * unchanged.
    */
   proposeGraduation(categoryId: string, _evidence?: Record<string, unknown>): GraduationStatus {
@@ -1634,7 +1687,7 @@ export class FixtureStore {
   }
 
   /**
-   * Read the demand-driven pacing state (mock — M7 Slice B/§8): the cursor + effective
+   * Read the demand-driven pacing state (mock - M7 Slice B/§8): the cursor + effective
    * window/ceiling/interval + each queued draft's classification. The mock has no cursor
    * (nothing reviewed) and no composed_* stamps, so every queued draft reads in-window-
    * fresh until the window fills, then ahead; the contract shape is exercised (the
@@ -1716,7 +1769,7 @@ export class FixtureStore {
     };
   }
 
-  /** Save / edit a rule (mock) — append-only by supersession (D11). */
+  /** Save / edit a rule (mock) - append-only by supersession (D11). */
   saveRule(input: SaveRuleInput): Rule {
     const text = input.rule_text.trim();
     if (!text) throw new IntentRequiredError("rule_text is required");
@@ -1801,7 +1854,7 @@ export class FixtureStore {
     return next;
   }
 
-  /** Retire a rule (mock) — soft delete; history survives. */
+  /** Retire a rule (mock) - soft delete; history survives. */
   retireRule(id: string): Rule {
     const rule = this.rules.get(id);
     if (!rule) throw new NotFoundError(`Rule not found: ${id}`);
@@ -1821,7 +1874,7 @@ export class FixtureStore {
     return { items, total: items.length };
   }
 
-  /** Undo a rule change (mock) — restore the prior version; idempotent (re-undo 409). */
+  /** Undo a rule change (mock) - restore the prior version; idempotent (re-undo 409). */
   undoRuleChange(udoId: string): Rule {
     const entry = this.ruleAudit.get(udoId);
     if (!entry) throw new NotFoundError(`Audit row not found: ${udoId}`);
@@ -1916,7 +1969,7 @@ export class FixtureStore {
 
   /**
    * Long-poll for a review event (mock). Offline there is nothing to wait FOR, so
-   * it returns the immediate drain (empty when caught up) — matching the server's
+   * it returns the immediate drain (empty when caught up) - matching the server's
    * "empty on timeout" contract.
    */
   waitForReviewEvent(input: WaitForReviewEventInput = {}): ReviewEventsResult {
@@ -1938,7 +1991,7 @@ export class FixtureStore {
   }
 
   /**
-   * createReviewRecord mints a needs_review row + the intent (agent_note) and
+   * createReviewRecord creates a needs_review row + the intent (agent_note) and
    * initial-draft (agent_draft) turns, mirroring the server's submit-time writes.
    */
   private createReviewRecord(opts: {
@@ -2063,7 +2116,7 @@ export class FixtureStore {
     return msg;
   }
 
-  listThreads(opts: { inbox: string; limit?: number }): Page<Thread> {
+  listThreads(opts: { inbox: string; limit?: number; cursor?: string }): Page<Thread> {
     const inbox = this.requireInbox(opts.inbox);
     const byThread = new Map<string, Message[]>();
     for (const m of this.messages.get(inbox.id) ?? []) {
@@ -2072,10 +2125,33 @@ export class FixtureStore {
       byThread.set(m.thread_id, arr);
     }
     const threads: Thread[] = [...byThread.entries()].map(([id, msgs]) =>
-      this.toThread(inbox.address, id, msgs),
+      this.toThread(inbox.address, id, msgs, true),
     );
     threads.sort((a, b) => b.last_message_at.localeCompare(a.last_message_at));
-    return { items: threads.slice(0, opts.limit ?? 20), total: threads.length };
+    return this.paginateThreads(threads, opts);
+  }
+
+  searchThreads(opts: { inbox: string; query: string; limit?: number; cursor?: string }): Page<Thread> {
+    const query = opts.query.trim().toLowerCase();
+    const matches = this.listThreads({ inbox: opts.inbox, limit: Number.MAX_SAFE_INTEGER }).items.filter(
+      (thread) =>
+        thread.subject.toLowerCase().includes(query) ||
+        thread.snippet.toLowerCase().includes(query) ||
+        thread.participants.join(" ").toLowerCase().includes(query),
+    );
+    return this.paginateThreads(matches, opts);
+  }
+
+  private paginateThreads(
+    threads: Thread[],
+    opts: { limit?: number; cursor?: string },
+  ): Page<Thread> {
+    const parsed = opts.cursor === undefined ? 0 : Number(opts.cursor);
+    const offset = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    const page = threads.slice(offset, offset + (opts.limit ?? 20));
+    const result: Page<Thread> = { items: page, total: threads.length };
+    if (offset + page.length < threads.length) result.next_cursor = String(offset + page.length);
+    return result;
   }
 
   /** Fetch one thread (with its messages, oldest-first) by id under an inbox. */
@@ -2155,10 +2231,13 @@ export class FixtureStore {
   }
 
   /** Build the canonical Thread wire shape (snippet, participant strings). */
-  private toThread(inboxAddr: string, id: string, msgs: Message[]): Thread {
+  private toThread(inboxAddr: string, id: string, msgs: Message[], summary = false): Thread {
     const sorted = [...msgs].sort((a, b) => a.date.localeCompare(b.date));
     const last = sorted.at(-1)!;
-    const participants = dedupeAddresses(sorted.flatMap((m) => [m.from, ...m.to])).map((a) =>
+    const participantMessages = summary ? [last] : sorted;
+    const participants = dedupeAddresses(
+      participantMessages.flatMap((m) => [m.from, ...m.to, ...(m.cc ?? []), ...(m.reply_to ?? [])]),
+    ).map((a) =>
       a.name ? `${a.name} <${a.email}>` : a.email,
     );
     return {
@@ -2169,6 +2248,9 @@ export class FixtureStore {
       participants,
       last_message_at: last.date,
       snippet: (last.text ?? last.html ?? "").slice(0, 140),
+      unread: !last.seen,
+      last_message_has_attachments: (this.attachments.get(last.id)?.length ?? 0) > 0,
+      last_message_id: last.id,
     };
   }
 
@@ -2290,7 +2372,7 @@ export class FixtureStore {
       extracted_text: opts.text?.trim() || null,
       extracted_html: opts.html?.trim() || null,
       date,
-      message_id: `<${nextId("mid")}@smtp.extrovert.dev>`,
+      message_id: `<${nextId("mid")}@extrovertmail.com>`,
       seen: opts.direction === "outbound",
       folder: opts.direction === "inbound" ? "INBOX" : "Sent",
     };
@@ -2443,16 +2525,15 @@ export class FixtureStore {
 
   // ---- domains (Slice 5) ------------------------------------------------
 
-  /** Onboard a domain. Mirrors the server's per-mode record set + status. */
+  /** Add a delegated domain and return only the customer-published nameservers. */
   onboardDomain(input: {
     domain: string;
-    mode?: "shared" | "ns_delegated" | "manual" | "purchased";
-    mail_host_ip?: string;
+    mode?: "ns_delegated";
     scope?: "org" | "project";
     project_id?: string;
   }): Domain {
     const name = input.domain.trim().toLowerCase();
-    const mode = input.mode ?? "ns_delegated";
+    const mode = "ns_delegated";
     // A project_id assertion must match the key's bound project (403 on mismatch),
     // mirroring the SDK mock + the real server. `scope` is accepted offline (the
     // live API binds visibility to the key's project); the mock does not otherwise
@@ -2465,17 +2546,18 @@ export class FixtureStore {
       id: nextId("dom"),
       domain: name,
       mode,
-      verification_status:
-        mode === "shared" ? "verified" : mode === "manual" ? "pending" : "verifying",
-      dkim_status: mode === "shared" ? "configured" : mode === "manual" ? "pending" : "configured",
-      shared: mode === "shared",
+      verification_status: "verifying",
+      dkim_status: "configured",
+      shared: false,
       created_at: new Date().toISOString(),
-      records: mode === "manual" || mode === "ns_delegated" ? domainRecordSet(name) : undefined,
-      delegation_ns: mode === "ns_delegated" ? domainDelegationNS(name) : undefined,
-      instruction:
-        mode === "shared"
-          ? "Shared domain ready. No DNS changes required."
-          : "Add the records, then trigger verification.",
+      delegation_ns: domainDelegationNS(name),
+      instruction: "Add the nameserver entries at your domain provider. We check automatically; use Recheck DNS for an immediate check.",
+      readiness: {
+        status: "waiting_for_dns", label: "Waiting for DNS", summary: "We have not confirmed your nameserver entries yet. Add them at your domain provider; we will finish setup automatically.",
+        reason: "dns_entries_unconfirmed", action_required_by: "customer", next_action: "check_dns_entries",
+        ready_for_inboxes: false, poll_after_seconds: 30,
+        inboxes: { scope: "agent", total: 0, ready: 0, setting_up: 0, needs_attention: 0 },
+      },
     };
     this.domains.set(name, domain);
     return { ...domain };
@@ -2531,6 +2613,140 @@ export class FixtureStore {
     return { ...job };
   }
 
+  // ---- commerce (quote/request/status; no approval mutation) ------------
+
+  quoteDomain(domain: string): DomainQuote {
+    const name = domain.trim().toLowerCase();
+    return {
+      object: "domain_quote",
+      domain: name,
+      available: !name.startsWith("unavailable."),
+      currency: "usd",
+      quote_cents: 2500,
+      renewal_cents: 2500,
+      premium: false,
+      quote_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      blockers: [],
+    };
+  }
+
+  requestDomainPurchase(input: RequestDomainPurchaseInput): CommerceRequest {
+    const idem = `domain_purchase:${input.idempotency_key.trim()}`;
+    const replayId = this.commerceIdempotency.get(idem);
+    if (replayId) return { ...this.requireCommerceRequest(replayId) };
+    const quote = this.quoteDomain(input.domain);
+    const ts = new Date().toISOString();
+    const id = nextId("creq");
+    const approvalUrl = `https://app.extrovert.dev/commerce/requests/${id}`;
+    const request: CommerceRequest = {
+      object: "commerce_request",
+      id,
+      kind: "domain_purchase",
+      state: "awaiting_human_approval",
+      domain: quote.domain,
+      domain_scope: input.scope ?? "org",
+      rationale: input.rationale,
+      currency: quote.currency,
+      quote_cents: quote.quote_cents,
+      renewal_cents: quote.renewal_cents,
+      quote_expires_at: quote.quote_expires_at,
+      auto_renew: input.auto_renew ?? true,
+      blocker_code: "human_approval_required",
+      blockers: [
+        {
+          code: "human_approval_required",
+          message: "A human billing administrator must approve this domain purchase.",
+          manage_url: approvalUrl,
+        },
+      ],
+      approval_url: approvalUrl,
+      agent_next_action: "Share approval_url with the human, then poll this request after approval.",
+      retry_safe: true,
+      poll_after_seconds: 10,
+      version: 1,
+      created_at: ts,
+      updated_at: ts,
+    };
+    this.commerceRequests.set(id, request);
+    this.commerceIdempotency.set(idem, id);
+    return { ...request };
+  }
+
+  requestPlanChange(input: RequestPlanChangeInput): CommerceRequest {
+    const idem = `plan_change:${input.idempotency_key.trim()}`;
+    const replayId = this.commerceIdempotency.get(idem);
+    if (replayId) return { ...this.requireCommerceRequest(replayId) };
+    const ts = new Date().toISOString();
+    const id = nextId("creq");
+    const approvalUrl = `https://app.extrovert.dev/commerce/requests/${id}`;
+    const request: CommerceRequest = {
+      object: "commerce_request",
+      id,
+      kind: "plan_change",
+      state: "awaiting_human_approval",
+      target_plan: input.target_plan,
+      current_plan: "developer",
+      rationale: input.rationale,
+      currency: "usd",
+      quote_cents: 0,
+      renewal_cents: 0,
+      auto_renew: true,
+      blocker_code: "human_approval_required",
+      blockers: [
+        {
+          code: "human_approval_required",
+          message: "A human billing administrator must approve this plan change.",
+          manage_url: approvalUrl,
+        },
+      ],
+      approval_url: approvalUrl,
+      agent_next_action: "Share approval_url with the human, then poll this request after approval.",
+      retry_safe: true,
+      poll_after_seconds: 10,
+      version: 1,
+      created_at: ts,
+      updated_at: ts,
+    };
+    this.commerceRequests.set(id, request);
+    this.commerceIdempotency.set(idem, id);
+    return { ...request };
+  }
+
+  getCommerceRequest(requestId: string): CommerceRequest {
+    return { ...this.requireCommerceRequest(requestId) };
+  }
+
+  cancelCommerceRequest(requestId: string): CommerceRequest {
+    const request = this.requireCommerceRequest(requestId);
+    if (!["awaiting_human_approval", "blocked", "approved", "payment_action_required", "payment_failed"].includes(request.state)) {
+      throw new Error("This commerce request can no longer be cancelled.");
+    }
+    request.state = "cancelled";
+    request.blocker_code = undefined;
+    request.blockers = [];
+    request.agent_next_action = "The request is cancelled. Create a new request only if the purchase is still needed.";
+    request.version += 1;
+    request.updated_at = new Date().toISOString();
+    return { ...request };
+  }
+
+  listCommerceRequests(input: ListCommerceRequestsInput = {}): Page<CommerceRequest> {
+    let items = [...this.commerceRequests.values()];
+    items.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const total = items.length;
+    const offset = input.page ? Math.max(0, Number.parseInt(input.page, 10) || 0) : 0;
+    const limit = Math.max(1, Math.min(input.limit ?? 50, 100));
+    const page = items.slice(offset, offset + limit).map((request) => ({ ...request }));
+    const next = offset + page.length;
+    return { items: page, total, next_cursor: next < total ? String(next) : undefined };
+  }
+
+  private requireCommerceRequest(requestId: string): CommerceRequest {
+    const request = this.commerceRequests.get(requestId);
+    if (!request) throw new NotFoundError(`Commerce request not found: ${requestId}`);
+    return request;
+  }
+
   // ---- suppressions (recipient opt-outs / list-unsubscribe) --------------
 
   /**
@@ -2553,7 +2769,7 @@ export class FixtureStore {
       org_id: MOCK_ORG_ID,
       status: "unknown",
       sending_status: "unknown",
-      providers: [],
+      configured: false,
       metrics: { sends: 0, bounces: 0, complaints: 0, bounce_rate: 0, complaint_rate: 0 },
       open_findings: 0,
     };
@@ -2605,7 +2821,7 @@ export class FixtureStore {
   /**
    * Reject the WHOLE send if ANY recipient has an active org-scope suppression,
    * naming exactly the suppressed addresses (never the scope/origin) so the caller
-   * can drop them and retry — mirroring the live `recipient_suppressed` (422) path.
+   * can drop them and retry - mirroring the live `recipient_suppressed` (422) path.
    */
   private enforceSuppression(recipients: string[]): void {
     const active = new Set(
@@ -2665,7 +2881,6 @@ export class FixtureStore {
   private seed(): void {
     const inbox = this.createInbox({
       username: "agent7",
-      domain: "smtp.extrovert.dev",
       displayName: "Extrovert Demo Agent",
     });
 
@@ -2780,19 +2995,7 @@ function redactWebhookSecret(w: Webhook): Webhook {
   return rest;
 }
 
-/** The MX/SPF/DMARC/DKIM record set a customer must set (mirrors the Go manualRecordSet). */
-function domainRecordSet(domain: string): DomainRecord[] {
-  const dkimSuffix = domain.replace(/\./g, "-");
-  return [
-    { name: domain, type: "MX", value: "smtp.extrovert.dev", priority: 10, ttl: 3600 },
-    { name: domain, type: "TXT", value: "v=spf1 include:spf.protection.outlook.com -all", ttl: 3600 },
-    { name: `_dmarc.${domain}`, type: "TXT", value: "v=DMARC1; p=none; rua=mailto:dmarc@smtp.extrovert.dev", ttl: 3600 },
-    { name: `selector1._domainkey.${domain}`, type: "CNAME", value: `selector1-${dkimSuffix}._domainkey.azurecomm.net`, ttl: 3600 },
-    { name: `selector2._domainkey.${domain}`, type: "CNAME", value: `selector2-${dkimSuffix}._domainkey.azurecomm.net`, ttl: 3600 },
-  ];
-}
-
-/** The single NS delegation (one row per public nameserver) for ns_delegated mode. */
+/** The nameserver records for delegated setup. */
 function domainDelegationNS(domain: string): DomainRecord[] {
   return [
     { name: domain, type: "NS", value: "ns1.extrovert.dev", ttl: 300 },
@@ -2862,7 +3065,7 @@ export class BreadthRequiredError extends Error {
  * requires an intent (maps to API 422 `intent_required`; D3).
  *
  * `problemErrors` carries the SAME `{field, code, detail}` hints the live problem
- * body does — including the `retry_with` example — because the offline error is
+ * body does - including the `retry_with` example - because the offline error is
  * useless as practice if it is less actionable than the real one.
  */
 export class IntentRequiredError extends Error {
@@ -2908,7 +3111,7 @@ export class ReviewConflictError extends ConflictError {
     super(message);
     this.problemErrors = [
       { field: "state", code: review.state, detail: "the draft's current state" },
-      { field: "revision", code: String(review.revision), detail: "current revision — use as parent_revision" },
+      { field: "revision", code: String(review.revision), detail: "current revision - use as parent_revision" },
       { field: "version", code: String(review.version), detail: "current row version" },
       ...(review.sent_message_id
         ? [{ field: "sent_message_id", code: review.sent_message_id, detail: "the message that already went out" }]
@@ -2923,7 +3126,7 @@ export class ReviewConflictError extends ConflictError {
 }
 
 /**
- * 409 `stale` — the `(revision[,version])` you named is no longer current and
+ * 409 `stale` - the `(revision[,version])` you named is no longer current and
  * NOTHING was mutated. The ONE 409 worth retrying: re-read, re-apply your edit on
  * top of the other party's, resubmit with the new parent_revision. Bounded (<=3).
  */
@@ -2935,7 +3138,7 @@ export class StaleError extends ReviewConflictError {
 }
 
 /**
- * 409 `wrong_state` — this VERB is illegal from the current state, but the draft
+ * 409 `wrong_state` - this VERB is illegal from the current state, but the draft
  * is still live. NEVER retry the same verb; read the `allowed_action` hints and
  * pick a legal one.
  */
@@ -2947,7 +3150,7 @@ export class WrongStateError extends ReviewConflictError {
 }
 
 /**
- * 409 `terminal` — sent / auto_sent / cancelled. Nothing will ever succeed on this
+ * 409 `terminal` - sent / auto_sent / cancelled. Nothing will ever succeed on this
  * review. STOP; a `front_run_next` nudge is waiting in the drain.
  */
 export class TerminalError extends ReviewConflictError {
@@ -3003,7 +3206,7 @@ function fwdSubject(subject: string): string {
 
 /**
  * The forwarded body: the agent's optional note, then the quoted parent. Built at
- * SUBMIT time (not at approval) so the human reviews the exact bytes that go out —
+ * SUBMIT time (not at approval) so the human reviews the exact bytes that go out  -
  * re-deriving it from the live parent at approval would silently discard the
  * reviewer's edit.
  */

@@ -3,7 +3,7 @@
  *
  * One method per REST endpoint in spec §8 (`/v1`). The base URL and scoped
  * agent key come from config (env `EXTROVERT_API_BASE_URL` / `EXTROVERT_API_KEY`).
- * This module is the single seam between the MCP tools and the network — the
+ * This module is the single seam between the MCP tools and the network - the
  * tools never touch `fetch` directly.
  *
  * While `config.mock` is true, each method returns deterministic fixture data
@@ -22,8 +22,11 @@ import type {
   ContactListDirection,
   ContactListEntry,
   ContactListKind,
+  CommerceRequest,
   DeleteResult,
   Domain,
+  DomainStatusEventPage,
+  DomainQuote,
   DomainOffboard,
   EnrollmentResult,
   GraduationStatus,
@@ -81,7 +84,7 @@ export class ExtrovertApiError extends Error {
      *
      * These are NOT decoration. A 422 `intent_required` carries the exact JSON to
      * add under `retry_with`, and a 409 carries `state` / `revision` / `version` /
-     * one `allowed_action` per legal verb — the facts that let an agent recover in
+     * one `allowed_action` per legal verb - the facts that let an agent recover in
      * one turn instead of guessing. They reach the model only because
      * `toErrorResult` renders them: anything left in `structuredContent` is
      * invisible to a text-only agent.
@@ -125,7 +128,7 @@ export interface CreateInboxInput {
    */
   metadata?: InboxMetadataPatch;
   /**
-   * Optional assertion that must match the key's bound project — NEVER a
+   * Optional assertion that must match the key's bound project - NEVER a
    * selector. A mismatch is rejected server-side; the inbox is always created in
    * the key's stored project.
    */
@@ -170,7 +173,7 @@ export interface UpdateInboxInput {
    */
   metadata?: InboxMetadataPatch | null;
   /**
-   * Optional assertion that must match the key's bound project — NEVER a
+   * Optional assertion that must match the key's bound project - NEVER a
    * selector. A mismatch is rejected server-side.
    */
   project_id?: string;
@@ -200,6 +203,8 @@ export interface ReplyEmailInput {
   /** Exactly one of thread_id / message_id selects the parent. */
   thread_id?: string;
   message_id?: string;
+  /** Optimistic stale-context guard; a mismatch returns 409, but is not an atomic send lock. */
+  expected_last_message_id?: string;
   text?: string;
   html?: string;
   cc?: string[];
@@ -232,7 +237,7 @@ export interface ForwardEmailInput {
 /**
  * Submit a forward for human review (Review Loop). A forward is an outbound
  * message to arbitrary NEW recipients that quotes an entire received thread, so it
- * is policy-enforced exactly like send and reply — otherwise it would be the
+ * is policy-enforced exactly like send and reply - otherwise it would be the
  * documented bypass, and a worse one, because it exfiltrates a conversation.
  *
  * The subject and the quoted body are materialized server-side at SUBMIT time, so
@@ -300,6 +305,8 @@ export interface SubmitReplyForReviewInput {
   inbox: string;
   thread_id?: string;
   message_id?: string;
+  /** Optimistic stale-context guard; a mismatch returns 409, but is not an atomic send lock. */
+  expected_last_message_id?: string;
   text: string;
   html?: string;
   cc?: string[];
@@ -354,7 +361,7 @@ export interface SubmitRevisionInput {
   /**
    * DEPRECATED alias for {@link text}, accepted indefinitely so already-shipped
    * callers keep working. Sending BOTH with different content is rejected 400
-   * `conflicting_alias` — the server never guesses which bytes you meant.
+   * `conflicting_alias` - the server never guesses which bytes you meant.
    */
   body?: string;
   html?: string;
@@ -390,7 +397,7 @@ export interface RestampReviewInput {
 
 /**
  * A reviewer decision (BYO review-agent plane; D5/§9). `action` is approve|edit|reject|
- * escalate. `revision`/`version` are the optimistic CAS — a mismatch is a 409 STALE with
+ * escalate. `revision`/`version` are the optimistic CAS - a mismatch is a 409 STALE with
  * NO mutation (the human always wins, D17). `subject`/`body` carry the edited content for
  * the edit action; `feedback` is the reviewer's note.
  */
@@ -439,7 +446,7 @@ export interface ProposeCategoryInput {
   scope?: "org_shared" | "agent_private";
 }
 
-/** Rename / re-describe a category — metadata only (D10). */
+/** Rename / re-describe a category - metadata only (D10). */
 export interface UpdateCategoryInput {
   id: string;
   name?: string;
@@ -511,33 +518,52 @@ export interface ListSuppressionsInput {
 }
 
 /** Onboarding modes the agent-facing domains API accepts. */
-export type DomainOnboardMode = "shared" | "ns_delegated" | "manual" | "purchased";
+export type DomainOnboardMode = "ns_delegated";
 
 export interface OnboardDomainInput {
   domain: string;
   /**
-   * Onboarding path. Defaults to ns_delegated server-side when omitted. `mode:
-   * "purchased"` spends money at the registrar and therefore requires BOTH the
-   * `domain:manage` scope (the route gate) AND the explicit, default-off
-   * `domain:purchase` scope (it is additionally bounded by the org/project
-   * purchased-domain cap). `manual` and `ns_delegated` need `domain:manage` only.
+   * Onboarding path for a domain the customer already controls. Defaults to
+   * ns_delegated server-side when omitted. New registrations use the separate
+   * quote_domain + request_domain_purchase approval workflow.
    */
-  mode?: DomainOnboardMode;
-  /** A-record IP served at a delegated zone's apex (ns_delegated only). */
-  mail_host_ip?: string;
+  mode?: "ns_delegated";
   /**
    * Domain visibility. `org` (default) makes it usable by every project in the
    * org; `project` binds it to the key's OWN bound project (never client-selected)
-   * so it is only visible/mintable from that project. A legacy/unscoped key falls
+   * so it is only visible/creatable from that project. A legacy/unscoped key falls
    * back to `org`.
    */
   scope?: "org" | "project";
   /**
-   * Optional assertion that must match the key's bound project — NEVER a
+   * Optional assertion that must match the key's bound project - NEVER a
    * selector. A mismatch is rejected server-side; the binding is always derived
    * from the key.
    */
   project_id?: string;
+}
+
+export interface QuoteDomainInput {
+  domain: string;
+}
+
+export interface RequestDomainPurchaseInput {
+  domain: string;
+  idempotency_key: string;
+  scope?: "org" | "project";
+  rationale?: string;
+  auto_renew?: boolean;
+}
+
+export interface RequestPlanChangeInput {
+  target_plan: "free" | "developer" | "startup";
+  idempotency_key: string;
+  rationale?: string;
+}
+
+export interface ListCommerceRequestsInput {
+  limit?: number;
+  page?: string;
 }
 
 export interface WaitForEmailInput {
@@ -704,7 +730,7 @@ export class ExtrovertClient {
    *    to the key's default project and returns the legacy `{inboxes, next_page}`).
    *  - org key → MUST pick a breadth: pass `project` (a concrete id) or
    *    `wildcard:true` (`/v1/projects/-/inboxes`, the org subtree). A bare org-key
-   *    list is a 400 `breadth_required` (mirrors the server choke-point) — we fail
+   *    list is a 400 `breadth_required` (mirrors the server choke-point) - we fail
    *    fast client-side with the same code so the agent sees the next call to make.
    *
    * Either wire shape is normalized into the internal {@link Page}.
@@ -789,8 +815,8 @@ export class ExtrovertClient {
     if (input.display_name !== undefined) body.display_name = input.display_name;
     if (input.inbound_webhook_url !== undefined) body.webhook_url = input.inbound_webhook_url;
     if (input.daily_send_limit !== undefined) body.daily_send_limit = input.daily_send_limit;
-    // `metadata` is forwarded verbatim — including an explicit top-level `null`
-    // (clear-all) — so the merge-null-clear semantics reach the server unchanged.
+    // `metadata` is forwarded verbatim - including an explicit top-level `null`
+    // (clear-all) - so the merge-null-clear semantics reach the server unchanged.
     if (input.metadata !== undefined) body.metadata = input.metadata;
     if (input.project_id !== undefined) body.project_id = input.project_id;
     return this.patch<Inbox>(`/v1/inboxes/${encodeURIComponent(idOrAddress)}`, body);
@@ -823,12 +849,12 @@ export class ExtrovertClient {
    * Send a new message WITHOUT the review overload.
    *
    * The return type is a union because the endpoint has two outcomes and the
-   * account's policy — not the caller — picks between them. This used to be typed
+   * account's policy - not the caller - picks between them. This used to be typed
    * `Promise<Message>` and rendered as a message header, which was garbage against
    * every real response: the server has never returned a Message here. It returns
    * `{status:"sent", message_id, review_id}` on the policy's direct path, and the
    * §5.1 `{kind:"queued_for_review", review}` envelope (HTTP 202) when the policy
-   * queues it — which, under the `require_review` default, is the normal outcome.
+   * queues it - which, under the `require_review` default, is the normal outcome.
    *
    * A send with no `intent` under `require_review` never reaches either arm: it is
    * refused with 422 `intent_required` and NOTHING is sent or queued.
@@ -837,7 +863,7 @@ export class ExtrovertClient {
     if (this.store) return this.store.sendEmail(input);
     const { inbox, client_id, ...body } = input;
     // `body` carries to/subject/text/html/cc/bcc/reply_to/headers and (when
-    // present) attachments — the canonical send contract, mirroring reply; the
+    // present) attachments - the canonical send contract, mirroring reply; the
     // server emits multipart/mixed when needed and drops unsafe header names.
     return this.post<SendEmailResult>(
       `/v1/inboxes/${encodeURIComponent(inbox)}/send`,
@@ -863,6 +889,7 @@ export class ExtrovertClient {
         inbox: input.inbox,
         threadId: input.thread_id,
         messageId: input.message_id,
+        expectedLastMessageId: input.expected_last_message_id,
         text: input.text,
         html: input.html,
         cc: input.cc,
@@ -912,7 +939,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Submit a forward for human review — the SAME endpoint as {@link forwardEmail}
+   * Submit a forward for human review - the SAME endpoint as {@link forwardEmail}
    * with mode/intent/category_id attached, mirroring how send and reply overload.
    * Returns the discriminated §5.1 envelope (queued OR sent).
    */
@@ -975,7 +1002,7 @@ export class ExtrovertClient {
     return this.get<Page<Review>>("/v1/reviews", query);
   }
 
-  /** Get one review request (`GET /v1/reviews/{id}`) — current draft + intent + state. */
+  /** Get one review request (`GET /v1/reviews/{id}`) - current draft + intent + state. */
   async getReview(id: string): Promise<Review> {
     if (this.store) return this.store.getReview(id);
     return this.get<Review>(`/v1/reviews/${encodeURIComponent(id)}`);
@@ -1001,7 +1028,7 @@ export class ExtrovertClient {
    * Post a chat turn on a review's thread (`POST /v1/reviews/{id}/chat`): append an
    * agent_question turn, flip in_review -> chatting on the first turn, enqueue a
    * feedback_added nudge to the human reviewer + emit review.chat. Idempotent on the
-   * client-supplied key. $0 LLM — YOU compose the question.
+   * client-supplied key. $0 LLM - YOU compose the question.
    */
   async postReviewChat(input: PostReviewChatInput): Promise<Review> {
     if (this.store) return this.store.postReviewChat(input);
@@ -1017,7 +1044,7 @@ export class ExtrovertClient {
    * Post a new agent draft under a parent_revision CAS (`POST /v1/reviews/{id}/
    * revision`). parent_revision must equal the draft's current revision, else 409
    * STALE with NO mutation (D17). On a clean CAS the draft is re-rendered in place
-   * (revision++), returned to needs_review, and the reviewer is nudged. $0 LLM — YOU
+   * (revision++), returned to needs_review, and the reviewer is nudged. $0 LLM - YOU
    * compose the redraft.
    */
   async submitRevision(input: SubmitRevisionInput): Promise<Review> {
@@ -1027,7 +1054,7 @@ export class ExtrovertClient {
     if (input.subject !== undefined) body.subject = input.subject;
     // `text` is canonical; `body` is the permanent deprecated alias. BOTH are
     // forwarded verbatim when supplied so the server's own alias resolution decides
-    // — including rejecting a both-but-different pair with 400 conflicting_alias.
+    // - including rejecting a both-but-different pair with 400 conflicting_alias.
     // Picking a winner here would silently relay the wrong bytes.
     if (input.text !== undefined) body.text = input.text;
     if (input.body !== undefined) body.body = input.body;
@@ -1093,12 +1120,12 @@ export class ExtrovertClient {
 
   /**
    * Submit a reviewer decision (`POST /v1/reviews/{id}/decision`; reviewer_decide,
-   * D5/§9). approve/edit → the PLATFORM ACS-sends with the COMPOSER's creds (the
-   * reviewer NEVER holds mailbox:send — the credential boundary); reject → back to the
+   * D5/§9). approve/edit → the PLATFORM sends with the COMPOSER's creds (the
+   * reviewer NEVER holds mailbox:send - the credential boundary); reject → back to the
    * composer (needs_review, hop_count++); escalate → the human queue. revision/version
-   * are the CAS (409 STALE on mismatch, NO mutation — the human always wins, D17). The
+   * are the CAS (409 STALE on mismatch, NO mutation - the human always wins, D17). The
    * two circuit breakers (hop_count ≥ max_hops, or the hard review_deadline) FORCE a
-   * reject to the human regardless of intent — `forced_by_breaker` names it. $0 LLM —
+   * reject to the human regardless of intent - `forced_by_breaker` names it. $0 LLM  -
    * you judged; we route, send, and enforce the breakers.
    */
   async reviewerDecide(input: ReviewerDecideInput): Promise<ReviewerDecisionResult> {
@@ -1154,7 +1181,7 @@ export class ExtrovertClient {
   /**
    * Browse the category registry (`GET /v1/categories?match=`). Returns id + name +
    * description + scope + state for fuzzy matching. `match` is a pure lexical filter
-   * (NO LLM on our side) — the agent does the semantic match. Customer-scoped.
+   * (NO LLM on our side) - the agent does the semantic match. Customer-scoped.
    */
   async listCategories(match?: string): Promise<Page<Category>> {
     if (this.store) return this.store.listCategories(match);
@@ -1184,7 +1211,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Rename / re-describe a category (`PUT /v1/categories/{id}`) — metadata ONLY
+   * Rename / re-describe a category (`PUT /v1/categories/{id}`) - metadata ONLY
    * (D10). Renaming never breaks a reference; a rename/redescribe undo row is
    * written. Any agent in the customer may edit (the shared-registry exception).
    */
@@ -1196,12 +1223,12 @@ export class ExtrovertClient {
     return this.put<Category>(`/v1/categories/${encodeURIComponent(input.id)}`, body);
   }
 
-  // ---- Graduation + risk dial (Review Loop, D16/D6/D17) — agent READ + PROPOSE --
+  // ---- Graduation + risk dial (Review Loop, D16/D6/D17) - agent READ + PROPOSE --
 
   /**
    * Read the effective risk dial (`GET /v1/risk-dial`): the account default + every
    * category's overrides (each with its resolved effective value; null override =
-   * inherit). Read-only — agents read but NEVER flip the dial (setting it is a human
+   * inherit). Read-only - agents read but NEVER flip the dial (setting it is a human
    * console action; D16).
    */
   async getRiskDial(): Promise<RiskDial> {
@@ -1222,7 +1249,7 @@ export class ExtrovertClient {
   /**
    * Propose graduating a category (`POST /v1/categories/{id}/graduation-request`).
    * RECORDS the request (durable evidence) and returns the current gate status; it
-   * does NOT change the category state — flipping the bit is a human (console) action
+   * does NOT change the category state - flipping the bit is a human (console) action
    * (D16/D6). A never_graduate category stays locked.
    */
   async proposeGraduation(categoryId: string, evidence?: Record<string, unknown>): Promise<GraduationStatus> {
@@ -1235,7 +1262,7 @@ export class ExtrovertClient {
   /**
    * Read the D19/§8 backlog-reconciliation status (`GET /v1/categories/{id}/
    * backlog-status`): how many QUEUED drafts are stale vs current-enough against the
-   * current rules-version (a pure $0-LLM integer compare). Read-only — agents READ the
+   * current rules-version (a pure $0-LLM integer compare). Read-only - agents READ the
    * picture; the human (console scan-backlog) / hooks TRIGGER the actual sweep.
    */
   async getBacklogStatus(categoryId: string): Promise<ScanBacklogStatus> {
@@ -1271,7 +1298,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Save / edit a writing rule (`PUT /v1/rules`) — append-only by supersession (D11).
+   * Save / edit a writing rule (`PUT /v1/rules`) - append-only by supersession (D11).
    * scope='general' iff category_id is empty (house-style, D2). With supersedes_id
    * the write is an EDIT (rev+1, same lineage). Writes a create/supersede audit row.
    */
@@ -1300,14 +1327,14 @@ export class ExtrovertClient {
     return this.post<Rule>(`/v1/rules/${encodeURIComponent(id)}/promote`, { to_scope: toScope });
   }
 
-  /** Retire a rule (`POST /v1/rules/{id}/retire`) — soft delete; history survives. */
+  /** Retire a rule (`POST /v1/rules/{id}/retire`) - soft delete; history survives. */
   async retireRule(id: string): Promise<Rule> {
     if (this.store) return this.store.retireRule(id);
     return this.post<Rule>(`/v1/rules/${encodeURIComponent(id)}/retire`, {});
   }
 
   /**
-   * Read the rule/category change audit log (`GET /v1/rules/audit`) — read-only,
+   * Read the rule/category change audit log (`GET /v1/rules/audit`) - read-only,
    * agent-visible (the audit log is the shared safety net, D11).
    */
   async getRuleAudit(input: GetRuleAuditInput = {}): Promise<Page<RuleAuditEntry>> {
@@ -1319,7 +1346,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Undo a rule change (`POST /v1/rules/audit/{udo_id}/undo`) — restore the prior
+   * Undo a rule change (`POST /v1/rules/audit/{udo_id}/undo`) - restore the prior
    * version as a forward 'restore' supersession (D11; agents may undo too).
    * Idempotent: a re-undo of an already-undone row is a clean 409.
    */
@@ -1414,11 +1441,26 @@ export class ExtrovertClient {
     );
   }
 
-  async listThreads(input: { inbox: string; limit?: number }): Promise<Page<Thread>> {
+  async listThreads(input: { inbox: string; limit?: number; cursor?: string }): Promise<Page<Thread>> {
     if (this.store) return this.store.listThreads(input);
     return this.get<Page<Thread>>(`/v1/inboxes/${encodeURIComponent(input.inbox)}/threads`, {
       limit: input.limit,
+      cursor: input.cursor,
     });
+  }
+
+  /** Search conversation summaries while preserving the thread-list cursor contract. */
+  async searchThreads(input: {
+    inbox: string;
+    query: string;
+    limit?: number;
+    cursor?: string;
+  }): Promise<Page<Thread>> {
+    if (this.store) return this.store.searchThreads(input);
+    return this.get<Page<Thread>>(
+      `/v1/inboxes/${encodeURIComponent(input.inbox)}/threads/search`,
+      { q: input.query, limit: input.limit, cursor: input.cursor },
+    );
   }
 
   /**
@@ -1654,18 +1696,32 @@ export class ExtrovertClient {
     return { id, deleted: true };
   }
 
-  // ---- domains (Slice 5; privileged, domain:manage scope) ---------------
+  // ---- domains (domain:read or domain:manage to read; domain:manage to change) ----
 
   /** List the customer's onboarded domains (`GET /v1/domains`). Canonical page envelope. */
-  async listDomains(): Promise<Page<Domain>> {
-    if (this.store) return this.store.listDomains();
-    return this.get<Page<Domain>>("/v1/domains");
+  async listDomains(input: { page?: string; limit?: number } = {}): Promise<Page<Domain>> {
+    if (this.store) {
+      const page = this.store.listDomains();
+      const offset = Number(input.page ?? 0);
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new ExtrovertApiError("Invalid page cursor", 400, "invalid_cursor");
+      const items = page.items.slice(offset, offset + (input.limit ?? 50));
+      return { items, total: page.total, next_cursor: offset + items.length < page.items.length ? String(offset + items.length) : undefined };
+    }
+    return this.get<Page<Domain>>("/v1/domains", input);
+  }
+
+  async listDomainEvents(domain: string, input: { after?: string; limit?: number } = {}): Promise<DomainStatusEventPage> {
+    if (this.store) {
+      this.store.getDomain(domain); // preserve unknown-domain behavior in fixtures
+      return { items: [], next_cursor: input.after ?? "0", has_more: false, poll_after_seconds: 30 };
+    }
+    return this.get<DomainStatusEventPage>(`/v1/domains/${encodeURIComponent(domain)}/events`, input);
   }
 
   /** Get one domain's detail + verification status + the DNS records to set (`GET /v1/domains/{domain}`). */
-  async getDomain(domain: string): Promise<Domain> {
+  async getDomain(domain: string, signal?: AbortSignal): Promise<Domain> {
     if (this.store) return this.store.getDomain(domain);
-    return this.get<Domain>(`/v1/domains/${encodeURIComponent(domain)}`);
+    return this.get<Domain>(`/v1/domains/${encodeURIComponent(domain)}`, undefined, signal);
   }
 
   /** Onboard/add a domain for the customer (`POST /v1/domains`). */
@@ -1673,7 +1729,6 @@ export class ExtrovertClient {
     if (this.store) return this.store.onboardDomain(input);
     const body: Record<string, unknown> = { domain: input.domain };
     if (input.mode !== undefined) body.mode = input.mode;
-    if (input.mail_host_ip !== undefined) body.mail_host_ip = input.mail_host_ip;
     if (input.scope !== undefined) body.scope = input.scope;
     if (input.project_id !== undefined) body.project_id = input.project_id;
     return this.post<Domain>("/v1/domains", body);
@@ -1687,9 +1742,9 @@ export class ExtrovertClient {
 
   /**
    * Offboard (remove) a domain from the customer (`DELETE /v1/domains/{domain}`).
-   * The API accepts the request (HTTP 202) and runs the teardown — reaping the
-   * outbound provider sender identities + routing rows, then scrubbing the DNS
-   * zone/records and the domain row — as an async job. This returns the job id and
+   * The API accepts the request (HTTP 202) and runs the teardown - reaping the
+   * sending configuration, then scrubbing the DNS
+   * zone/records and the domain row - as an async job. This returns the job id and
    * a poll URL (`status_url`, i.e. `GET /v1/jobs/{job_id}`); offboarding is
    * ACCEPTED, not yet complete. Poll with `getJob(job_id)` (the `get_job` tool)
    * until the status is terminal.
@@ -1709,7 +1764,7 @@ export class ExtrovertClient {
   }
 
   /**
-   * Poll the status of an async job (`GET /v1/jobs/{job_id}`) — currently only
+   * Poll the status of an async job (`GET /v1/jobs/{job_id}`) - currently only
    * the domain-offboard teardown enqueues one. `status` is terminal on
    * succeeded/failed/cancelled; keep polling otherwise.
    */
@@ -1718,12 +1773,69 @@ export class ExtrovertClient {
     return this.get<Job>(`/v1/jobs/${encodeURIComponent(jobId)}`);
   }
 
+  // ---- commerce (agent request plane; no human approval operations) ------
+
+  /** Quote a domain without purchasing it (`POST /v1/commerce/domain-quotes`). */
+  async quoteDomain(input: QuoteDomainInput): Promise<DomainQuote> {
+    if (this.store) return this.store.quoteDomain(input.domain);
+    return this.post<DomainQuote>("/v1/commerce/domain-quotes", { domain: input.domain });
+  }
+
+  /** Create an approval-safe domain purchase request. Never approves itself. */
+  async requestDomainPurchase(input: RequestDomainPurchaseInput): Promise<CommerceRequest> {
+    if (this.store) return this.store.requestDomainPurchase(input);
+    const body: Record<string, unknown> = { domain: input.domain };
+    if (input.scope !== undefined) body.scope = input.scope;
+    if (input.rationale !== undefined) body.rationale = input.rationale;
+    if (input.auto_renew !== undefined) body.auto_renew = input.auto_renew;
+    return this.post<CommerceRequest>(
+      "/v1/commerce/requests/domain-purchases",
+      body,
+      undefined,
+      idempotencyHeader(input.idempotency_key),
+    );
+  }
+
+  /** Create a plan-change request for a human to review. */
+  async requestPlanChange(input: RequestPlanChangeInput): Promise<CommerceRequest> {
+    if (this.store) return this.store.requestPlanChange(input);
+    const body: Record<string, unknown> = { target_plan: input.target_plan };
+    if (input.rationale !== undefined) body.rationale = input.rationale;
+    return this.post<CommerceRequest>(
+      "/v1/commerce/requests/plan-changes",
+      body,
+      undefined,
+      idempotencyHeader(input.idempotency_key),
+    );
+  }
+
+  /** Get one of this agent/customer's durable commerce requests. */
+  async getCommerceRequest(requestId: string): Promise<CommerceRequest> {
+    if (this.store) return this.store.getCommerceRequest(requestId);
+    return this.get<CommerceRequest>(`/v1/commerce/requests/${encodeURIComponent(requestId)}`);
+  }
+
+  /** Withdraw this agent's request while the durable state remains cancellable. */
+  async cancelCommerceRequest(requestId: string): Promise<CommerceRequest> {
+    if (this.store) return this.store.cancelCommerceRequest(requestId);
+    return this.post<CommerceRequest>(`/v1/commerce/requests/${encodeURIComponent(requestId)}/cancel`, {});
+  }
+
+  /** List durable commerce requests visible to this caller. */
+  async listCommerceRequests(input: ListCommerceRequestsInput = {}): Promise<Page<CommerceRequest>> {
+    if (this.store) return this.store.listCommerceRequests(input);
+    return this.get<Page<CommerceRequest>>("/v1/commerce/requests", {
+      limit: input.limit,
+      page: input.page,
+    });
+  }
+
   // ---- suppressions (recipient opt-outs / list-unsubscribe) -------------
 
   /**
    * Pre-check whether the caller's org suppresses a recipient
    * (`GET /v1/suppressions?recipient=…`). Returns `{recipient, suppressed, rows}`
-   * over the caller's OWN active org rows — never a global/shared/cross-tenant
+   * over the caller's OWN active org rows - never a global/shared/cross-tenant
    * opt-out. Use it BEFORE composing to skip a would-be-rejected recipient.
    */
   async precheckSuppression(recipient: string): Promise<SuppressionPrecheck> {
@@ -1734,7 +1846,7 @@ export class ExtrovertClient {
 
   /**
    * List the caller's own org suppression rows (`GET /v1/suppressions`). No
-   * `recipient` is sent here — that param switches the server to the pre-check.
+   * `recipient` is sent here - that param switches the server to the pre-check.
    */
   async listSuppressions(input: ListSuppressionsInput = {}): Promise<Page<SuppressionEntry>> {
     if (this.store) return this.store.listSuppressions(input);
@@ -1760,15 +1872,28 @@ export class ExtrovertClient {
 
   // ---- reputation / deliverability (diverse-smtp M7) --------------------
 
-  /**
-   * The caller's org deliverability rollup (`GET /v1/reputation`): derived status
-   * badge, per-provider/tenant sending status, latest Sends/Bounces/Complaints
-   * window, and open-finding count. Read-only; strictly org-scoped. Advisor
-   * findings show `unavailable_vdm_disabled` when VDM is off.
-   */
+  /** The caller's aggregate sending health and metrics. */
   async getReputation(): Promise<ReputationRollup> {
-    if (this.store) return this.store.getReputation();
-    return this.get<ReputationRollup>("/v1/reputation");
+    const rep = this.store ? this.store.getReputation() : await this.get<ReputationRollup>("/v1/reputation");
+    // Explicit public projection also protects mixed-version deployments.
+    return {
+      object: "reputation",
+      org_id: rep.org_id,
+      status: rep.status,
+      sending_status: rep.sending_status,
+      configured: Boolean(rep.configured),
+      last_checked_at: rep.last_checked_at,
+      metrics: {
+        window_start: rep.metrics.window_start,
+        window_end: rep.metrics.window_end,
+        sends: rep.metrics.sends,
+        bounces: rep.metrics.bounces,
+        complaints: rep.metrics.complaints,
+        bounce_rate: rep.metrics.bounce_rate,
+        complaint_rate: rep.metrics.complaint_rate,
+      },
+      open_findings: rep.open_findings,
+    };
   }
 
   /**
@@ -1791,8 +1916,8 @@ export class ExtrovertClient {
 
   // ---- low-level HTTP ---------------------------------------------------
 
-  private async get<T>(path: string, query?: Record<string, unknown>): Promise<T> {
-    return this.request<T>("GET", path, undefined, query);
+  private async get<T>(path: string, query?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    return this.request<T>("GET", path, undefined, query, undefined, undefined, signal);
   }
 
   /**
@@ -1856,6 +1981,7 @@ export class ExtrovertClient {
     query?: Record<string, unknown>,
     timeoutMs?: number,
     extraHeaders?: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const url = new URL(this.config.apiBaseUrl + path);
     if (query) {
@@ -1883,13 +2009,15 @@ export class ExtrovertClient {
     }
 
     let res: Response;
+    let raw: string;
     try {
       res = await fetch(url, {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
       });
+      raw = await res.text();
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new ExtrovertApiError(
@@ -1901,7 +2029,6 @@ export class ExtrovertClient {
       clearTimeout(timer);
     }
 
-    const raw = await res.text();
     const parsed = raw ? safeJsonParse(raw) : undefined;
 
     if (!res.ok) {
@@ -1963,7 +2090,7 @@ function safeJsonParse(text: string): unknown {
  *
  * `errors[]` is carried through VERBATIM onto the error. The server puts the full
  * human remediation in `detail` precisely because this surface renders `err.message`
- * — but the machine duplicate in `errors[]` is what makes a 422 `intent_required`
+ * - but the machine duplicate in `errors[]` is what makes a 422 `intent_required`
  * or a 409 `stale` recoverable in ONE turn (the exact JSON to add; the current
  * revision to re-CAS against; the verbs that ARE legal). Dropping it on the floor
  * here is why the remediation never reached the model.

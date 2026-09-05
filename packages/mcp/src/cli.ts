@@ -4,21 +4,32 @@ import type { Readable, Writable } from "node:stream";
 
 import { ExtrovertApiError, ExtrovertClient } from "./client.js";
 import { loadConfig } from "./config.js";
+import { renderDomain } from "./domain-presentation.js";
+import { waitForDomain } from "./domain-wait.js";
+import { formatWhoAmI } from "./identity-presentation.js";
+import { setupHermes } from "./hermes-setup.js";
 import { createCredentialStore, type CredentialStore } from "./credentials.js";
-import type { Message, Review, WhoAmI } from "./types.js";
+import type { Message, Review } from "./types.js";
 
 const MCP_PACKAGE = "@extrovert.dev/mcp@next";
 
-export const CLI_HELP = `extrovert — setup, authenticate, and use Extrovert without custom transport code
+export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert without custom transport code
 
 Usage:
-  extrovert setup [--host codex|claude]
+  extrovert setup [--host codex|claude|hermes] [--transport stdio|hosted]
   extrovert auth login --with-token
   extrovert auth status
   extrovert auth logout
+  extrovert enroll --agent-handle <name> [--client-id <retry-id>]
+  extrovert domain list [--page <cursor>] [--limit <n>] [--json]
+  extrovert domain status <domain> [--json]
+  extrovert domain wait <domain> [--timeout-seconds <0-50>] [--json]
+  extrovert domain recheck <domain> [--json]
+  extrovert domain connect <domain> [--scope org|project] [--json]
   extrovert signup --human-email <email> [--username <name>]
   extrovert verify [--otp <code>]
   extrovert whoami [--json]
+  extrovert doctor [--domain <domain>] [--json]
   extrovert inbox list [--limit <n>] [--json]
   extrovert message list --inbox <address> [--unread] [--limit <n>] [--json]
   extrovert message get <message-id> [--source] [--json]
@@ -28,6 +39,9 @@ Usage:
                  --summary <reviewer-intent> [--client-id <id>] [--rules-reviewed]
 
 Authentication:
+  enroll reads an enrollment key from EXTROVERT_ENROLLMENT_KEY or hidden stdin.
+  Use EXTROVERT_PROFILE for separate agent identities. Hermes profiles use their
+  HERMES_HOME automatically; EXTROVERT_CONFIG_DIR is an explicit override.
   signup stores only a short-lived pending key; verify atomically replaces it with
   the full key in a permission-restricted local credential file. EXTROVERT_API_KEY
   always takes precedence over the stored credential.
@@ -78,25 +92,37 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
       context.stdout.write(CLI_HELP);
       return 0;
     }
+    if (argv.includes("--help") || argv.includes("-h")) {
+      const usages = CLI_HELP.split("\n").filter((line) => line.startsWith(`  extrovert ${command} `));
+      if (!usages.length) throw new CliUsageError(`Unknown Extrovert command: ${command}`);
+      context.stdout.write(`Usage:\n${usages.join("\n")}\n\nKeys are read from the environment or hidden stdin, never command arguments.\n`);
+      return 0;
+    }
     switch (command) {
       case "setup":
         return setupCommand(argv.slice(1), context);
       case "auth":
-        return authCommand(argv.slice(1), context);
+        return await authCommand(argv.slice(1), context);
+      case "enroll":
+        return await enrollCommand(argv.slice(1), context);
+      case "domain":
+        return await domainCommand(argv.slice(1), context);
       case "signup":
-        return signupCommand(argv.slice(1), context);
+        return await signupCommand(argv.slice(1), context);
       case "verify":
-        return verifyCommand(argv.slice(1), context);
+        return await verifyCommand(argv.slice(1), context);
       case "whoami":
-        return whoamiCommand(argv.slice(1), context);
+        return await whoamiCommand(argv.slice(1), context);
+      case "doctor":
+        return await doctorCommand(argv.slice(1), context);
       case "inbox":
-        return inboxCommand(argv.slice(1), context);
+        return await inboxCommand(argv.slice(1), context);
       case "message":
-        return messageCommand(argv.slice(1), context);
+        return await messageCommand(argv.slice(1), context);
       case "review":
-        return reviewCommand(argv.slice(1), context);
+        return await reviewCommand(argv.slice(1), context);
       case "send":
-        return sendCommand(argv.slice(1), context);
+        return await sendCommand(argv.slice(1), context);
       default:
         throw new CliUsageError(`Unknown Extrovert command: ${command}`);
     }
@@ -110,8 +136,24 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
 
 function setupCommand(args: string[], context: CliContext): number {
   const host = option(args, "--host") ?? "codex";
+  const transport = option(args, "--transport") ?? "stdio";
+  const credentialAvailable = transport === "stdio" && Boolean(context.env.EXTROVERT_API_KEY?.trim() || context.store.load());
+  if (transport !== "stdio" && transport !== "hosted") throw new CliUsageError("--transport must be stdio or hosted");
+  if (host === "hermes") {
+    const result = setupHermes(context.env, context.store.paths.directory, transport);
+    if (result.existed) {
+      context.stdout.write("Extrovert already has an entry in this Hermes profile. It was not changed. Start or reload the session and call whoami; configuration alone does not prove the connection works.\n");
+    } else {
+      context.stdout.write(`Extrovert configured for this Hermes profile.${result.backup ? ` A private backup of the previous configuration is at ${result.backup}.` : ""}\n`);
+      context.stdout.write(transport === "hosted" ? "Next: run 'hermes mcp login extrovert' and finish sign-in once. Then start or reload your session and call whoami. If sign-in succeeds but whoami fails, do not repeat approval; share the response request ID with support.\n" : credentialAvailable
+        ? "An agent credential is already available for this profile. Next: run 'extrovert doctor', then start or reload Hermes and call whoami to confirm access.\n"
+        : "Next: run 'extrovert enroll --agent-handle <name>' for this same profile, or use an existing agent key with 'extrovert auth login --with-token'. Run 'extrovert doctor', then start or reload Hermes and call whoami.\n");
+    }
+    return 0;
+  }
+  if (transport === "hosted") throw new CliUsageError("Automatic hosted setup currently supports --host hermes. For other hosts, add https://mcp.extrovert.dev/mcp using the host's native OAuth connection flow.");
   if (!new Set(["codex", "claude"]).has(host)) {
-    throw new CliUsageError("--host must be codex or claude");
+    throw new CliUsageError("--host must be codex, claude, or hermes");
   }
   const executable = host;
   const existing = context.runCommand(executable, ["mcp", "get", "extrovert", ...(host === "codex" ? ["--json"] : [])]);
@@ -119,16 +161,18 @@ function setupCommand(args: string[], context: CliContext): number {
     throw new Error(`${host} is not installed or not on PATH`);
   }
   if (existing.status === 0) {
-    context.stdout.write(`Extrovert MCP is already configured for ${host}. Start a new session to load it.\n`);
+    context.stdout.write(`Extrovert MCP configuration exists for ${host}; it has not been changed. Configuration alone does not confirm a working connection. Start a new session and call whoami to verify access.\n`);
     return 0;
   }
 
-  const added = context.runCommand(executable, ["mcp", "add", "extrovert", "--", "npx", "-y", MCP_PACKAGE]);
+  const added = context.runCommand(executable, ["mcp", "add", "extrovert", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE]);
   if (added.error) throw added.error;
   if (added.status !== 0) {
     throw new Error(cleanCommandError(added.stderr) || `Could not configure Extrovert MCP for ${host}`);
   }
-  context.stdout.write(`Configured Extrovert MCP for ${host}. Start a new session, then call sign_up or whoami.\n`);
+  context.stdout.write(`Configured Extrovert MCP for ${host}. ${credentialAvailable
+    ? "An agent credential is already available for this profile. Run 'extrovert doctor'."
+    : "If you have an enrollment key, run 'extrovert enroll --agent-handle <name>'. Otherwise use 'extrovert auth login --with-token'."} Start a new session and call whoami to verify the connection.\n`);
   return 0;
 }
 
@@ -150,7 +194,7 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
     case "status": {
       const auth = resolveAuthentication(context);
       if (!auth) {
-        context.stdout.write("Not authenticated. Run 'extrovert signup' or 'extrovert auth login --with-token'.\n");
+        context.stdout.write("Not connected. Use hosted sign-in in your MCP host, 'extrovert enroll --agent-handle <name>', or 'extrovert auth login --with-token'.\n");
         return 1;
       }
       const me = await auth.client.whoami();
@@ -166,6 +210,58 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
     default:
       throw new CliUsageError("auth requires login, status, or logout");
   }
+}
+
+async function enrollCommand(args: string[], context: CliContext): Promise<number> {
+  const handle = requiredOption(args, "--agent-handle");
+  // Never overwrite another agent's stored identity as an enrollment side effect.
+  if (context.store.load() || context.env.EXTROVERT_API_KEY?.trim()) {
+    throw new CliUsageError("This profile already has an agent key. Run 'extrovert auth status', or choose a new EXTROVERT_PROFILE for a new agent.");
+  }
+  const token = context.env.EXTROVERT_ENROLLMENT_KEY?.trim() || await readSecret(context, "Enrollment key: ");
+  if (!token.startsWith("pk_enroll_")) throw new CliUsageError("Expected an enrollment key. For an existing agent key use 'extrovert auth login --with-token'.");
+  const config = loadConfig({ ...context.env, EXTROVERT_API_KEY: "" });
+  const client = new ExtrovertClient(config, {
+    onDurableAgentKey: (key, baseUrl) => {
+      context.store.save(key, baseUrl);
+      return { location: context.store.paths.credential };
+    },
+  });
+  await client.redeemEnrollment({ enrollment_token: token, agent_handle: handle, client_id: option(args, "--client-id") ?? `enroll-${handle}` });
+  if (!client.credentialPersistenceStatus().persisted) {
+    throw new Error("Enrollment succeeded, but the agent key could not be saved. Fix this profile's credential-directory permissions and retry with the same agent handle and retry id. No secret was printed.");
+  }
+  const me = await client.whoami();
+  context.stdout.write(`Agent connected. Credential saved privately for this profile.\n${formatWhoAmI(me)}\nStart or reload your MCP session and call whoami.\n`);
+  return 0;
+}
+
+async function domainCommand(args: string[], context: CliContext): Promise<number> {
+  const action = args[0];
+  if (!["list", "status", "wait", "recheck", "connect"].includes(action ?? "")) throw new CliUsageError("domain requires list, status, wait, recheck, or connect");
+  const client = requireAuthentication(context).client;
+  if (action === "list") {
+    const limit = option(args, "--limit");
+    if (limit && (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 100)) throw new CliUsageError("--limit must be an integer from 1 to 100");
+    const page = await client.listDomains({ page: option(args, "--page"), limit: limit ? Number(limit) : undefined });
+    writeResult(context, page, hasFlag(args, "--json"), (value) => (value.items.map((domain) => renderDomain(domain, hasFlag(args, "--diagnostics"))).join("\n\n") || "No domains are available to this agent.") + (value.next_cursor ? `\nMore results are available. Next page: ${value.next_cursor}` : ""));
+    return 0;
+  }
+  const domain = args[1];
+  if (!domain || domain.startsWith("-")) throw new CliUsageError(`domain ${action} requires a domain name`);
+  if (action === "wait") {
+    const timeout = option(args, "--timeout-seconds");
+    const result = await waitForDomain((signal) => client.getDomain(domain, signal), { timeout_seconds: timeout === undefined ? undefined : Number(timeout) });
+    writeResult(context, result, hasFlag(args, "--json"), (value) => renderDomain(value.domain, hasFlag(args, "--diagnostics")) + (value.outcome === "timed_out" ? `\nStill setting up. Resume checking in ${value.resume_after_seconds} seconds.` : ""));
+    return 0;
+  }
+  const scope = option(args, "--scope");
+  if (scope && scope !== "org" && scope !== "project") throw new CliUsageError("--scope must be org or project");
+  const result = action === "status" ? await client.getDomain(domain)
+    : action === "recheck" ? await client.verifyDomain(domain)
+    : await client.onboardDomain({ domain, mode: "ns_delegated", scope: scope as "org" | "project" | undefined });
+  writeResult(context, result, hasFlag(args, "--json"), (value) => renderDomain(value, hasFlag(args, "--diagnostics")));
+  return 0;
 }
 
 async function signupCommand(args: string[], context: CliContext): Promise<number> {
@@ -198,8 +294,7 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
   try {
     context.store.save(result.agent_key, pending.api_base_url);
   } catch (error) {
-    context.stdout.write(`${JSON.stringify({ agent_key: result.agent_key, address: result.address, scopes: result.scopes })}\n`);
-    throw new Error(`Verification succeeded, but durable credential storage failed. The replacement key was printed once above. ${renderError(error)}`);
+    throw new Error(`Verification succeeded, but the new credential could not be saved. No key was printed. Fix this profile's storage permissions and ask the account owner for a replacement scoped key; do not repeat signup or create another account. ${renderError(error)}`);
   }
   context.store.clearPendingSignup();
   context.stdout.write(
@@ -211,6 +306,22 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
 async function whoamiCommand(args: string[], context: CliContext): Promise<number> {
   const me = await requireAuthentication(context).client.whoami();
   writeResult(context, me, hasFlag(args, "--json"), formatWhoAmI);
+  return 0;
+}
+
+async function doctorCommand(args: string[], context: CliContext): Promise<number> {
+  const auth = resolveAuthentication(context);
+  if (!auth) {
+    const result = { connected: false, next_action: "connect", summary: "No local agent credential is available for this profile. Hosted OAuth credentials belong to your MCP host; use whoami there. For local access, redeem an enrollment key with 'extrovert enroll --agent-handle <name>' or use 'extrovert auth login --with-token'." };
+    writeResult(context, result, hasFlag(args, "--json"), (value) => value.summary);
+    return 1;
+  }
+  const me = await auth.client.whoami();
+  const domainName = option(args, "--domain");
+  const domain = domainName ? await auth.client.getDomain(domainName) : undefined;
+  const result = { connected: true, identity: me, credential_source: auth.source, domain,
+    next_action: "verify_in_host", summary: "The local API connection works. Start or reload your MCP session and call whoami there to confirm the host uses this same profile and identity." };
+  writeResult(context, result, hasFlag(args, "--json"), () => [formatWhoAmI(me), domain ? renderDomain(domain) : "", result.summary].filter(Boolean).join("\n\n"));
   return 0;
 }
 
@@ -324,7 +435,7 @@ function resolveAuthentication(context: CliContext): { client: ExtrovertClient; 
 
 function requireAuthentication(context: CliContext): { client: ExtrovertClient; source: string } {
   const auth = resolveAuthentication(context);
-  if (!auth) throw new Error("No Extrovert credential. Run 'extrovert signup' or 'extrovert auth login --with-token'.");
+  if (!auth) throw new Error("No Extrovert credential for this profile. Run 'extrovert enroll --agent-handle <name>' or 'extrovert auth login --with-token'. Hosted sign-in credentials are managed by your MCP host.");
   return auth;
 }
 
@@ -342,16 +453,6 @@ function clientBaseUrl(key: string, context: CliContext, baseUrl?: string): stri
 
 function writeResult<T>(context: CliContext, value: T, json: boolean, format: (value: T) => string): void {
   context.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${format(value)}\n`);
-}
-
-function formatWhoAmI(me: WhoAmI): string {
-  return [
-    `Agent: ${me.agent_id}`,
-    `Org: ${me.org_id || "(none)"}`,
-    `Project: ${me.project_id || "(none)"}`,
-    `Key: ${me.key_id}`,
-    `Scopes: ${me.scopes.join(", ") || "(none)"}`,
-  ].join("\n");
 }
 
 function formatMessageSummary(message: Message): string {
@@ -439,14 +540,14 @@ function positional(args: string[]): string[] {
 
 async function readSecret(context: CliContext, prompt: string): Promise<string> {
   const input = context.stdin as NodeJS.ReadStream;
-  if (!input.isTTY || typeof input.setRawMode !== "function") return readAll(context.stdin);
+  if (!input.isTTY || typeof input.setRawMode !== "function") return readLine(context.stdin);
   context.stderr.write(prompt);
   return new Promise<string>((resolve, reject) => {
     const characters: string[] = [];
     const wasRaw = input.isRaw;
     const onData = (chunk: Buffer | string) => {
       for (const character of String(chunk)) {
-        if (character === "\u0003") {
+        if (character === "\u0003" || character === "\u0004") {
           cleanup();
           reject(new Error("Cancelled"));
           return;
@@ -459,30 +560,49 @@ async function readSecret(context: CliContext, prompt: string): Promise<string> 
         }
         if (character === "\u007f" || character === "\b") characters.pop();
         else characters.push(character);
+        if (characters.length > 8192) { cleanup(); reject(new Error("Credential input is too long")); return; }
       }
     };
     const cleanup = () => {
       input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("close", onEnd);
+      input.off("error", onError);
       input.setRawMode?.(wasRaw ?? false);
       input.pause();
     };
+    const onEnd = () => { cleanup(); reject(new Error("Credential input ended before Enter")); };
+    const onError = (error: Error) => { cleanup(); reject(error); };
     input.setEncoding("utf8");
     input.setRawMode(true);
     input.resume();
     input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("close", onEnd);
+    input.once("error", onError);
   });
 }
 
 async function readVisibleLine(context: CliContext, prompt: string): Promise<string> {
   context.stderr.write(prompt);
-  const value = await readAll(context.stdin);
-  return value.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return readLine(context.stdin);
 }
 
-async function readAll(stream: Readable): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-  return Buffer.concat(chunks).toString("utf8").trim();
+function readLine(stream: Readable): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let text = "";
+    const cleanup = () => { stream.off("data", onData); stream.off("end", onEnd); stream.off("error", onError); stream.pause(); };
+    const onEnd = () => { cleanup(); resolve(text.trim()); };
+    const onError = (error: Error) => { cleanup(); reject(error); };
+    const onData = (chunk: Buffer | string) => {
+      text += String(chunk);
+      if (text.length > 8192) { onError(new Error("Input is too long")); return; }
+      const end = text.search(/[\r\n]/);
+      if (end >= 0) { text = text.slice(0, end); onEnd(); }
+    };
+    stream.on("data", onData); stream.once("end", onEnd); stream.once("error", onError);
+    stream.resume();
+  });
 }
 
 function renderError(error: unknown): string {
