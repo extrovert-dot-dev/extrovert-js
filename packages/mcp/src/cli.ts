@@ -10,7 +10,9 @@ import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
 import { setupHermes } from "./hermes-setup.js";
 import { Administration, type AdministrativeInput } from "./administration.js";
-import { createCredentialStore, isPersistentAPICredential, type CredentialStore } from "./credentials.js";
+import { createCredentialStore, credentialFingerprint, isPersistentAPICredential, type CredentialStore } from "./credentials.js";
+import { createLocalCredentialProvider, logoutLocalCredential } from "./local-oauth.js";
+import { beginOAuthLogin, createLoopbackLogin, exchangeLoginCode, HOSTED_LOGIN_CALLBACK, loginAuthorizationUrl, OAuthLoginError, openLoginBrowser, parseCompletionCode, preferHeadlessLogin, revokeLoginTokens, type LoopbackLogin, type OAuthLoginRequest } from "./oauth-login.js";
 import type { Message, Review } from "./types.js";
 
 const MCP_PACKAGE = "@extrovert.dev/mcp@next";
@@ -21,7 +23,10 @@ Usage:
   extrovert version [--json]
   extrovert agent status [--json]
   extrovert setup [--host auto|codex|claude|hermes] [--transport stdio|hosted]
+  extrovert auth login [--no-browser | --browser] [--json] [--reconnect]
   extrovert auth login --with-token
+  extrovert auth complete [--json]
+  extrovert auth cancel [--json]
   extrovert auth status
   extrovert auth logout
   extrovert enroll --agent-handle <name> [--client-id <retry-id>]
@@ -47,6 +52,13 @@ Usage:
                  --summary <reviewer-intent> [--client-id <id>] [--rules-reviewed]
 
 Authentication:
+  auth login opens local browser sign-in when available. Its printed fallback URL
+  finishes on Extrovert's website and supplies a one-use code for hidden stdin.
+  SSH uses this hosted fallback directly. --no-browser chooses it explicitly.
+  Non-interactive or --json login returns pending instructions immediately; run
+  auth complete in the same profile and provide the website's code on stdin.
+  Existing working credentials are reused; --reconnect explicitly replaces this
+  profile only after browser consent and a successful whoami. Failed login preserves it.
   Hosted OAuth belongs to your MCP host; call whoami there to verify that session.
   Local whoami/doctor checks this profile's API credential, which may be different.
   auth login --with-token reads an agent key or independent ev_credential_... API
@@ -82,6 +94,7 @@ export interface CliOptions {
   stderr?: NodeJS.WriteStream | Writable;
   credentialStore?: CredentialStore;
   runCommand?: (command: string, args: string[]) => SpawnSyncReturns<string>;
+  openBrowser?: (url: string) => Promise<boolean>;
 }
 
 interface CliContext {
@@ -91,6 +104,7 @@ interface CliContext {
   stderr: NodeJS.WriteStream | Writable;
   store: CredentialStore;
   runCommand: (command: string, args: string[]) => SpawnSyncReturns<string>;
+  openBrowser: (url: string) => Promise<boolean>;
 }
 
 export async function runCli(argv: string[], options: CliOptions = {}): Promise<number> {
@@ -101,6 +115,7 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
     stdout: options.stdout ?? process.stdout,
     stderr: options.stderr ?? process.stderr,
     store: options.credentialStore ?? createCredentialStore(env),
+    openBrowser: options.openBrowser ?? openLoginBrowser,
     runCommand:
       options.runCommand ??
       ((command, args) =>
@@ -226,7 +241,7 @@ function setupCommand(args: string[], context: CliContext): number {
       context.stdout.write(`Extrovert configured for this Hermes profile.${result.backup ? ` A private backup of the previous configuration is at ${result.backup}.` : ""}\n`);
       context.stdout.write(transport === "hosted" ? "Next: run 'hermes mcp login extrovert' and sign in to your existing Extrovert account. Create an account only if you do not have one. Then start or reload your session and call whoami. If sign-in succeeds but whoami fails, do not repeat approval; share the response request ID with support.\n" : credentialAvailable
         ? "An agent credential is already available for this profile. Next: run 'extrovert doctor', then start or reload Hermes and call whoami to confirm access.\n"
-        : "Next: run 'extrovert enroll --agent-handle <name>' for this same profile, or use an existing agent key with 'extrovert auth login --with-token'. Run 'extrovert doctor', then start or reload Hermes and call whoami.\n");
+        : "Next: run 'extrovert auth login' for this same profile, or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'. Run 'extrovert doctor', then start or reload Hermes and call whoami.\n");
     }
     return 0;
   }
@@ -252,7 +267,7 @@ function setupCommand(args: string[], context: CliContext): number {
   const addArgs = transport === "hosted"
     ? ["mcp", "add", "--transport", "http", "--scope", "local", "extrovert", "https://mcp.extrovert.dev/mcp"]
     : host === "claude"
-      ? ["mcp", "add", "--transport", "stdio", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "extrovert", "--", "npx", "-y", MCP_PACKAGE]
+      ? ["mcp", "add", "extrovert", "--transport", "stdio", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE]
       : ["mcp", "add", "extrovert", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE];
   const added = context.runCommand(executable, addArgs);
   if (added.error) throw added.error;
@@ -265,7 +280,7 @@ function setupCommand(args: string[], context: CliContext): number {
   }
   context.stdout.write(`Configured Extrovert MCP for ${host}. ${credentialAvailable
     ? "An agent credential is already available for this profile. Run 'extrovert doctor'."
-    : "If you have an enrollment key, run 'extrovert enroll --agent-handle <name>'. Otherwise use 'extrovert auth login --with-token'."} Start a new session and call whoami to verify the connection.\n`);
+    : "Run 'extrovert auth login' to sign in to your existing account, or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'."} Start a new session and call whoami to verify the connection.\n`);
   return 0;
 }
 
@@ -294,11 +309,9 @@ async function agentStatusCommand(args: string[], context: CliContext): Promise<
 
 async function authCommand(args: string[], context: CliContext): Promise<number> {
   const action = args[0];
+  if (action === "complete" || action === "cancel" || (action === "login" && !hasFlag(args, "--with-token"))) return browserAuthCommand(args, context);
   switch (action) {
     case "login": {
-      if (!hasFlag(args, "--with-token")) {
-        throw new CliUsageError("auth login requires --with-token; the key is read from EXTROVERT_API_KEY or a hidden stdin prompt");
-      }
       const token = (context.env.EXTROVERT_API_KEY ?? "").trim() || (await readSecret(context, "API credential: "));
       if (!isPersistentAPICredential(token)) throw new CliUsageError("Expected a scoped pk_agent_… key or independent ev_credential_… credential. Hosted OAuth access/refresh tokens remain managed by the host.");
       const client = clientForKey(token, context, context.env.EXTROVERT_API_BASE_URL);
@@ -310,7 +323,7 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
     case "status": {
       const auth = resolveAuthentication(context);
       if (!auth) {
-        context.stdout.write("Not connected. Use hosted sign-in in your MCP host, 'extrovert enroll --agent-handle <name>', or 'extrovert auth login --with-token'.\n");
+        context.stdout.write("Not connected locally. Run 'extrovert auth login' or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'. Hosted MCP sign-in belongs to that host.\n");
         return 1;
       }
       const me = await auth.client.whoami();
@@ -318,14 +331,148 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
       return 0;
     }
     case "logout": {
-      const removed = context.store.clear();
+      const result = await logoutLocalCredential(context.store);
       context.store.clearPendingSignup();
-      context.stdout.write(removed ? "Removed the stored Extrovert credential.\n" : "No stored Extrovert credential was present.\n");
-      return 0;
+      context.store.clearPendingOAuth();
+      writeResult(context, result, hasFlag(args, "--json"), () => result.status === "remote_unconfirmed"
+        ? "Could not confirm revocation of this local OAuth connection. Credentials were preserved so you can retry logout."
+        : result.remote_revocation === "confirmed" ? "Revoked this local OAuth connection and removed its stored credentials."
+        : result.credential_removed ? "Removed the stored Extrovert credential. Independent API keys must be revoked separately in Connections."
+        : "No stored Extrovert credential was present.");
+      return result.status === "remote_unconfirmed" ? 1 : 0;
     }
     default:
-      throw new CliUsageError("auth requires login, status, or logout");
+      throw new CliUsageError("auth requires login, complete, cancel, status, or logout");
   }
+}
+
+async function browserAuthCommand(args: string[], context: CliContext): Promise<number> {
+  const json = hasFlag(args, "--json");
+  let listener: LoopbackLogin | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  let loginRequest: OAuthLoginRequest | undefined;
+  let expired = false;
+  let finishing = false;
+  const controller = new AbortController();
+  const operation = new AbortController();
+  const setDeadline = (request: OAuthLoginRequest) => {
+    const remaining = Date.parse(request.expires_at) - Date.now();
+    if (remaining <= 0) throw new OAuthLoginError("expired", "This login request expired. Start a new login.");
+    deadline = setTimeout(() => { expired = true; controller.abort(); operation.abort(); }, remaining);
+  };
+  const onSignal = () => { controller.abort(); operation.abort(); };
+  process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal);
+  const emit = (value: Record<string, unknown>, message: string) => writeResult(context, value, json, () => message);
+  const readCode = async (request: OAuthLoginRequest, prompt: string) => {
+    const text = await readSecret(context, prompt, controller.signal);
+    if (!text.trim()) throw new OAuthLoginError("cancelled", "Login input ended. Your existing profile was preserved.");
+    return parseCompletionCode(text, request);
+  };
+  try {
+    const known = new Set(["--json", "--no-browser", "--browser", "--reconnect"]);
+    if (args.slice(1).some(arg => !known.has(arg) || (args[0] !== "login" && arg !== "--json")) || (hasFlag(args, "--no-browser") && hasFlag(args, "--browser"))) throw new CliUsageError("Use auth login [--no-browser | --browser] [--json] [--reconnect], auth complete, or auth cancel. Completion codes are read from hidden stdin, never arguments.");
+    if (args[0] === "cancel") {
+      context.store.clearPendingOAuth();
+      emit({ status: "cancelled" }, "Cancelled pending login. Your existing profile was preserved.");
+      return 0;
+    }
+    if (args[0] === "complete") {
+      if (context.env.EXTROVERT_API_KEY?.trim()) throw new CliUsageError("EXTROVERT_API_KEY overrides this profile. Remove that explicit override before completing browser login.");
+      const request = context.store.loadPendingOAuth();
+      if (!request) throw new OAuthLoginError("invalid_response", "No pending login exists in this profile. Run extrovert auth login first.");
+      loginRequest = request;
+      setDeadline(request);
+      const code = await readCode(request, "Paste the Extrovert completion code: ");
+      finishing = true;
+      clearTimeout(deadline);
+      return await finishBrowserLogin(request, code, true, context, json, operation.signal);
+    }
+    const existing = resolveAuthentication(context);
+    if (existing && !hasFlag(args, "--reconnect")) {
+      try {
+        const me = await existing.client.whoami();
+        emit({ status: "complete", reused: true, identity: me }, `Already connected.\n${formatWhoAmI(me)}\nUse --reconnect for a new browser consent, or a different EXTROVERT_PROFILE for another agent.`);
+        return 0;
+      } catch {
+        throw new OAuthLoginError("unavailable", "This profile's existing access could not be verified. Check connectivity or use auth login --reconnect for explicit new consent. The credential was preserved.");
+      }
+    }
+    if (context.env.EXTROVERT_API_KEY?.trim()) throw new CliUsageError("EXTROVERT_API_KEY overrides this profile. Remove that explicit override before browser login, or choose the intended environment.");
+    if (context.store.loadPendingSignup()) throw new CliUsageError("This profile has a pending signup. Complete it or use a different EXTROVERT_PROFILE before starting browser login.");
+    const tty = Boolean((context.stdin as NodeJS.ReadStream).isTTY);
+    if (hasFlag(args, "--browser") && (!tty || json)) throw new CliUsageError("--browser needs an interactive terminal. Use --no-browser --json and then auth complete for automation.");
+    let pending = context.store.loadPendingOAuth();
+    if (pending && Date.parse(pending.expires_at) <= Date.now()) { context.store.clearPendingOAuth(); pending = undefined; }
+    let request: OAuthLoginRequest;
+    let localUrl: string | undefined;
+    if (pending) request = pending;
+    else {
+      const fingerprint = credentialFingerprint(context.store.load());
+      const headless = hasFlag(args, "--no-browser") || json || (!hasFlag(args, "--browser") && preferHeadlessLogin(context.env, tty));
+      if (!headless) {
+        try { listener = await createLoopbackLogin(); }
+        catch { context.stderr.write("A local login listener could not start. Using the hosted completion page.\n"); }
+      }
+      const started = await beginOAuthLogin({ issuer: context.env.EXTROVERT_API_BASE_URL, redirectUri: listener?.redirectUri ?? HOSTED_LOGIN_CALLBACK, manualRedirectUri: HOSTED_LOGIN_CALLBACK, signal: operation.signal });
+      operation.signal.throwIfAborted();
+      request = started.request;
+      context.store.savePendingOAuth({ ...request, credential_fingerprint: fingerprint });
+      localUrl = listener ? started.authorizationUrl : undefined;
+    }
+    const authorizationUrl = loginAuthorizationUrl(request, true);
+    loginRequest = request;
+    const result = { status: "pending", authorization_url: authorizationUrl, expires_at: request.expires_at, next_action: "auth complete", instructions: "Open authorization_url, sign in to your existing account and approve access. Paste the hosted page's completion code into extrovert auth complete in this same profile. Never put the code in a command argument." };
+    if (!tty || json) { emit(result, `${result.instructions}\n${authorizationUrl}`); return 0; }
+    setDeadline(request);
+    const local = listener?.wait(request, controller.signal).then(code => ({ code, manual: false }));
+    if (local) void local.catch(() => {}); // An abort during browser launch is handled by the race below.
+    if (localUrl) {
+      context.stdout.write("Opening your browser to sign in…\n");
+      if (!await context.openBrowser(localUrl)) context.stdout.write("The browser could not be opened automatically.\n");
+    }
+    context.stdout.write(`If you are signing in on another machine or the browser did not open, visit:\n${authorizationUrl}\nThis link returns to Extrovert's website with a completion code.\n`);
+    const manual = readCode(request, "Paste code here if prompted > ").then(code => ({ code, manual: true }));
+    const completed = await Promise.race(local ? [local, manual] : [manual]);
+    finishing = true;
+    clearTimeout(deadline);
+    controller.abort();
+    return await finishBrowserLogin(request, completed.code, completed.manual, context, json, operation.signal);
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    const status = expired ? "expired" : operation.signal.aborted ? "cancelled" : error instanceof OAuthLoginError ? error.status : !finishing && (controller.signal.aborted || (error instanceof Error && /cancel|input ended/i.test(error.message))) ? "cancelled" : "unavailable";
+    const message = expired ? "Login timed out. Start a new login; your existing profile was preserved." : error instanceof OAuthLoginError ? error.message : status === "cancelled" ? "Login cancelled. Your existing profile was preserved." : "Login did not complete. Your existing profile was preserved; start a new login if the code exchange was attempted.";
+    if (loginRequest && ["denied", "expired", "cancelled"].includes(status)) {
+      try { context.store.takePendingOAuth(loginRequest.state); } catch { /* A different process may have replaced this attempt. */ }
+    }
+    if (json) emit({ status, message, next_action: status === "invalid_response" ? "auth complete" : "auth login" }, message);
+    else context.stderr.write(`${message}\n`);
+    return 1;
+  } finally {
+    clearTimeout(deadline);
+    controller.abort();
+    await listener?.close();
+    process.off("SIGINT", onSignal); process.off("SIGTERM", onSignal);
+  }
+}
+
+async function finishBrowserLogin(request: OAuthLoginRequest, code: string, manual: boolean, context: CliContext, json: boolean, signal: AbortSignal): Promise<number> {
+  signal.throwIfAborted();
+  const claimed = context.store.takePendingOAuth(request.state);
+  if (!claimed) throw new OAuthLoginError("cancelled", "This login was already completed or cancelled. Check auth status before starting another.");
+  if (claimed.credential_fingerprint === undefined || credentialFingerprint(context.store.load()) !== claimed.credential_fingerprint) throw new OAuthLoginError("cancelled", "This profile changed while login was pending. Its current credentials were preserved. Start a new login.");
+  const tokens = await exchangeLoginCode({ ...claimed, redirect_uri: manual ? claimed.manual_redirect_uri ?? claimed.redirect_uri : claimed.redirect_uri }, code, { signal });
+  let me;
+  try {
+    signal.throwIfAborted();
+    me = await clientForKey(tokens.access_token, context, tokens.api_base_url).whoami();
+    signal.throwIfAborted();
+    await context.store.saveOAuth({ ...tokens, grant_expires_at: me.connection?.expires_at_ms ? new Date(me.connection.expires_at_ms).toISOString() : undefined }, { expectedFingerprint: claimed.credential_fingerprint, signal });
+  } catch (error) {
+    if (!await revokeLoginTokens(tokens)) context.stderr.write("Could not confirm cleanup of the newly approved connection. Review it in Extrovert account > Connections. Your previous profile was preserved.\n");
+    throw error;
+  }
+  writeResult(context, { status: "complete", identity: me, credential_source: context.store.paths.credential }, json, () => `Connected.\n${formatWhoAmI(me)}\nCredentials saved privately for this profile. Start or reload its stdio MCP and call whoami there.`);
+  return 0;
 }
 
 async function enrollCommand(args: string[], context: CliContext): Promise<number> {
@@ -428,7 +575,7 @@ async function whoamiCommand(args: string[], context: CliContext): Promise<numbe
 async function doctorCommand(args: string[], context: CliContext): Promise<number> {
   const auth = resolveAuthentication(context);
   if (!auth) {
-    const result = { connected: false, next_action: "connect", summary: "No local agent credential is available for this profile. Hosted OAuth credentials belong to your MCP host; use whoami there. For local access, redeem an enrollment key with 'extrovert enroll --agent-handle <name>' or use 'extrovert auth login --with-token'." };
+    const result = { connected: false, next_action: "connect", summary: "No local agent credential is available for this profile. Hosted OAuth credentials belong to your MCP host; use whoami there. For local access, run 'extrovert auth login' or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'." };
     writeResult(context, result, hasFlag(args, "--json"), (value) => value.summary);
     return 1;
   }
@@ -549,12 +696,13 @@ function resolveAuthentication(context: CliContext): { client: ExtrovertClient; 
   }
   const stored = context.store.load();
   if (!stored) return undefined;
-  return { client: clientForKey(stored.agent_key, context, stored.api_base_url), source: context.store.paths.credential };
+  const env = { ...context.env, EXTROVERT_API_KEY: stored.agent_key, EXTROVERT_API_BASE_URL: stored.api_base_url };
+  return { client: new ExtrovertClient(loadConfig(env), { credentialProvider: createLocalCredentialProvider(context.store, { apiBaseUrl: stored.api_base_url }) }), source: context.store.paths.credential };
 }
 
 function requireAuthentication(context: CliContext): { client: ExtrovertClient; source: string } {
   const auth = resolveAuthentication(context);
-  if (!auth) throw new Error("No Extrovert credential for this profile. Run 'extrovert enroll --agent-handle <name>' or 'extrovert auth login --with-token'. Hosted sign-in credentials are managed by your MCP host.");
+  if (!auth) throw new Error("No Extrovert credential for this profile. Run 'extrovert auth login' or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'. Hosted sign-in credentials are managed by your MCP host.");
   return auth;
 }
 
@@ -657,9 +805,10 @@ function positional(args: string[]): string[] {
   return values;
 }
 
-async function readSecret(context: CliContext, prompt: string): Promise<string> {
+async function readSecret(context: CliContext, prompt: string, signal?: AbortSignal): Promise<string> {
   const input = context.stdin as NodeJS.ReadStream;
-  if (!input.isTTY || typeof input.setRawMode !== "function") return readLine(context.stdin);
+  if (signal?.aborted) throw new OAuthLoginError("cancelled", "Login cancelled.");
+  if (!input.isTTY || typeof input.setRawMode !== "function") return readLine(context.stdin, signal);
   context.stderr.write(prompt);
   return new Promise<string>((resolve, reject) => {
     const characters: string[] = [];
@@ -687,11 +836,13 @@ async function readSecret(context: CliContext, prompt: string): Promise<string> 
       input.off("end", onEnd);
       input.off("close", onEnd);
       input.off("error", onError);
+      signal?.removeEventListener("abort", onAbort);
       input.setRawMode?.(wasRaw ?? false);
       input.pause();
     };
     const onEnd = () => { cleanup(); reject(new Error("Credential input ended before Enter")); };
     const onError = (error: Error) => { cleanup(); reject(error); };
+    const onAbort = () => { cleanup(); reject(new OAuthLoginError("cancelled", "Login cancelled.")); };
     input.setEncoding("utf8");
     input.setRawMode(true);
     input.resume();
@@ -699,6 +850,7 @@ async function readSecret(context: CliContext, prompt: string): Promise<string> 
     input.once("end", onEnd);
     input.once("close", onEnd);
     input.once("error", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -707,12 +859,14 @@ async function readVisibleLine(context: CliContext, prompt: string): Promise<str
   return readLine(context.stdin);
 }
 
-function readLine(stream: Readable): Promise<string> {
+function readLine(stream: Readable, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new OAuthLoginError("cancelled", "Login cancelled.")); return; }
     let text = "";
-    const cleanup = () => { stream.off("data", onData); stream.off("end", onEnd); stream.off("error", onError); stream.pause(); };
+    const cleanup = () => { stream.off("data", onData); stream.off("end", onEnd); stream.off("error", onError); signal?.removeEventListener("abort", onAbort); stream.pause(); };
     const onEnd = () => { cleanup(); resolve(text.trim()); };
     const onError = (error: Error) => { cleanup(); reject(error); };
+    const onAbort = () => { cleanup(); reject(new OAuthLoginError("cancelled", "Login cancelled.")); };
     const onData = (chunk: Buffer | string) => {
       text += String(chunk);
       if (text.length > 8192) { onError(new Error("Input is too long")); return; }
@@ -720,6 +874,7 @@ function readLine(stream: Readable): Promise<string> {
       if (end >= 0) { text = text.slice(0, end); onEnd(); }
     };
     stream.on("data", onData); stream.once("end", onEnd); stream.once("error", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
     stream.resume();
   });
 }

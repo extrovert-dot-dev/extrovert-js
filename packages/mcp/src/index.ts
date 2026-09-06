@@ -39,11 +39,15 @@ export {
 export {
   createCredentialStore,
   credentialPaths,
+  credentialFingerprint,
   type CredentialPaths,
   type CredentialStore,
   type PendingSignup,
   type StoredCredential,
+  type OAuthCredentialInput,
+  type PendingOAuth,
 } from "./credentials.js";
+export { createLocalCredentialProvider, logoutLocalCredential, type LocalCredentialProviderOptions, type LocalLogoutResult } from "./local-oauth.js";
 
 export { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from "./config.js";
 export { registerTools, TOOL_NAMES } from "./tools.js";

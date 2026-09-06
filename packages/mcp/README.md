@@ -42,7 +42,8 @@ Call `agent_context` on first Extrovert use in a session, after an hour, and aft
 Without connected tools, read https://mcp.extrovert.dev/.well-known/agent-contract.json or the live
 agent guide. The CLI exposes `extrovert version --json` and `extrovert agent status --json`.
 These checks never update files or authenticate, and status does not inspect installed skill files.
-Respect pinned versions and local edits; update only Extrovert skills in their original scope when
+`@next` resolves the prerelease channel; `--prefer-online` requests fresh registry metadata.
+Resolution does not restart an already running MCP process. Respect pinned versions and local edits; update only Extrovert skills in their original scope when
 allowed. Updating files does not reload an active skill or local stdio process.
 
 Current signup availability comes from the live context. Use an existing account first; new signup
@@ -142,7 +143,7 @@ npx -y @extrovert.dev/mcp@next setup --host claude
 npx -y @extrovert.dev/mcp@next setup --host hermes
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.13` for a reproducible dogfood environment. The package installs the
+For reproducible environments, replace `@next` with the exact release version you intend to pin. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 
@@ -151,37 +152,56 @@ implementation to keep in sync.
 The CLI uses the same typed client as MCP and prints ordinary message text without a `curl | jq`
 pipeline:
 
-For an existing account, ask its owner for an enrollment key. Enroll the new agent
-in its own profile; do not create another customer account or borrow another agent's key.
+For an existing account, use browser sign-in in the intended local profile:
 
 ```bash
 export EXTROVERT_PROFILE=support
-extrovert enroll --agent-handle support  # hidden enrollment-key prompt
-extrovert setup --host hermes           # use the same profile for every command
-extrovert doctor
+extrovert auth login
 extrovert whoami
 extrovert inbox list
 extrovert message list --inbox support@extrovertmail.com
-extrovert message get msg_…
-extrovert review status rr_…
 ```
 
-Enrollment saves the scoped agent credential privately and verifies the connection without printing
-the key. Never paste real keys into chat, tool arguments, or shell history. For unattended enrollment,
-inject `EXTROVERT_ENROLLMENT_KEY` from a secret store or provide one line on private stdin. For an
-already issued agent key, use `extrovert auth login --with-token` and its hidden prompt.
+`auth login` verifies and reuses working profile access first. Otherwise it opens local browser
+sign-in and explicit consent when available. Its printed fallback URL returns to Extrovert's website
+with a one-use completion code, so it also works on another machine. SSH/headless sessions use this
+hosted completion path directly. In an interactive terminal, paste the code at the hidden prompt.
+
+For automation:
+
+```bash
+extrovert auth login --no-browser --json
+# When pending, the person opens authorization_url and approves access.
+extrovert auth complete --json
+# Supply the website's completion code on private stdin in this same profile.
+extrovert whoami
+```
+
+Never put a completion code or key in command arguments, chat, or logs. `pending` is not connected;
+wait for `complete`, then verify `whoami`. `auth cancel` clears pending login state while preserving
+existing credentials. Use `auth login --reconnect` for deliberate new consent. Requests expire after
+10 minutes. See the [login guide](https://docs.extrovert.dev/quickstart/authentication/#local-cli-and-stdio-sign-in).
+
+Local OAuth is saved privately and refreshed within the original consent grant: identity, resource
+reach, actions, and expiry remain bounded. Start or reload the matching stdio MCP process and call
+`whoami` there. Hosted MCP OAuth belongs to the host; local login or `doctor` does not verify it.
+
+Enrollment is also supported: `extrovert enroll --agent-handle support` reads a hidden prompt or
+`EXTROVERT_ENROLLMENT_KEY`. Existing agent keys and independently issued API credentials use
+`extrovert auth login --with-token` with hidden stdin. Use these deliberately; do not create another
+customer account or borrow another agent's credential to repair access.
 
 On Unix the credential directory is mode `0700` and credential files are mode `0600`.
 `EXTROVERT_CONFIG_DIR` selects an explicit directory; otherwise Hermes uses its own
-`HERMES_HOME/extrovert` directory, and other runtimes use `~/.config/extrovert/`.
+`HERMES_HOME/extrovert` directory, and other runtimes use the platform config directory.
 `EXTROVERT_PROFILE` separates agents within that base. An explicit `EXTROVERT_API_KEY` takes
-precedence. Configuration success alone is not a connection test: restart the host and call `whoami`.
-`doctor` checks the CLI's credential and API access, not the host's separate OAuth grant.
+precedence; remove that override from the intended environment before new browser consent.
+Keep the same profile and API environment throughout a pending login.
 
 For Hermes hosted OAuth, use `extrovert setup --host hermes --transport hosted`, then
-`hermes mcp login extrovert`. Finish one browser consent flow, restart Hermes, and call `whoami`.
-If consent succeeds but a tool returns an authorization error, do not approve repeatedly or create
-another account. Keep the request ID for support. Self-signup is currently disabled.
+`hermes mcp login extrovert`. Finish browser consent, restart Hermes, and call `whoami`.
+If approved OAuth fails, keep the non-secret request ID and report the failed step instead of
+repeating consent or creating another account. Read live context for signup availability.
 
 ### Is my domain ready?
 

@@ -602,6 +602,8 @@ export interface DurableCredentialPersistenceStatus {
 }
 
 export interface ExtrovertClientOptions {
+  /** Local CLI/stdio only. Resolves a fresh credential before each request, without retrying requests. */
+  credentialProvider?: () => Promise<string>;
   /**
    * Local-host hook for storing a newly issued full-scope key. Hosted HTTP leaves
    * this unset because OAuth credentials belong to the MCP client, not the server.
@@ -629,6 +631,7 @@ export class ExtrovertClient {
 
   private readonly store?: FixtureStore;
   private apiKey: string;
+  private sessionKeyOverride = false;
   private durableCredentialStatus: DurableCredentialPersistenceStatus = {
     attempted: false,
     persisted: false,
@@ -1956,12 +1959,13 @@ export class ExtrovertClient {
    * Bypasses the JSON `request` path so arbitrary bytes survive intact.
    */
   private async getBinary(path: string, query?: Record<string, string | number | boolean>, signal?: AbortSignal): Promise<AttachmentDownload> {
+    const credential = !this.sessionKeyOverride && this.options.credentialProvider ? await this.options.credentialProvider() : this.apiKey;
     const url = new URL(this.config.apiBaseUrl + path);
     for (const [key, value] of Object.entries(query ?? {})) url.searchParams.set(key, String(value));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     const headers: Record<string, string> = { "User-Agent": "extrovert-mcp/0.1.0" };
-    if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
+    if (credential) headers.Authorization = `Bearer ${credential}`;
     let res: Response;
     try {
       res = await fetch(url, { method: "GET", headers, redirect: "error", signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
@@ -2014,6 +2018,7 @@ export class ExtrovertClient {
     extraHeaders?: Record<string, string>,
     signal?: AbortSignal,
   ): Promise<T> {
+    const credential = !this.sessionKeyOverride && this.options.credentialProvider ? await this.options.credentialProvider() : this.apiKey;
     const url = new URL(this.config.apiBaseUrl + path);
     if (query) {
       for (const [k, v] of Object.entries(query)) {
@@ -2031,7 +2036,7 @@ export class ExtrovertClient {
       Accept: "application/json",
       "User-Agent": "extrovert-mcp/0.1.0",
     };
-    if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
+    if (credential) headers.Authorization = `Bearer ${credential}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (extraHeaders) {
       for (const [k, v] of Object.entries(extraHeaders)) {
@@ -2074,6 +2079,7 @@ export class ExtrovertClient {
     const trimmed = key?.trim();
     if (!trimmed) return;
     this.apiKey = trimmed;
+    this.sessionKeyOverride = true;
     if (!durable) return;
 
     const sink = this.options.onDurableAgentKey;

@@ -10,11 +10,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { ExtrovertClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { createCredentialStore } from "./credentials.js";
+import { createLocalCredentialProvider } from "./local-oauth.js";
 import { createExtrovertServer } from "./server.js";
 
 export async function runStdio(): Promise<void> {
   const credentialStore = createCredentialStore();
-  const stored = credentialStore.load();
+  // Explicit host credentials are authoritative; do not even read an unrelated
+  // local profile (which may be stale, malformed or belong to another account).
+  const stored = (process.env.EXTROVERT_API_KEY ?? "").trim() ? undefined : credentialStore.load();
   const env = { ...process.env };
   if (!(env.EXTROVERT_API_KEY ?? "").trim() && stored) {
     env.EXTROVERT_API_KEY = stored.agent_key;
@@ -25,6 +28,8 @@ export async function runStdio(): Promise<void> {
 
   const config = loadConfig(env);
   const client = new ExtrovertClient(config, {
+    credentialProvider: !config.mock && !(process.env.EXTROVERT_API_KEY ?? "").trim() && stored
+      ? createLocalCredentialProvider(credentialStore, { apiBaseUrl: config.apiBaseUrl }) : undefined,
     onDurableAgentKey: config.mock
       ? undefined
       : (agentKey, apiBaseUrl) => {
