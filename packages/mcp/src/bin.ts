@@ -19,6 +19,9 @@ interface TransportArgs {
 }
 
 const CLI_COMMANDS = new Set([
+  "version",
+  "--version",
+  "agent",
   "doctor",
   "setup",
   "auth",

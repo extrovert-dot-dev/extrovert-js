@@ -33,6 +33,7 @@ import {
 } from "./auth.js";
 import { ExtrovertClient } from "./client.js";
 import { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from "./config.js";
+import { buildAgentContext } from "./agent-context.js";
 import { createExtrovertServer } from "./server.js";
 
 export interface HttpServerOptions {
@@ -112,6 +113,12 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
   );
   const nodeHandler = toNodeHandler(handler, {
     onerror: (error) => process.stderr.write(`extrovert-mcp: HTTP adapter error: ${error.message}\n`),
+  });
+
+  // Public, bounded discovery. Never include caller identity or credentials.
+  app.get("/.well-known/agent-contract.json", async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await buildAgentContext(baseConfig));
   });
 
   app.get("/healthz", (_req, res) => {

@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 
 import { ExtrovertApiError, ExtrovertClient } from "./client.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, SERVER_VERSION } from "./config.js";
+import { AGENT_CONTEXT_URL, AGENT_GUIDE_URL, buildAgentContext, fetchAgentContext } from "./agent-context.js";
 import { renderDomain } from "./domain-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
@@ -17,7 +18,9 @@ const MCP_PACKAGE = "@extrovert.dev/mcp@next";
 export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert without custom transport code
 
 Usage:
-  extrovert setup [--host codex|claude|hermes] [--transport stdio|hosted]
+  extrovert version [--json]
+  extrovert agent status [--json]
+  extrovert setup [--host auto|codex|claude|hermes] [--transport stdio|hosted]
   extrovert auth login --with-token
   extrovert auth status
   extrovert auth logout
@@ -67,7 +70,9 @@ Access and administration:
 
 MCP transport:
   Running extrovert-mcp with no command starts stdio. The official plugin and
-  'extrovert setup' configure that published server directly.
+  explicit-host setup configure that published server directly. --host auto prefers
+  hosted OAuth when exactly one supported host is detected; Codex hosted setup
+  provides its native interactive sign-in command. Existing entries stay intact.
 `;
 
 export interface CliOptions {
@@ -118,6 +123,12 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
       return 0;
     }
     switch (command) {
+      case "--version":
+      case "version":
+        writeResult(context, { version: SERVER_VERSION, package: "@extrovert.dev/mcp", channel: "next" }, hasFlag(argv, "--json"), value => value.version);
+        return 0;
+      case "agent":
+        return await agentStatusCommand(argv.slice(1), context);
       case "setup":
         return setupCommand(argv.slice(1), context);
       case "auth":
@@ -186,10 +197,25 @@ async function administrativeCommand(args: string[], context: CliContext): Promi
 }
 
 function setupCommand(args: string[], context: CliContext): number {
-  const host = option(args, "--host") ?? "codex";
-  const transport = option(args, "--transport") ?? "stdio";
-  const credentialAvailable = transport === "stdio" && Boolean(context.env.EXTROVERT_API_KEY?.trim() || context.store.load());
+  const requestedHost = option(args, "--host") ?? "codex";
+  let host = requestedHost;
+  if (host === "auto") {
+    const detected = [
+      context.env.CODEX_THREAD_ID?.trim() ? "codex" : undefined,
+      context.env.CLAUDECODE?.trim() === "1" ? "claude" : undefined,
+      context.env.HERMES_HOME?.trim() ? "hermes" : undefined,
+    ].filter((value): value is string => Boolean(value));
+    if (detected.length !== 1) {
+      throw new CliUsageError(`${detected.length ? "Multiple agent hosts were detected" : "The current agent host could not be detected"}. Choose --host codex, --host claude, or --host hermes. For other hosts, connect https://mcp.extrovert.dev/mcp using the host's MCP settings. No configuration was changed.`);
+    }
+    host = detected[0]!;
+  }
+  if (!new Set(["codex", "claude", "hermes"]).has(host)) {
+    throw new CliUsageError("--host must be auto, codex, claude, or hermes");
+  }
+  const transport = option(args, "--transport") ?? (requestedHost === "auto" ? "hosted" : "stdio");
   if (transport !== "stdio" && transport !== "hosted") throw new CliUsageError("--transport must be stdio or hosted");
+  const credentialAvailable = transport === "stdio" && Boolean(context.env.EXTROVERT_API_KEY?.trim() || context.store.load());
   if (host === "hermes") {
     const result = setupHermes(context.env, context.store.paths.directory, transport);
     context.stdout.write(`Hermes configuration: ${result.path}\n`);
@@ -198,35 +224,72 @@ function setupCommand(args: string[], context: CliContext): number {
       context.stdout.write("Extrovert already has an entry in this Hermes profile. It was not changed. Start or reload the session and call whoami; configuration alone does not prove the connection works.\n");
     } else {
       context.stdout.write(`Extrovert configured for this Hermes profile.${result.backup ? ` A private backup of the previous configuration is at ${result.backup}.` : ""}\n`);
-      context.stdout.write(transport === "hosted" ? "Next: run 'hermes mcp login extrovert' and finish sign-in once. Then start or reload your session and call whoami. If sign-in succeeds but whoami fails, do not repeat approval; share the response request ID with support.\n" : credentialAvailable
+      context.stdout.write(transport === "hosted" ? "Next: run 'hermes mcp login extrovert' and sign in to your existing Extrovert account. Create an account only if you do not have one. Then start or reload your session and call whoami. If sign-in succeeds but whoami fails, do not repeat approval; share the response request ID with support.\n" : credentialAvailable
         ? "An agent credential is already available for this profile. Next: run 'extrovert doctor', then start or reload Hermes and call whoami to confirm access.\n"
         : "Next: run 'extrovert enroll --agent-handle <name>' for this same profile, or use an existing agent key with 'extrovert auth login --with-token'. Run 'extrovert doctor', then start or reload Hermes and call whoami.\n");
     }
     return 0;
-  }
-  if (transport === "hosted") throw new CliUsageError("Automatic hosted setup currently supports --host hermes. For other hosts, add https://mcp.extrovert.dev/mcp using the host's native OAuth connection flow.");
-  if (!new Set(["codex", "claude"]).has(host)) {
-    throw new CliUsageError("--host must be codex, claude, or hermes");
   }
   const executable = host;
   const existing = context.runCommand(executable, ["mcp", "get", "extrovert", ...(host === "codex" ? ["--json"] : [])]);
   if (existing.error && isMissingExecutable(existing.error)) {
     throw new Error(`${host} is not installed or not on PATH`);
   }
+  if (existing.error) throw existing.error;
   if (existing.status === 0) {
     context.stdout.write(`Extrovert MCP configuration exists for ${host}; it has not been changed. Configuration alone does not confirm a working connection. Start a new session and call whoami to verify access.\n`);
     return 0;
   }
-
-  const added = context.runCommand(executable, ["mcp", "add", "extrovert", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE]);
+  if (!/no MCP server named|^not found$/im.test(`${existing.stderr}\n${existing.stdout}`)) {
+    throw new Error(`Could not inspect the existing ${host} MCP configuration. No configuration was changed. ${cleanCommandError(existing.stderr)}`);
+  }
+  if (transport === "hosted" && host === "codex") {
+    // Codex add can immediately start OAuth. Do not hide its login prompt inside
+    // the installer's piped subprocess or wait indefinitely for a browser callback.
+    context.stdout.write("Setup required: Extrovert has not been configured for Codex. Run this native command in an interactive terminal and complete its sign-in flow:\ncodex mcp add extrovert --url https://mcp.extrovert.dev/mcp\nSign in to your existing Extrovert account first. Create an account only if you do not have one. Then start or reload Codex and call whoami to verify access.\n");
+    return 1;
+  }
+  const addArgs = transport === "hosted"
+    ? ["mcp", "add", "--transport", "http", "--scope", "local", "extrovert", "https://mcp.extrovert.dev/mcp"]
+    : host === "claude"
+      ? ["mcp", "add", "--transport", "stdio", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "extrovert", "--", "npx", "-y", MCP_PACKAGE]
+      : ["mcp", "add", "extrovert", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE];
+  const added = context.runCommand(executable, addArgs);
   if (added.error) throw added.error;
   if (added.status !== 0) {
     throw new Error(cleanCommandError(added.stderr) || `Could not configure Extrovert MCP for ${host}`);
+  }
+  if (transport === "hosted") {
+    context.stdout.write("Configured Extrovert hosted MCP for Claude Code in this project's local scope. Open /mcp in Claude Code to sign in to your existing Extrovert account; create an account only if you do not have one. Start or reload the session and call whoami to verify access.\n");
+    return 0;
   }
   context.stdout.write(`Configured Extrovert MCP for ${host}. ${credentialAvailable
     ? "An agent credential is already available for this profile. Run 'extrovert doctor'."
     : "If you have an enrollment key, run 'extrovert enroll --agent-handle <name>'. Otherwise use 'extrovert auth login --with-token'."} Start a new session and call whoami to verify the connection.\n`);
   return 0;
+}
+
+async function agentStatusCommand(args: string[], context: CliContext): Promise<number> {
+  if (args[0] !== "status") throw new CliUsageError("agent requires status");
+  const config = loadConfig(context.env);
+  try {
+    const remote = config.mock ? await buildAgentContext(config) : await fetchAgentContext();
+    const matches = remote.release_version === SERVER_VERSION;
+    const result = {
+      status: "ok", installed_cli_version: SERVER_VERSION,
+      release_match: matches, installed_skills: "not_inspected",
+      next_action: matches ? "read_live_guide" : "review_release_difference",
+      ...remote,
+    };
+    writeResult(context, result, hasFlag(args, "--json"), value =>
+      `Installed CLI: ${value.installed_cli_version}. Hosted release: ${value.release_version}.\nSignup: ${value.signup.status}.\nRead ${value.docs.agent_index}\nSkill files were not inspected or changed. Preserve pins and local edits.`);
+    return 0;
+  } catch {
+    const result = { status: "unavailable", installed_cli_version: SERVER_VERSION, next_action: "read_live_guide", agent_index: AGENT_GUIDE_URL, contract_url: AGENT_CONTEXT_URL,
+      summary: "Could not verify the hosted release. Read the live guide; do not treat this local CLI as current or retry an ambiguous mutation." };
+    writeResult(context, result, hasFlag(args, "--json"), value => `${value.summary}\n${value.agent_index}`);
+    return 1;
+  }
 }
 
 async function authCommand(args: string[], context: CliContext): Promise<number> {
@@ -332,7 +395,7 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
     api_base_url: config.apiBaseUrl,
   });
   context.stdout.write(
-    `Verification code sent to ${result.otp_sent_to}.\nInbox: ${result.address}\nPending credential saved securely; run 'extrovert verify'.\n`,
+    `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.\nInbox: ${result.address}\nPending credential saved securely; run 'extrovert verify'.\n`,
   );
   return 0;
 }

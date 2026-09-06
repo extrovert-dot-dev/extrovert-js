@@ -15,6 +15,7 @@ import type { ListCategoriesParams } from "./types.js";
  */
 
 import type { ExtrovertConfig } from "./config.js";
+import { buildAgentContext, fetchAgentContext, type AgentContext } from "./agent-context.js";
 import { FixtureStore, NotFoundError } from "./fixtures.js";
 import { keyTierFromRawKey } from "./types.js";
 import type {
@@ -621,6 +622,11 @@ export class ExtrovertClient {
   runAdministrativeAction(id: string, input: AdministrativeInput, mode: AdministrativeMode): Promise<unknown> {
     return this.administration.run(id, input, mode);
   }
+  /** Always use hosted release metadata for local clients; fixtures remain offline. */
+  agentContext(): Promise<AgentContext> {
+    return this.config.mock ? buildAgentContext(this.config) : fetchAgentContext();
+  }
+
   private readonly store?: FixtureStore;
   private apiKey: string;
   private durableCredentialStatus: DurableCredentialPersistenceStatus = {

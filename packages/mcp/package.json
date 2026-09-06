@@ -1,6 +1,6 @@
 {
   "name": "@extrovert.dev/mcp",
-  "version": "0.1.0-pre.13",
+  "version": "0.1.0-pre.14",
   "description": "Extrovert MCP server - a real mailbox for your agent, in one call. Tools incl. a blocking wait_for_email with OTP/link extraction.",
   "keywords": [
     "extrovert",

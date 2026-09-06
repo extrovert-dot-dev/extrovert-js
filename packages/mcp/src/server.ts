@@ -14,6 +14,10 @@ import { registerTools } from "./tools.js";
 const INSTRUCTIONS = [
   "Extrovert gives your agent a persistent email inbox with reviewed sending.",
   "",
+  "First use each session, after one hour, and after schema errors: call agent_context and read its live guide.",
+  "If that tool is absent in an older catalog, read https://docs.extrovert.dev/llms.txt and refresh the host catalog.",
+  "Respect pinned versions and local edits; installing updates does not reload this session or authorize broader access.",
+  "",
   "Typical flow:",
   "  1. whoami: confirm the connected identity and returned capabilities before creating anything.",
   "     For hosted MCP, use your host's OAuth sign-in for the existing account if authentication is needed.",
@@ -75,7 +79,15 @@ export function createExtrovertServer(options: CreateExtrovertServerOptions = {}
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
-      capabilities: { tools: {} },
+      // Catalogs are fixed for each build; the stateless HTTP deployment has no
+      // cross-node catalog notification publisher. Do not promise push updates.
+      capabilities: { tools: { listChanged: false } },
+      // SDK codecs emit these only for supported modern protocol requests.
+      // Older clients retain their negotiated wire format and use live context.
+      cacheHints: {
+        "server/discover": { ttlMs: 60_000, cacheScope: "private" },
+        "tools/list": { ttlMs: 60_000, cacheScope: "private" },
+      },
       instructions: INSTRUCTIONS,
     },
   );

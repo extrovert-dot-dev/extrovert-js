@@ -26,10 +26,34 @@ redeem an enrollment key  ->  create_inbox  ->  use it as a sign-up address  -> 
 
 ---
 
+## Start and stay current
+
+Tell your agent:
+
+> Read https://docs.extrovert.dev/llms.txt, connect Extrovert using my existing account if I have one, and help me send my first email.
+
+Prefer hosted OAuth in compatible hosts. `extrovert setup --host auto` detects an unambiguous
+Codex, Claude Code or Hermes runtime and prefers hosted setup; unsupported or ambiguous environments
+receive a native setup handoff. Explicit host selection retains the stdio default. Existing entries
+and profile credentials are preserved. Configuration is complete only after sign-in and `whoami`
+in the actual MCP session.
+
+Call `agent_context` on first Extrovert use in a session, after an hour, and after schema errors.
+Without connected tools, read https://mcp.extrovert.dev/.well-known/agent-contract.json or the live
+agent guide. The CLI exposes `extrovert version --json` and `extrovert agent status --json`.
+These checks never update files or authenticate, and status does not inspect installed skill files.
+Respect pinned versions and local edits; update only Extrovert skills in their original scope when
+allowed. Updating files does not reload an active skill or local stdio process.
+
+Current signup availability comes from the live context. Use an existing account first; new signup
+requires a supplied human email and human verification. If the code is missing, confirm the
+recipient address and check Spam/Junk. See [agent updates](https://docs.extrovert.dev/operating/agent-updates/).
+
 ## Tools
 
 | Tool | What it does |
 |---|---|
+| `agent_context` | Read the hosted release, skill versions/digests, signup availability and current guides. |
 | `redeem_enrollment` | Exchange an enrollment token (`pk_enroll_…`) for a **scoped agent key** (`pk_agent_…`). |
 | `create_inbox` | Create an inbox. Paid accounts use `extrovertmail.com`; free signups use `free.extrovertmail.com`. Attach arbitrary metadata. |
 | `list_inboxes` | List readable inboxes within the connection grant or legacy key ceiling. Broader connections can narrow the selection; legacy org keys must choose `project:<id>` or `wildcard:true`. |

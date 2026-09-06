@@ -701,7 +701,7 @@ const signUp = defineTool({
   handler: async (args, { client }) => {
     const res: SignUpResult = await client.signUp({ human_email: args.human_email, username: args.username });
     const text = [
-      `Account created. A verification code was sent to ${res.otp_sent_to}.`,
+      `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
       `inbox: ${res.address}`,
       `agent_key (limited, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
@@ -755,6 +755,23 @@ function credentialPersistenceMessage(status: ReturnType<ExtrovertClient["creden
   }
   return "This host did not provide durable credential storage. Store the complete returned agent_key now; it is not retrievable again.";
 }
+
+// Stable rendezvous name: keep this tool compatible across prerelease changes.
+const agentContext = defineTool({
+  name: "agent_context",
+  title: "Check current Extrovert guidance and release",
+  description: "Read-only freshness check on first Extrovert use each session, after an hour, and after tool/schema errors. Returns the live hosted release, skill digests, signup availability and current guides. Does not update files, authenticate, or widen permissions. Read the returned live guide before relying on installed workflow details.",
+  inputSchema: {},
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  handler: async (_args, { client }) => {
+    const context = await client.agentContext();
+    return ok([
+      `Extrovert ${context.release_version} (${context.channel}). Signup: ${context.signup.status}.`,
+      `Read current guidance: ${context.docs.agent_index}`,
+      ...context.guidance,
+    ].join("\n"), context);
+  },
+});
 
 const whoami = defineTool({
   name: "whoami",
@@ -3383,6 +3400,7 @@ const changeAdministrativeAction = defineTool({
 });
 
 const ALL_TOOLS = [
+  agentContext,
   listAdministrativeActions,
   describeAdministrativeAction,
   readAdministrativeAction,
