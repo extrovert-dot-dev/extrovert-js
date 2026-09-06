@@ -44,12 +44,26 @@ Usage:
                  --summary <reviewer-intent> [--client-id <id>] [--rules-reviewed]
 
 Authentication:
+  Hosted OAuth belongs to your MCP host; call whoami there to verify that session.
+  Local whoami/doctor checks this profile's API credential, which may be different.
+  auth login --with-token reads an agent key or independent ev_credential_... API
+  credential from hidden stdin. Never put secrets in command arguments.
   enroll reads an enrollment key from EXTROVERT_ENROLLMENT_KEY or hidden stdin.
   Use EXTROVERT_PROFILE for separate agent identities. Hermes profiles use their
   HERMES_HOME automatically; EXTROVERT_CONFIG_DIR is an explicit override.
   signup stores only a short-lived pending key; verify atomically replaces it with
   the full key in a permission-restricted local credential file. EXTROVERT_API_KEY
   always takes precedence over the stored credential.
+
+Access and administration:
+  Choose selected inboxes for existing mail, project/org reach for future resources,
+  or explicit Full account control for customer administration. Actions are separate.
+  Full control defaults to 24 hours; refresh never extends that deadline. Until revoked
+  is explicit. Created credentials, including admin credentials, survive independently.
+  Start with 'extrovert admin read adminMe', search actions, then describe exact inputs.
+  Read state before repeating an ambiguous change. Review and separately revoke created
+  access in account > Connections. Do not silently replace an expired credential.
+  Guide: https://docs.extrovert.dev/concepts/connections-and-access/
 
 MCP transport:
   Running extrovert-mcp with no command starts stdio. The official plugin and

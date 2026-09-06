@@ -17,6 +17,15 @@ The MCP package installs `extrovert-mcp` for MCP transports and the `extrovert` 
 authentication, inbox reads, review status, and reviewed sends. OAuth-capable clients can connect directly to the production protected resource
 at `https://mcp.extrovert.dev/mcp`; the browser flow avoids putting an Extrovert key in client config.
 
+Choose [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/) for the
+job: selected inboxes for existing mail, project/organization reach for future resources, or explicit
+Full account control for setup. Full control defaults to 24 hours; refresh never extends it. Created
+credentials, including administrative credentials, survive independently and need separate revocation.
+
+MCP exposes administrative catalog/read/change tools; the CLI provides `admin actions/describe/read/change`,
+and the SDK provides typed `client.administration.call`. Start with `adminMe`, then inspect exact schemas.
+Use API-audience credentials for the SDK/local CLI, and hosted MCP OAuth in the host; they are distinct.
+
 Documentation: [docs.extrovert.dev](https://docs.extrovert.dev)
 
 ## Release model

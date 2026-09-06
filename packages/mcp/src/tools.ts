@@ -762,7 +762,9 @@ const whoami = defineTool({
   description:
     "Confirm that this agent is connected, show the organization and project it acts in, and explain which actions " +
     "this connection is allowed to perform. Use capabilities before attempting a restricted action. " +
-    "Missing access requires the account owner's help, not repeated sign-in attempts. Permissions do not bypass plan limits or mail review.",
+    "Inspect connection identity, resource reach, actions, and expiry separately from inbox ownership. Hosted MCP and local CLI " +
+    "may use different credentials. Reconnect an expired grant through explicit consent; do not silently replace it. " +
+    "Ordinary mail permissions do not grant policy changes; explicit Full account control enables customer administration through the administrative action tools.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (_args, { client }) => {
@@ -827,7 +829,8 @@ const listInboxes = defineTool({
   name: "list_inboxes",
   title: "List inboxes",
   description:
-    "List inboxes visible to this connection, newest first. An empty result describes only its authorized scope. A project " +
+    "List inboxes visible to this connection, newest first. Follow next_cursor with the same filters for more pages. " +
+    "An empty result describes only its authorized scope; a readable inbox missing from a complete matching list is an inconsistency to report, not proof of ownership restrictions. A project " +
     "(default) key lists its agent's inboxes in its project with no extra args. An ORG-tier key " +
     "must pick a breadth: pass `project` (a concrete project id) or `wildcard:true` " +
     "(the whole org subtree); a bare org-key list is rejected (breadth_required).",

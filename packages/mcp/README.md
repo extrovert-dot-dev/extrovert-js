@@ -81,6 +81,11 @@ Existing scoped agent keys remain available for unattended workers. Their scopes
 resource ceiling, expiry, and revocation still apply. Knowing an inbox address
 never grants access. Do not automatically substitute credentials after expiry.
 
+For the complete setup-to-worker handoff, identity comparison, expiry recovery, and list/read
+troubleshooting, see [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/).
+Start administrative discovery with `read_administrative_action {action_id: "adminMe"}`, then search
+and describe the relevant action before passing its exact `path`, `query`, and `body` inputs.
+
 ## Connect with hosted OAuth
 
 Give an OAuth-capable MCP client this URL:
@@ -89,8 +94,8 @@ Give an OAuth-capable MCP client this URL:
 https://mcp.extrovert.dev/mcp
 ```
 
-The endpoint publishes RFC 9728 protected-resource metadata and Clerk authorization-server
-discovery. Compatible clients open the browser sign-in and consent flow, then store and refresh the
+The endpoint publishes RFC 9728 protected-resource metadata and Extrovert authorization-server
+discovery at `https://api.extrovert.dev`. Compatible clients open the browser sign-in and consent flow, then store and refresh the
 grant. Existing scoped `pk_agent_…` bearer keys also work when a client is configured explicitly.
 
 The hosted service runs MCP SDK v2's fresh-server-per-request handler: no process-local session map,
@@ -113,7 +118,7 @@ npx -y @extrovert.dev/mcp@next setup --host claude
 npx -y @extrovert.dev/mcp@next setup --host hermes
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.12` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.13` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 
@@ -199,13 +204,13 @@ pnpm run dev -- --http  # tsx watch, HTTP
 | Variable | Default | Purpose |
 |---|---|---|
 | `EXTROVERT_API_BASE_URL` | `https://api.extrovert.dev` | Base URL of the Extrovert REST API. |
-| `EXTROVERT_API_KEY` | *(empty)* | Scoped agent key (`pk_agent_…`) or enrollment key (`pk_enroll_…`). |
+| `EXTROVERT_API_KEY` | *(empty)* | Scoped agent key (`pk_agent_…`), independent API credential (`ev_credential_…`), or local enrollment key (`pk_enroll_…`). |
 | `EXTROVERT_CONFIG_DIR` | platform config directory | Override the local credential directory. |
 | `EXTROVERT_MOCK` | *(off)* | Set `1` to force offline fixtures. |
 | `EXTROVERT_REQUEST_TIMEOUT_MS` | `30000` | Per-request timeout for non-blocking calls. |
 | `EXTROVERT_MAX_WAIT_MS` | `300000` | Upper bound the server allows `wait_for_email` to block. |
-| `EXTROVERT_MCP_OAUTH_ENABLED` | *(off)* | Require Clerk OAuth or an introspected agent key on HTTP. |
-| `EXTROVERT_MCP_OAUTH_ISSUER` | `https://clerk.extrovert.dev` | Clerk OAuth authorization-server issuer. |
+| `EXTROVERT_MCP_OAUTH_ENABLED` | *(off)* | Require consent-bound Extrovert OAuth or an introspected agent key on HTTP. |
+| `EXTROVERT_MCP_OAUTH_ISSUER` | `https://api.extrovert.dev` | Extrovert OAuth authorization-server issuer. |
 | `EXTROVERT_MCP_PUBLIC_URL` | `https://mcp.extrovert.dev/mcp` | Public RFC 9728 resource identifier. |
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | `--http` bind. |
 
@@ -323,9 +328,11 @@ continue. No polling, no separate "check the inbox" round-trips.
   OAuth is enabled.
 
 Each request gets an isolated server + client and emits no `mcp-session-id`, so requests can land on
-any cluster node. Production requires `Authorization: Bearer …` with either a Clerk OAuth access
-token or an existing scoped `pk_agent_…` key. The OAuth principal and its fixed safe capabilities
-are enforced again by the Extrovert API; the raw bearer token is never persisted by MCP or API.
+any service instance. Hosted MCP requires `Authorization: Bearer …` with an MCP-audience Extrovert
+OAuth access token or an existing scoped `pk_agent_…` key. The API rechecks the grant, expiry,
+revocation, current human roles, and resource/action boundaries. Independent `ev_credential_…`
+credentials are API-only: use them through local stdio/CLI or an SDK, not as hosted MCP bearer tokens.
+The raw bearer token is never persisted by MCP or API.
 
 `EXTROVERT_API_KEY` and unauthenticated fixture mode remain local/self-hosting conveniences only;
 the production service refuses to start without OAuth enabled.
@@ -342,7 +349,7 @@ src/
   server.ts     McpServer factory + instructions
   stdio.ts      stdio transport
   http.ts       stateless Streamable HTTP transport (Express, OAuth + scoped keys)
-  auth.ts       Clerk OAuth verification, RFC discovery, and agent-key introspection
+  auth.ts       consent-bound OAuth exchange, RFC discovery, and agent-key introspection
   tools.ts      manifest-driven tools: zod schemas, annotations, handlers, registration
   client.ts     thin typed Extrovert REST client (one method per /v1 endpoint)
   config.ts     env-driven configuration
