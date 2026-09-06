@@ -1,3 +1,4 @@
+import { Administration } from "./administration.js";
 /**
  * ExtrovertClient - the entry point.
  *
@@ -44,7 +45,8 @@ export const MOCK_BASE_URL = "mock";
 
 export interface ExtrovertClientOptions {
   /**
-   * Scoped agent key (`pk_agent_...`) or, for `enroll`, any bearer credential the server accepts.
+   * Scoped agent key (`pk_agent_...`), API-audience connection token (`ev_access_...`),
+   * or independently issued connection credential (`ev_credential_...`).
    * Falls back to `EXTROVERT_API_KEY` when omitted.
    */
   apiKey?: string;
@@ -83,6 +85,8 @@ function readEnv(name: string): string | undefined {
 const DEFAULT_RETRY: RetryOptions = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 8000 };
 
 export class ExtrovertClient {
+  /** Customer administration; requires explicit full account control. */
+  readonly administration: Administration;
   /** `extrovert.inboxes` - create / list / get / update / delete inboxes. */
   readonly inboxes: Inboxes;
   /** `extrovert.messages` - read a message, reply to it (threaded). */
@@ -147,6 +151,7 @@ export class ExtrovertClient {
 
     if (useMock) {
       this.transport = new MockTransport(options.mockBackend);
+      (this.transport as MockTransport).backend.configureAdministrativeFixture(apiKey);
     } else {
       if (!apiKey) {
         throw new Error(
@@ -171,6 +176,7 @@ export class ExtrovertClient {
       this.transport = new HttpTransport(new HttpClient(config));
     }
 
+    this.administration = new Administration((request) => this.transport.administrativeRequest(request));
     const ctx = { transport: this.transport, handleOptions: this.handleOptions, keyTier: this.keyTier };
     this.inboxes = new Inboxes(ctx);
     this.messages = new Messages(ctx);

@@ -275,17 +275,19 @@ function renderHimalayaConfig(c: MailboxCredentials, accountName?: string): stri
 }
 
 function renderInbox(inbox: Inbox): string {
-  const sender = inbox.sender_verified ? "sender verified" : "sender pending";
+  const sender = inbox.sender_verified === true ? "sender verified"
+    : inbox.sender_verified === false ? "sender not verified" : "sender status unavailable";
+  const domain = inbox.domain || inbox.address.split("@")[1] || "unavailable";
   const lines = [
-    `${inbox.address}  [${inbox.status}]`,
-    `id: ${inbox.id} · domain: ${inbox.domain} (${inbox.onboarding_mode}) · ${sender}`,
+    `${inbox.address}  [${inbox.status ?? "status unavailable"}]`,
+    `id: ${inbox.id} · domain: ${domain}${inbox.onboarding_mode ? ` (${inbox.onboarding_mode})` : ""} · ${sender}`,
   ];
   // Surface the fixed org/project the inbox lives in (RFC D9) when present.
   if (inbox.project_id || inbox.org_id) {
     lines.push(`org: ${inbox.org_id ?? "(none)"} · project: ${inbox.project_id ?? "(none)"}`);
   }
   if (inbox.display_name) lines.push(`display name: ${inbox.display_name}`);
-  lines.push(`daily send limit: ${inbox.daily_send_limit} recipients / rolling 24h`);
+  if (inbox.daily_send_limit !== undefined) lines.push(`daily send limit: ${inbox.daily_send_limit} recipients / rolling 24h`);
   // The policy governs EVERY send from this inbox, so print it: an agent that reads
   // it here composes an intent up front instead of learning the policy by being
   // refused mid-task.
@@ -817,7 +819,7 @@ const createInbox = defineTool({
       project_id: args.project_id,
       client_id: args.client_id,
     });
-    return ok(`Inbox live.\n${renderInbox(inbox)}`, inbox as unknown as Record<string, unknown>);
+    return ok(`Inbox created.\n${renderInbox(inbox)}`, inbox as unknown as Record<string, unknown>);
   },
 });
 
@@ -825,12 +827,14 @@ const listInboxes = defineTool({
   name: "list_inboxes",
   title: "List inboxes",
   description:
-    "List the inboxes this agent owns, newest first. Scope is in the KEY: a project " +
-    "(default) key lists its project's inboxes with no extra args. An ORG-tier key " +
+    "List inboxes visible to this connection, newest first. An empty result describes only its authorized scope. A project " +
+    "(default) key lists its agent's inboxes in its project with no extra args. An ORG-tier key " +
     "must pick a breadth: pass `project` (a concrete project id) or `wildcard:true` " +
     "(the whole org subtree); a bare org-key list is rejected (breadth_required).",
   inputSchema: {
     limit: z.number().int().min(1).max(100).default(20).describe("Max inboxes to return."),
+    cursor: z.string().min(1).optional().describe("Opaque next_cursor from the preceding page."),
+    domain: z.string().min(1).max(253).optional().describe("Filter to an exact domain, such as internal.wild-hockey.com."),
     project: z
       .string()
       .min(1)
@@ -851,15 +855,19 @@ const listInboxes = defineTool({
   handler: async (args, { client }) => {
     const page: Page<Inbox> = await client.listInboxes({
       limit: args.limit,
+      cursor: args.cursor,
+      domain: args.domain,
       project: args.project,
       wildcard: args.wildcard,
     });
     const text = page.items.length
       ? page.items.map(renderInbox).join("\n\n")
-      : "No inboxes yet. Create one with create_inbox.";
-    return ok(`${page.items.length} inbox(es).\n\n${text}`, {
+      : "No inboxes matched this connection’s scope and filters. This does not establish that the account has no inboxes. Use whoami to inspect this connection.";
+    const continuation = page.next_cursor ? `\n\nMore inboxes are available. Call list_inboxes with the same filters and cursor=${JSON.stringify(page.next_cursor)}.` : "";
+    return ok(`${page.items.length} inbox(es) on this page.\n\n${text}${continuation}`, {
       items: page.items,
       total: page.total,
+      has_more: page.has_more,
       next_cursor: page.next_cursor,
     });
   },
@@ -2622,16 +2630,18 @@ const registerWebhook = defineTool({
   description:
     "Register an HTTPS endpoint to receive HMAC-signed inbound-message deliveries. Each delivery carries " +
     "X-Extrovert-Signature: t=<unix>,v1=<hex hmac-sha256 over \"<t>.<rawbody>\">: verify it with the signing secret " +
-    "returned ONCE here. Scope to one inbox with `inbox`, or omit to cover every inbox this agent owns. Defaults to " +
+    "returned ONCE here. Scope to one inbox with `inbox`, or omit to cover the connection's selected inboxes, project, or organization. Legacy keys cover their agent-owned inboxes. Defaults to " +
     "the message.received event; subscribe to unsubscribe.received as well to hear about opt-outs.",
   inputSchema: {
+ org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
+ project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
     url: z.string().url().describe("HTTPS endpoint that receives POSTed deliveries."),
     events: z
       .array(webhookEventEnum)
       .min(1)
       .optional()
       .describe("Event types to subscribe to. Defaults to [message.received]."),
-    inbox: inboxRef.optional().describe("Scope to one owned inbox. Omit to cover all of this agent's inboxes."),
+    inbox: inboxRef.optional().describe("Scope to one owned inbox. Omit to use the connection's resource reach; selected inbox IDs exclude replacements and future inboxes."),
     client_id: z
       .string()
       .min(1)
@@ -2647,7 +2657,7 @@ const registerWebhook = defineTool({
       url: args.url,
       events: args.events,
       inbox: args.inbox,
-      client_id: args.client_id,
+      client_id: args.client_id, org_id: args.org_id, project_id: args.project_id,
     });
     return ok(`Webhook registered.\n${renderWebhook(webhook)}`, webhook as unknown as Record<string, unknown>);
   },
@@ -2656,15 +2666,15 @@ const registerWebhook = defineTool({
 const listWebhooks = defineTool({
   name: "list_webhooks",
   title: "List webhooks",
-  description: "List this agent's registered inbound webhooks. Signing secrets are redacted (only the prefix is shown).",
-  inputSchema: {},
+  description: "List a bounded page of inbound webhooks within this connection's scope. Follow next_cursor with the same org/project selection; a page is not the complete inventory. Signing secrets are redacted (only the prefix is shown).",
+  inputSchema: { limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional(), org_id: z.string().optional(), project_id: z.string().optional() },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (_args, { client }) => {
-    const page: Page<Webhook> = await client.listWebhooks();
+  handler: async (args, { client }) => {
+    const page: Page<Webhook> = await client.listWebhooks(args);
     const text = page.items.length ? page.items.map(renderWebhook).join("\n\n") : "No webhooks registered.";
-    return ok(`${page.items.length} webhook(s).\n\n${text}`, {
+    return ok(`${page.items.length} webhook(s).\n\n${text}${page.next_cursor ? `\nMore webhooks: repeat with cursor ${JSON.stringify(page.next_cursor)} and the same scope.` : ""}`, {
       items: page.items,
-      total: page.total,
+      total: page.total, next_cursor: page.next_cursor, has_more: page.has_more,
     });
   },
 });
@@ -2674,11 +2684,13 @@ const getWebhook = defineTool({
   title: "Get webhook",
   description: "Fetch one registered webhook by id (whk_…). The signing secret is redacted.",
   inputSchema: {
+ org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
+ project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
     id: z.string().min(1).describe("Webhook id (whk_…) from register_webhook / list_webhooks."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
-    const webhook = await client.getWebhook(args.id);
+    const webhook = await client.getWebhook(args.id, { org_id: args.org_id, project_id: args.project_id });
     return ok(renderWebhook(webhook), webhook as unknown as Record<string, unknown>);
   },
 });
@@ -2688,10 +2700,12 @@ const updateWebhook = defineTool({
   title: "Update webhook",
   description:
     "Update a registered webhook in place by id (whk_…). Change the delivery `url`, the subscribed `events`, the " +
-    "`inbox` filter (empty string clears it so the webhook covers every inbox this agent owns), or `active` to " +
+    "`inbox` filter (empty string clears the address filter within the persisted resource boundary), or `active` to " +
     "enable/disable delivery without deleting. Omitted fields are left unchanged. The signing secret is immutable and " +
     "stays redacted. Returns the updated webhook.",
   inputSchema: {
+ org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
+ project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
     id: z.string().min(1).describe("Webhook id (whk_…) from register_webhook / list_webhooks."),
     url: z.string().url().optional().describe("Replace the HTTPS delivery endpoint."),
     events: z
@@ -2702,7 +2716,7 @@ const updateWebhook = defineTool({
     inbox: z
       .string()
       .optional()
-      .describe("Replace the inbox filter. Empty string clears it (covers all of this agent's inboxes)."),
+      .describe("Replace the inbox filter. Empty string clears the address filter without widening a persisted selected-inbox boundary."),
     active: z.boolean().optional().describe("Enable or disable delivery without deleting the webhook."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -2711,7 +2725,7 @@ const updateWebhook = defineTool({
       url: args.url,
       events: args.events,
       inbox: args.inbox,
-      active: args.active,
+      active: args.active, org_id: args.org_id, project_id: args.project_id,
     });
     return ok(`Webhook updated.\n${renderWebhook(webhook)}`, webhook as unknown as Record<string, unknown>);
   },
@@ -2722,11 +2736,13 @@ const deleteWebhook = defineTool({
   title: "Delete webhook",
   description: "Delete a registered webhook by id (whk_…). Deliveries stop immediately. This cannot be undone.",
   inputSchema: {
+ org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
+ project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
     id: z.string().min(1).describe("Webhook id (whk_…) to delete."),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
-    const result = await client.deleteWebhook(args.id);
+    const result = await client.deleteWebhook(args.id, { org_id: args.org_id, project_id: args.project_id });
     return ok(`Deleted webhook ${result.id}.`, result as unknown as Record<string, unknown>);
   },
 });
@@ -3310,7 +3326,64 @@ const streamInfo = defineTool({
 // Registration
 // ---------------------------------------------------------------------------
 
+const listAdministrativeActions = defineTool({
+  name: "list_administrative_actions",
+  title: "Find administrative actions",
+  description: "Search the customer administration catalog by task (projects, agents, credentials, billing, review policy, approvals, connections). This reads local API metadata, not account data. Full account control must be explicitly granted before executing actions. Follow next_cursor to see more matches; inspect an action before calling it.",
+  inputSchema: { search: z.string().max(200).optional(), mode: z.enum(["read", "change"]).optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional() },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  async handler(args, { client }) {
+    const page = client.administration.list(args);
+    return ok(JSON.stringify(page, null, 2), page);
+  },
+});
+
+const describeAdministrativeAction = defineTool({
+  name: "describe_administrative_action",
+  title: "Inspect an administrative action",
+  description: "Get the exact input JSON Schema, read/change classification, and authority required for an action_id from list_administrative_actions. All schema references are included. Supply parameters under path and query and JSON under body. Never guess an organization, project, connection, or agent ID.",
+  inputSchema: { action_id: z.string().min(1) },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  async handler({ action_id }, { client }) {
+    const action = client.administration.describe(action_id);
+    return ok(JSON.stringify(action, null, 2), action);
+  },
+});
+
+const administrativeInput = {
+  action_id: z.string().min(1),
+  path: z.record(z.string(), z.string()).optional().describe("Named URL path parameters from the action schema."),
+  query: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  body: z.unknown().optional().describe("Exact JSON request body from describe_administrative_action; omit for reads."),
+};
+const readAdministrativeAction = defineTool({
+  name: "read_administrative_action",
+  title: "Read administrative account data",
+  description: "Execute a documented GET action under explicitly granted full account control. Start with adminMe to discover currently administered organizations and projects. Inputs are checked against the action schema. Returns the API response and its opaque list cursor. It cannot execute changes. Private platform access is excluded.",
+  inputSchema: administrativeInput,
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  async handler({ action_id, ...input }, { client }) {
+    const result = await client.runAdministrativeAction(action_id, input, "read");
+    return ok(JSON.stringify(result ?? null, null, 2), { action_id, result: result ?? null });
+  },
+});
+const changeAdministrativeAction = defineTool({
+  name: "change_administrative_action",
+  title: "Perform an administrative action",
+  description: "Execute a documented customer administrative change under explicitly granted full account control: configure resources and policy, approve reviews or purchases, create independent credentials, or revoke access. Inspect its schema first. Current human roles remain the ceiling; actions are attributed to the delegated connection. Created credentials (including admin credentials) survive this connection's expiry or revocation and require separate revocation. Raw credentials are returned only once: keep them private and store securely. Changes are not automatically retried; resolve ambiguous results by reading state before repeating. Private platform access is excluded.",
+  inputSchema: administrativeInput,
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  async handler({ action_id, ...input }, { client }) {
+    const result = await client.runAdministrativeAction(action_id, input, "change");
+    return ok(JSON.stringify(result ?? null, null, 2), { action_id, result: result ?? null });
+  },
+});
+
 const ALL_TOOLS = [
+  listAdministrativeActions,
+  describeAdministrativeAction,
+  readAdministrativeAction,
+  changeAdministrativeAction,
   redeemEnrollment,
   signUp,
   verifySignup,

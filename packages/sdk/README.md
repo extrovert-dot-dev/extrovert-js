@@ -30,7 +30,7 @@ for a stable release:
 npm install @extrovert.dev/sdk@next
 ```
 
-Pin `@extrovert.dev/sdk@0.1.0-pre.10` when a dogfood test needs a reproducible contract snapshot.
+Pin `@extrovert.dev/sdk@0.1.0-pre.11` when a dogfood test needs a reproducible contract snapshot.
 Requires Node 18+ for global `fetch` and Web Crypto.
 
 ## Build and use from source
@@ -529,7 +529,7 @@ a wire protocol (there is no `/v1/contract` endpoint).
 ```ts
 import { CONTRACT_VERSION, CONTRACT_MANIFEST } from "@extrovert.dev/sdk";
 
-CONTRACT_VERSION;            // "0.1.0-pre.10": provisional, pre-1.0; pin it
+CONTRACT_VERSION;            // "0.1.0-pre.11": provisional, pre-1.0; pin it
 CONTRACT_MANIFEST.stability; // "provisional"
 CONTRACT_MANIFEST.core_shapes; // ["ReviewIntent","ReviewFeedback","DiffJson","Rule","ReviewEvent"]
 ```
@@ -550,7 +550,7 @@ page and the agent skills (`extrovert-send-email`, `extrovert-writing-rules`).
 The Review-Loop shapes are an **open, documented contract: versioned *with* this SDK** (not a wire
 protocol; there is no `/v1/contract` endpoint). Three guarantees:
 
-- **One version, everywhere.** `CONTRACT_VERSION` is **`0.1.0-pre.10`**, reconciled across the SDK package
+- **One version, everywhere.** `CONTRACT_VERSION` is **`0.1.0-pre.11`**, reconciled across the SDK package
   version, the MCP server, and the OpenAPI `info.version`. Pin it; pin `CONTRACT_MANIFEST` for the
   exact shape set you built against.
 - **Named, documented types.** The five canonical shapes: `ReviewIntent`, `ReviewFeedback`,
@@ -581,7 +581,7 @@ EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
 
 ## Status
 
-> **Note.** This source SDK tracks the `/v1` contract at `CONTRACT_VERSION` `0.1.0-pre.10`: a
+> **Note.** This source SDK tracks the `/v1` contract at `CONTRACT_VERSION` `0.1.0-pre.11`: a
 > deliberate **prerelease**, pre-1.0, expect additive change. The offline `mock` transport models the
 > live server closely enough to reproduce a 422 `intent_required` and a queued review, so build and
 > test against it before you have a key. Install from the `next` tag until a stable release is cut.
@@ -589,3 +589,30 @@ EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
 ---
 
 MIT © Message Science. *A side gate for agents.*
+
+## Explicitly delegated administration
+
+Use an API-audience connection token or independently issued `ev_credential_...` credential with
+explicit Full account control. Ordinary `pk_agent_...` keys do not grant administration.
+
+```ts
+const client = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY });
+const identity = await client.administration.call("adminMe", {});
+const actions = client.administration.list({ search: "project", limit: 10 });
+const schema = client.administration.describe("createProject");
+// Use an organization returned by adminMe and the requested project name.
+const project = await client.administration.call("createProject", {
+  path: { org_id: organizationId },
+  body: { name: "Support", slug: "support" },
+});
+```
+
+Inputs and outputs are typed from the customer OpenAPI contract. Read state after an ambiguous
+mutation result; mutations are not automatically retried. Current human roles remain the ceiling
+and private platform access is excluded. The original full-control connection expires after
+24 hours by default; refresh does not extend it. Credentials it creates, including admin
+credentials, survive independently and require separate revocation.
+
+For offline catalog and project-creation demos, pass `transport: "mock"` and the exported
+`ADMINISTRATIVE_FIXTURE_KEY` as `apiKey`. Other administrative execution fixtures fail explicitly;
+use a test HTTP server through the custom `fetch` option to test additional workflows.

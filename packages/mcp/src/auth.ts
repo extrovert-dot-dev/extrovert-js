@@ -1,4 +1,3 @@
-import { createClerkClient, type AuthObject } from "@clerk/backend";
 import {
   OAuthError,
   OAuthErrorCode,
@@ -7,50 +6,35 @@ import {
   type OAuthTokenVerifier,
 } from "@modelcontextprotocol/server";
 
-const DEFAULT_ISSUER = "https://clerk.extrovert.dev";
+const DEFAULT_ISSUER = "https://api.extrovert.dev";
 const DEFAULT_PUBLIC_URL = "https://mcp.extrovert.dev/mcp";
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const AGENT_KEY_ATTESTATION_SECONDS = 300;
-
-type ClerkOAuthAuth = Extract<AuthObject, { tokenType: "oauth_token"; isAuthenticated: true }>;
-
-interface ClerkRequestState {
-  isAuthenticated: boolean;
-  toAuth(): unknown;
-}
-
-interface ClerkOAuthClient {
-  authenticateRequest(
-    request: Request,
-    options: { acceptsToken: "oauth_token" },
-  ): Promise<ClerkRequestState>;
-}
 
 export interface HostedAuthConfig {
   issuer: URL;
   resourceUrl: URL;
   serviceDocumentationUrl: URL;
   scopesSupported: string[];
-  clerkSecretKey: string;
-  clerkPublishableKey: string;
+  exchangeSecret: string;
 }
 
 export interface ExtrovertTokenVerifierOptions {
-  clerk: ClerkOAuthClient;
+  exchangeSecret: string;
   resourceUrl: URL;
   apiBaseUrl: string;
   fetch?: typeof fetch;
 }
 
-/** Verify Clerk OAuth tokens and existing scoped Extrovert agent keys. */
+/** Verify explicit connection grants and existing scoped Extrovert agent keys. */
 export class ExtrovertTokenVerifier implements OAuthTokenVerifier {
-  private readonly clerk: ClerkOAuthClient;
+  private readonly exchangeSecret: string;
   private readonly resourceUrl: URL;
   private readonly apiBaseUrl: string;
   private readonly doFetch: typeof fetch;
 
   constructor(options: ExtrovertTokenVerifierOptions) {
-    this.clerk = options.clerk;
+    this.exchangeSecret = options.exchangeSecret;
     this.resourceUrl = options.resourceUrl;
     this.apiBaseUrl = options.apiBaseUrl.replace(/\/+$/, "");
     this.doFetch = options.fetch ?? fetch;
@@ -58,44 +42,55 @@ export class ExtrovertTokenVerifier implements OAuthTokenVerifier {
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     if (token.startsWith("pk_agent_")) return this.verifyAgentKey(token);
-    if (token.startsWith("pk_enroll_")) {
-      throw invalidToken("Enrollment tokens cannot authenticate the hosted MCP endpoint");
+    if (!token.startsWith("ev_access_")) {
+      throw invalidToken("Reconnect through your MCP host to choose explicit access. Legacy sign-ins and API-only credentials cannot authenticate this resource.");
     }
-
-    const request = new Request(this.resourceUrl, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    let state: ClerkRequestState;
+    if (this.exchangeSecret.length < 32) throw invalidToken("Connection verification is not configured");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DISCOVERY_TIMEOUT_MS);
     try {
-      state = await this.clerk.authenticateRequest(request, {
-        acceptsToken: "oauth_token",
+      const response = await this.doFetch(`${this.apiBaseUrl}/oauth/exchange`, {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${Buffer.from(`extrovert-mcp:${this.exchangeSecret}`).toString("base64")}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          subject_token: token,
+          resource: this.apiBaseUrl,
+        }).toString(),
+        signal: controller.signal,
+        redirect: "error",
       });
-    } catch {
-      throw invalidToken("OAuth access token verification failed");
+      if (!response.ok) throw invalidToken("Connection access is invalid, expired, or revoked. Reconnect to choose access again.");
+      const body = await response.json() as Record<string, unknown>;
+      const apiToken = requiredString(body.access_token);
+      const clientId = requiredString(body.client_id);
+      const connectionId = requiredString(body.connection_id);
+      const seconds = body.expires_in;
+      if (!apiToken.startsWith("ev_access_") || !clientId || !connectionId ||
+          body.token_type !== "Bearer" || body.resource !== this.apiBaseUrl ||
+          typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds <= 0 || seconds > 600 ||
+          typeof body.scope !== "string" || !body.scope.trim()) {
+        throw invalidToken("Connection verification returned an invalid grant");
+      }
+      return {
+        token, clientId,
+        scopes: body.scope.trim().split(/\s+/),
+        expiresAt: Math.floor(Date.now() / 1000) + seconds,
+        resource: this.resourceUrl,
+        // Private request context only. The MCP bearer is never forwarded to
+        // business endpoints, and the exchanged bearer is never returned to the host.
+        extra: { tokenType: "connection", connectionId, apiToken },
+      };
+    } catch (error) {
+      if (OAuthError.isInstance(error)) throw error;
+      throw invalidToken("Connection verification is unavailable");
+    } finally {
+      clearTimeout(timeout);
     }
-    if (!state.isAuthenticated) throw invalidToken("OAuth access token is invalid or expired");
-    const auth = state.toAuth();
-    if (!isClerkOAuthAuth(auth)) {
-      throw invalidToken("Sign-in could not be connected to Extrovert. Run the connection check in your MCP host; if it persists, contact support with the response request ID.");
-    }
-    const expiresAt = jwtExpiry(token);
-    if (expiresAt === undefined || expiresAt <= Math.floor(Date.now() / 1000)) {
-      // Production is deliberately configured for Clerk JWT access tokens. The
-      // MCP bearer gate requires a concrete expiry and must not invent one.
-      throw invalidToken("This sign-in has expired or has no valid expiry. Reconnect using your MCP host's sign-in command.");
-    }
-    return {
-      token,
-      clientId: auth.clientId,
-      scopes: auth.scopes,
-      expiresAt,
-      resource: this.resourceUrl,
-      extra: {
-        tokenType: "oauth_token",
-        userId: auth.userId,
-        subject: auth.subject,
-      },
-    };
   }
 
   private async verifyAgentKey(token: string): Promise<AuthInfo> {
@@ -139,19 +134,14 @@ export function loadHostedAuthConfig(env: NodeJS.ProcessEnv = process.env): Host
   const serviceDocumentationUrl = new URL(
     (env.EXTROVERT_MCP_DOCUMENTATION_URL ?? "https://docs.extrovert.dev/mcp/overview/").trim(),
   );
-  const clerkSecretKey = (env.CLERK_SECRET_KEY ?? "").trim();
-  const clerkPublishableKey = (
-    env.CLERK_PUBLISHABLE_KEY ??
-    env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??
-    ""
-  ).trim();
-  if (!clerkSecretKey || !clerkPublishableKey) {
-    throw new Error("hosted MCP OAuth requires CLERK_SECRET_KEY and CLERK_PUBLISHABLE_KEY");
+  const exchangeSecret = (env.EXTROVERT_CONNECTION_EXCHANGE_SECRET ?? "").trim();
+  if (exchangeSecret.length < 32) {
+    throw new Error("hosted MCP OAuth requires EXTROVERT_CONNECTION_EXCHANGE_SECRET (at least 32 characters)");
   }
   if (issuer.protocol !== "https:" || resourceUrl.protocol !== "https:") {
     throw new Error("hosted MCP OAuth issuer and resource URL must use HTTPS");
   }
-  const scopesSupported = (env.EXTROVERT_MCP_OAUTH_SCOPES ?? "openid profile email")
+  const scopesSupported = (env.EXTROVERT_MCP_OAUTH_SCOPES ?? "extrovert:connect")
     .split(/[\s,]+/)
     .map((scope) => scope.trim())
     .filter(Boolean);
@@ -160,8 +150,7 @@ export function loadHostedAuthConfig(env: NodeJS.ProcessEnv = process.env): Host
     resourceUrl,
     serviceDocumentationUrl,
     scopesSupported,
-    clerkSecretKey,
-    clerkPublishableKey,
+    exchangeSecret,
   };
 }
 
@@ -170,10 +159,7 @@ export function createHostedTokenVerifier(
   apiBaseUrl: string,
 ): ExtrovertTokenVerifier {
   return new ExtrovertTokenVerifier({
-    clerk: createClerkClient({
-      secretKey: config.clerkSecretKey,
-      publishableKey: config.clerkPublishableKey,
-    }),
+    exchangeSecret: config.exchangeSecret,
     resourceUrl: config.resourceUrl,
     apiBaseUrl,
   });
@@ -205,34 +191,6 @@ export async function discoverOAuthMetadata(
     return metadata as OAuthMetadata;
   } finally {
     clearTimeout(timeout);
-  }
-}
-
-function isClerkOAuthAuth(value: unknown): value is ClerkOAuthAuth {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<ClerkOAuthAuth>;
-  return (
-    candidate.isAuthenticated === true &&
-    candidate.tokenType === "oauth_token" &&
-    typeof candidate.subject === "string" &&
-    Array.isArray(candidate.scopes) &&
-    typeof candidate.userId === "string" && candidate.userId.length > 0 &&
-    typeof candidate.clientId === "string" && candidate.clientId.length > 0
-  );
-}
-
-function jwtExpiry(token: string): number | undefined {
-  const payload = token.split(".")[1];
-  if (!payload) return undefined;
-  try {
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-      exp?: unknown;
-    };
-    return typeof decoded.exp === "number" && Number.isSafeInteger(decoded.exp)
-      ? decoded.exp
-      : undefined;
-  } catch {
-    return undefined;
   }
 }
 

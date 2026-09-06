@@ -1,3 +1,4 @@
+import type { ListWebhooksParams, ConnectionResourceSelection } from "../models.js";
 /**
  * Resource namespaces: `extrovert.inboxes`, `extrovert.messages`, `extrovert.threads`,
  * `extrovert.webhooks`, `extrovert.contactLists`, `extrovert.domains`. Each is a thin,
@@ -309,13 +310,15 @@ export class Webhooks {
   }
 
   /** List registered webhooks (the one-time signing `secret` is omitted). */
-  list(signal?: AbortSignal): Promise<Page<Webhook>> {
-    return this.ctx.transport.listWebhooks(signal);
+  list(paramsOrSignal: ListWebhooksParams | AbortSignal = {}, signal?: AbortSignal): Promise<Page<Webhook>> {
+    if ("aborted" in paramsOrSignal) return this.ctx.transport.listWebhooks(paramsOrSignal);
+    return this.ctx.transport.listWebhooks(signal, paramsOrSignal);
   }
 
   /** Fetch one webhook by id (the signing `secret` is omitted). */
-  get(webhookId: string, signal?: AbortSignal): Promise<Webhook> {
-    return this.ctx.transport.getWebhook(webhookId, signal);
+  get(webhookId: string, selectionOrSignal: ConnectionResourceSelection | AbortSignal = {}, signal?: AbortSignal): Promise<Webhook> {
+    if ("aborted" in selectionOrSignal) return this.ctx.transport.getWebhook(webhookId, selectionOrSignal);
+    return this.ctx.transport.getWebhook(webhookId, signal, selectionOrSignal);
   }
 
   /**
@@ -329,8 +332,9 @@ export class Webhooks {
   }
 
   /** Delete a webhook by id. */
-  delete(webhookId: string, signal?: AbortSignal): Promise<void> {
-    return this.ctx.transport.deleteWebhook(webhookId, signal);
+  delete(webhookId: string, selectionOrSignal: ConnectionResourceSelection | AbortSignal = {}, signal?: AbortSignal): Promise<void> {
+    if ("aborted" in selectionOrSignal) return this.ctx.transport.deleteWebhook(webhookId, selectionOrSignal);
+    return this.ctx.transport.deleteWebhook(webhookId, signal, selectionOrSignal);
   }
 }
 

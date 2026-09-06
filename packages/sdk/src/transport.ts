@@ -1,3 +1,6 @@
+import type { ListWebhooksParams, ConnectionResourceSelection } from "./models.js";
+import type { AdministrativeRequest } from "./administration.js";
+import { normalizeInboxPage } from "./inbox-page.js";
 /**
  * Transport abstraction.
  *
@@ -111,6 +114,7 @@ export interface AttachmentDownload {
 
 /** The RPC surface every transport implements. One method per spec §8 endpoint. */
 export interface Transport {
+  administrativeRequest(request: AdministrativeRequest): Promise<unknown>;
   enroll(req: EnrollRequest, signal?: AbortSignal): Promise<EnrollResponse>;
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse>;
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse>;
@@ -190,10 +194,10 @@ export interface Transport {
     signal?: AbortSignal,
   ): Promise<WaitForEmailResult>;
   registerWebhook(req: RegisterWebhookRequest, signal?: AbortSignal): Promise<Webhook>;
-  listWebhooks(signal?: AbortSignal): Promise<Page<Webhook>>;
-  getWebhook(webhookId: string, signal?: AbortSignal): Promise<Webhook>;
+  listWebhooks(signal?: AbortSignal, params?: ListWebhooksParams): Promise<Page<Webhook>>;
+  getWebhook(webhookId: string, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<Webhook>;
   updateWebhook(webhookId: string, req: UpdateWebhookRequest, signal?: AbortSignal): Promise<Webhook>;
-  deleteWebhook(webhookId: string, signal?: AbortSignal): Promise<void>;
+  deleteWebhook(webhookId: string, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<void>;
   addContactListEntry(
     address: string,
     req: AddContactListRequest,
@@ -371,6 +375,13 @@ function forwardBody(req: ForwardRequest): Record<string, unknown> {
 export class HttpTransport implements Transport {
   constructor(private readonly http: HttpClient) {}
 
+  async administrativeRequest(request: AdministrativeRequest): Promise<unknown> {
+    const options = { method: request.method, path: request.path, query: request.query, body: request.body, signal: request.signal, retryable: request.method === "GET" };
+    if (request.responseFormat !== "binary") return this.http.request(options);
+    const result = await this.http.request<BinaryResponse>({ ...options, binary: true });
+    return { content_type: result.contentType, content_base64: bytesToBase64(result.bytes), filename: filenameFromDisposition(result.contentDisposition) };
+  }
+
   private encodeAddress(address: string): string {
     return encodeURIComponent(address);
   }
@@ -406,21 +417,8 @@ export class HttpTransport implements Transport {
   }
 
   async listInboxes(params: ListInboxesParams, signal?: AbortSignal): Promise<Page<Inbox>> {
-    // The bare GET /v1/inboxes returns the legacy `{inboxes, next_page}` shape (frozen
-    // OpenAPI listInboxes), NOT the `{items, total, next_cursor}` Page envelope. Remap
-    // it here so `page.items` / `page.next_cursor` are populated against the live API
-    // (`inboxes` and `next_page` are dropped raw otherwise). Mirrors the MCP client.
-    const raw = await this.call<{
-      inboxes?: Inbox[];
-      items?: Inbox[];
-      next_page?: string;
-      next_cursor?: string;
-    }>({ method: "GET", path: "/v1/inboxes", query: { ...params }, signal });
-    const items = raw.inboxes ?? raw.items ?? [];
-    const page: Page<Inbox> = { items, total: items.length };
-    const cursor = raw.next_cursor ?? raw.next_page;
-    if (cursor) page.next_cursor = cursor;
-    return page;
+    const raw = await this.call<unknown>({ method: "GET", path: "/v1/inboxes", query: { ...params }, signal });
+    return normalizeInboxPage<Inbox>(raw);
   }
 
   getInbox(address: string, signal?: AbortSignal): Promise<Inbox> {
@@ -469,6 +467,7 @@ export class HttpTransport implements Transport {
         limit: params.limit,
         cursor: params.cursor,
         include: serializeInclude(params.include),
+        domain: params.domain,
       },
       signal,
     });
@@ -711,28 +710,25 @@ export class HttpTransport implements Transport {
   }
 
   registerWebhook(req: RegisterWebhookRequest, signal?: AbortSignal): Promise<Webhook> {
-    return this.call({ method: "POST", path: "/v1/webhooks", body: req, idempotencyKey: req.client_id, signal });
+    const { org_id, project_id, ...body } = req;
+    return this.call({ method: "POST", path: "/v1/webhooks", query: { org_id, project_id }, body, idempotencyKey: req.client_id, signal });
   }
 
-  listWebhooks(signal?: AbortSignal): Promise<Page<Webhook>> {
-    return this.call({ method: "GET", path: "/v1/webhooks", signal });
+  async listWebhooks(signal?: AbortSignal, params: ListWebhooksParams = {}): Promise<Page<Webhook>> {
+    return normalizeInboxPage<Webhook>(await this.call({ method: "GET", path: "/v1/webhooks", query: { ...params }, signal }), "webhook");
   }
 
-  getWebhook(webhookId: string, signal?: AbortSignal): Promise<Webhook> {
-    return this.call({ method: "GET", path: `/v1/webhooks/${encodeURIComponent(webhookId)}`, signal });
+  getWebhook(webhookId: string, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<Webhook> {
+    return this.call({ method: "GET", path: `/v1/webhooks/${encodeURIComponent(webhookId)}`, query: { ...selection }, signal });
   }
 
   updateWebhook(webhookId: string, req: UpdateWebhookRequest, signal?: AbortSignal): Promise<Webhook> {
-    return this.call({
-      method: "PATCH",
-      path: `/v1/webhooks/${encodeURIComponent(webhookId)}`,
-      body: req,
-      signal,
-    });
+    const { org_id, project_id, ...body } = req;
+    return this.call({ method: "PATCH", path: `/v1/webhooks/${encodeURIComponent(webhookId)}`, query: { org_id, project_id }, body, signal });
   }
 
-  async deleteWebhook(webhookId: string, signal?: AbortSignal): Promise<void> {
-    await this.call({ method: "DELETE", path: `/v1/webhooks/${encodeURIComponent(webhookId)}`, signal });
+  async deleteWebhook(webhookId: string, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<void> {
+    await this.call({ method: "DELETE", path: `/v1/webhooks/${encodeURIComponent(webhookId)}`, query: { ...selection }, signal });
   }
 
   addContactListEntry(
@@ -1193,6 +1189,10 @@ export class MockTransport implements Transport {
     this.backend = backend ?? new MockBackend();
   }
 
+  async administrativeRequest(request: AdministrativeRequest): Promise<unknown> {
+    return this.backend.administrativeRequest(request);
+  }
+
   async enroll(req: EnrollRequest): Promise<EnrollResponse> {
     return this.backend.enroll(req);
   }
@@ -1359,22 +1359,27 @@ export class MockTransport implements Transport {
     return this.backend.waitForEmail(address, req);
   }
   async registerWebhook(req: RegisterWebhookRequest): Promise<Webhook> {
+    assertWebhookFixtureSelection(req);
     return this.backend.registerWebhook(req);
   }
-  async listWebhooks(): Promise<Page<Webhook>> {
-    return this.backend.listWebhooks();
+  async listWebhooks(_signal?: AbortSignal, params: ListWebhooksParams = {}): Promise<Page<Webhook>> {
+    assertWebhookFixtureSelection(params);
+    return this.backend.listWebhooks(params);
   }
-  async getWebhook(webhookId: string): Promise<Webhook> {
+  async getWebhook(webhookId: string, _signal?: AbortSignal, selection: ConnectionResourceSelection = {}): Promise<Webhook> {
+    assertWebhookFixtureSelection(selection);
     const hook = this.backend.getWebhook(webhookId);
     if (!hook) throw notFound("webhook", webhookId);
     return hook;
   }
   async updateWebhook(webhookId: string, req: UpdateWebhookRequest): Promise<Webhook> {
+    assertWebhookFixtureSelection(req);
     const hook = this.backend.updateWebhook(webhookId, req);
     if (!hook) throw notFound("webhook", webhookId);
     return hook;
   }
-  async deleteWebhook(webhookId: string): Promise<void> {
+  async deleteWebhook(webhookId: string, _signal?: AbortSignal, selection: ConnectionResourceSelection = {}): Promise<void> {
+    assertWebhookFixtureSelection(selection);
     if (!this.backend.deleteWebhook(webhookId)) throw notFound("webhook", webhookId);
   }
   async addContactListEntry(address: string, req: AddContactListRequest): Promise<ContactListEntry> {
@@ -1626,4 +1631,8 @@ function bytesToBase64(bytes: Uint8Array): string {
 function filenameFromDisposition(disposition: string): string {
   const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
   return m ? decodeURIComponent(m[1]!.trim()) : "";
+}
+
+function assertWebhookFixtureSelection(selection: ConnectionResourceSelection): void {
+  if (selection.org_id || selection.project_id) throw new Error("Offline webhook fixtures do not simulate organization/project selection; use live credentials for scoped checks.");
 }

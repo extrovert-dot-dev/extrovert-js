@@ -1,3 +1,6 @@
+import type { ListWebhooksParams, ConnectionResourceSelection } from "./types.js";
+import { Administration, type AdministrativeInput, type AdministrativeMode } from "./administration.js";
+import { normalizeInboxPage } from "./inbox-page.js";
 import type { ListCategoriesParams } from "./types.js";
 /**
  * Thin, typed Extrovert API client.
@@ -13,7 +16,7 @@ import type { ListCategoriesParams } from "./types.js";
 
 import type { ExtrovertConfig } from "./config.js";
 import { FixtureStore, NotFoundError } from "./fixtures.js";
-import { keyTierFromRawKey, listEnvelopeToPage } from "./types.js";
+import { keyTierFromRawKey } from "./types.js";
 import type {
   LearnReviewRuleRequest, LearnedReviewRule,
   Attachment,
@@ -144,7 +147,7 @@ export interface CreateInboxInput {
   client_id?: string;
 }
 
-export interface RegisterWebhookInput {
+export interface RegisterWebhookInput extends ConnectionResourceSelection {
   url: string;
   events?: WebhookEvent[];
   inbox?: string;
@@ -609,6 +612,15 @@ export interface ExtrovertClientOptions {
 }
 
 export class ExtrovertClient {
+  readonly administration = new Administration(async (request) => {
+    if (this.store) return this.store.administrativeRequest(request);
+    if (request.responseFormat === "binary") return this.getBinary(request.path, request.query, request.signal);
+    return this.request(request.method, request.path, request.body, request.query, undefined, undefined, request.signal);
+  });
+
+  runAdministrativeAction(id: string, input: AdministrativeInput, mode: AdministrativeMode): Promise<unknown> {
+    return this.administration.run(id, input, mode);
+  }
   private readonly store?: FixtureStore;
   private apiKey: string;
   private durableCredentialStatus: DurableCredentialPersistenceStatus = {
@@ -626,6 +638,7 @@ export class ExtrovertClient {
     if (config.mock) {
       this.store = new FixtureStore({
         keyTier: keyTierFromRawKey(config.apiKey),
+        administrativeCredential: config.apiKey,
         reviewPolicy: config.mockReviewPolicy,
       });
     }
@@ -731,7 +744,7 @@ export class ExtrovertClient {
    *    project-prefixed envelope `GET /v1/projects/{project_id}/inboxes` (the §5.2
    *    `{object:"list", data, has_more, next_cursor}` shape) when a project is
    *    resolved; otherwise the bare `/v1/inboxes` curl-sugar form (which resolves
-   *    to the key's default project and returns the legacy `{inboxes, next_page}`).
+   *    to the key's default project and returns the canonical list envelope).
    *  - org key → MUST pick a breadth: pass `project` (a concrete id) or
    *    `wildcard:true` (`/v1/projects/-/inboxes`, the org subtree). A bare org-key
    *    list is a 400 `breadth_required` (mirrors the server choke-point) - we fail
@@ -740,12 +753,13 @@ export class ExtrovertClient {
    * Either wire shape is normalized into the internal {@link Page}.
    */
   async listInboxes(
-    opts: { limit?: number; project?: string; wildcard?: boolean; cursor?: string } | number = {},
+    opts: { limit?: number; project?: string; wildcard?: boolean; cursor?: string; domain?: string } | number = {},
   ): Promise<Page<Inbox>> {
     // Back-compat: a bare number is the page limit.
     const o = typeof opts === "number" ? { limit: opts } : opts;
     const limit = o.limit ?? 20;
-    if (this.store) return this.store.listInboxes({ limit, project: o.project, wildcard: o.wildcard });
+    if (o.project && o.wildcard) throw new ExtrovertApiError("Choose project or wildcard, not both.", 400, "invalid");
+    if (this.store) return this.store.listInboxes({ ...o, limit });
 
     const tier = this.keyTier();
     // Resolve the project segment for the canonical envelope form.
@@ -755,9 +769,9 @@ export class ExtrovertClient {
       // (server enforces; we let the server be authoritative and just call it).
       const list = await this.get<List<Inbox>>(
         `/v1/projects/${encodeURIComponent(projectSegment)}/inboxes`,
-        { limit, cursor: o.cursor },
+        { limit, cursor: o.cursor, domain: o.domain },
       );
-      return listEnvelopeToPage(list);
+      return normalizeInboxPage<Inbox>(list);
     }
     if (tier === "org") {
       // Bare list under an org key needs an explicit breadth (RFC D2 / §4.1).
@@ -768,16 +782,8 @@ export class ExtrovertClient {
         "breadth_required",
       );
     }
-    // project/inbox key, bare sugar → the legacy {inboxes, next_page} shape.
-    const raw = await this.get<{ inboxes?: Inbox[]; items?: Inbox[]; next_page?: string; next_cursor?: string }>(
-      "/v1/inboxes",
-      { limit },
-    );
-    const items = raw.inboxes ?? raw.items ?? [];
-    const page: Page<Inbox> = { items };
-    const cursor = raw.next_cursor ?? raw.next_page;
-    if (cursor) page.next_cursor = cursor;
-    return page;
+    const raw = await this.get<unknown>("/v1/inboxes", { limit, cursor: o.cursor, domain: o.domain });
+    return normalizeInboxPage<Inbox>(raw);
   }
 
   /** The ceiling tier encoded in the current session's agent key (redesign §3.1). */
@@ -1618,6 +1624,7 @@ export class ExtrovertClient {
    */
   async registerWebhook(input: RegisterWebhookInput): Promise<Webhook> {
     if (this.store) {
+      assertWebhookFixtureSelection(input);
       return this.store.registerWebhook({
         url: input.url,
         events: input.events,
@@ -1625,29 +1632,29 @@ export class ExtrovertClient {
         clientId: input.client_id,
       });
     }
-    return this.post<Webhook>(
-      "/v1/webhooks",
+    return this.request<Webhook>(
+      "POST", "/v1/webhooks",
       {
         url: input.url,
         events: input.events,
         inbox: input.inbox,
         client_id: input.client_id,
       },
-      undefined,
+      { org_id: input.org_id, project_id: input.project_id }, undefined,
       idempotencyHeader(input.client_id),
     );
   }
 
   /** List registered webhooks (`GET /v1/webhooks`); secrets are redacted. */
-  async listWebhooks(): Promise<Page<Webhook>> {
-    if (this.store) return this.store.listWebhooks();
-    return this.get<Page<Webhook>>("/v1/webhooks");
+  async listWebhooks(params: ListWebhooksParams = {}): Promise<Page<Webhook>> {
+    if (this.store) { assertWebhookFixtureSelection(params); return this.store.listWebhooks(params); }
+    return normalizeInboxPage<Webhook>(await this.get("/v1/webhooks", { ...params }), "webhook");
   }
 
   /** Get one webhook by id (`GET /v1/webhooks/{id}`); secret redacted. */
-  async getWebhook(id: string): Promise<Webhook> {
-    if (this.store) return this.store.getWebhook(id);
-    return this.get<Webhook>(`/v1/webhooks/${encodeURIComponent(id)}`);
+  async getWebhook(id: string, selection: ConnectionResourceSelection = {}): Promise<Webhook> {
+    if (this.store) { assertWebhookFixtureSelection(selection); return this.store.getWebhook(id); }
+    return this.get<Webhook>(`/v1/webhooks/${encodeURIComponent(id)}`, { ...selection });
   }
 
   /**
@@ -1657,21 +1664,21 @@ export class ExtrovertClient {
    */
   async updateWebhook(
     id: string,
-    input: { url?: string; events?: WebhookEvent[]; inbox?: string; active?: boolean },
+    input: { url?: string; events?: WebhookEvent[]; inbox?: string; active?: boolean } & ConnectionResourceSelection,
   ): Promise<Webhook> {
-    if (this.store) return this.store.updateWebhook(id, input);
+    if (this.store) { assertWebhookFixtureSelection(input); return this.store.updateWebhook(id, input); }
     const body: { url?: string; events?: WebhookEvent[]; inbox?: string; active?: boolean } = {};
     if (input.url !== undefined) body.url = input.url;
     if (input.events !== undefined) body.events = input.events;
     if (input.inbox !== undefined) body.inbox = input.inbox;
     if (input.active !== undefined) body.active = input.active;
-    return this.patch<Webhook>(`/v1/webhooks/${encodeURIComponent(id)}`, body);
+    return this.request<Webhook>("PATCH", `/v1/webhooks/${encodeURIComponent(id)}`, body, { org_id: input.org_id, project_id: input.project_id });
   }
 
   /** Delete a webhook by id (`DELETE /v1/webhooks/{id}`). */
-  async deleteWebhook(id: string): Promise<{ id: string; deleted: true }> {
-    if (this.store) return this.store.deleteWebhook(id);
-    await this.del<unknown>(`/v1/webhooks/${encodeURIComponent(id)}`);
+  async deleteWebhook(id: string, selection: ConnectionResourceSelection = {}): Promise<{ id: string; deleted: true }> {
+    if (this.store) { assertWebhookFixtureSelection(selection); return this.store.deleteWebhook(id); }
+    await this.request<unknown>("DELETE", `/v1/webhooks/${encodeURIComponent(id)}`, undefined, { ...selection });
     return { id, deleted: true };
   }
 
@@ -1942,15 +1949,16 @@ export class ExtrovertClient {
    * base64 plus the filename + content type pulled from the response headers.
    * Bypasses the JSON `request` path so arbitrary bytes survive intact.
    */
-  private async getBinary(path: string): Promise<AttachmentDownload> {
+  private async getBinary(path: string, query?: Record<string, string | number | boolean>, signal?: AbortSignal): Promise<AttachmentDownload> {
     const url = new URL(this.config.apiBaseUrl + path);
+    for (const [key, value] of Object.entries(query ?? {})) url.searchParams.set(key, String(value));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
     const headers: Record<string, string> = { "User-Agent": "extrovert-mcp/0.1.0" };
     if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
     let res: Response;
     try {
-      res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+      res = await fetch(url, { method: "GET", headers, redirect: "error", signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new ExtrovertApiError(`Request to GET ${path} failed: ${reason}`, 0, "network_error");
@@ -2030,6 +2038,7 @@ export class ExtrovertClient {
     try {
       res = await fetch(url, {
         method,
+        redirect: "error",
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
@@ -2186,3 +2195,7 @@ function filenameFromDisposition(disposition: string): string {
 }
 
 export { NotFoundError };
+
+function assertWebhookFixtureSelection(selection: ConnectionResourceSelection): void {
+  if (selection.org_id || selection.project_id) throw new Error("Offline webhook fixtures do not simulate organization/project selection; use live credentials for scoped checks.");
+}

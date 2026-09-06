@@ -1,3 +1,5 @@
+import { normalizeInboxPage } from "./inbox-page.js";
+
 /**
  * Extrovert API resource types.
  *
@@ -50,7 +52,7 @@ export function keyTierFromRawKey(rawKey: string | undefined): KeyTier {
 }
 
 /** Lifecycle status of an inbox. */
-export type InboxStatus = "provisioning" | "live" | "disabled" | "deleting";
+export type InboxStatus = "provisioning" | "live" | "disabled" | "deleting" | "deleted" | "degraded" | "unknown";
 
 /**
  * Arbitrary key-value metadata an agent attaches to an inbox (AgentMail parity).
@@ -110,7 +112,7 @@ export interface Inbox {
   /** ISO-8601 creation timestamp. */
   created_at: string;
   /** Whether outbound sender registration has completed: never skipped. */
-  sender_verified: boolean;
+  sender_verified?: boolean;
   /**
    * Optional HMAC-signed inbound webhook target, as returned by the API.
    * The read shape uses the contract's `webhook_url` (Inbox schema); the agent-
@@ -413,7 +415,7 @@ export interface ReviewTurn {
   id: string;
   seq: number;
   turn_type: string;
-  actor_kind: "agent" | "human" | "review_agent" | "system";
+  actor_kind: "agent" | "human" | "review_agent" | "system" | "connection";
   actor_id?: string;
   body?: string;
   revision?: number;
@@ -425,7 +427,7 @@ export interface ReviewTurn {
 /** One human/agent comment in the assembled review feedback (spec §11). */
 export interface ReviewFeedbackComment {
   turn_id: string;
-  actor_kind: "agent" | "human" | "review_agent" | "system";
+  actor_kind: "agent" | "human" | "review_agent" | "system" | "connection";
   actor_id?: string;
   body: string;
   created_at: string;
@@ -593,7 +595,7 @@ export interface Category {
   /** Survivor id when this category was merged / soft-deleted (cat_…). */
   merged_into?: string;
   created_by_agent_id?: string;
-  author_kind: "agent" | "human";
+  author_kind: "agent" | "human" | "connection";
   rule_high_water: number;
   rules_version: number;
   created_at: string;
@@ -754,7 +756,7 @@ export interface Rule {
   supersedes_id?: string;
   source_review_id?: string;
   source_turn_id?: string;
-  author_kind: "agent" | "human";
+  author_kind: "agent" | "human" | "connection";
   created_at: string;
   updated_at: string;
 }
@@ -774,7 +776,7 @@ export interface RuleAuditEntry {
   entity_kind: "rule" | "category";
   entity_id: string;
   action: "create" | "supersede" | "retire" | "rename" | "redescribe" | "merge" | "restore";
-  actor_kind: "agent" | "human" | "system";
+  actor_kind: "agent" | "human" | "system" | "connection";
   actor_id?: string;
   before_json?: string;
   after_json?: string;
@@ -916,14 +918,42 @@ export interface VerifyResult {
  * scoped key: whoami is the canonical project-visibility surface; project
  * selection happens when the human/admin issues the enrollment token or agent key.
  */
+/** An immutable consent grant; token refresh never changes its expiry. */
+export interface ConnectionGrant {
+  id: string;
+  authorizer_id: string;
+  client_id: string;
+  name: string;
+  identity: "personal_assistant" | "dedicated_agent";
+  agent_id?: string;
+  agent_org_id?: string;
+  reach: "inboxes" | "project" | "organization" | "full_account";
+  org_id?: string;
+  project_id?: string;
+  inbox_ids: string[];
+  scopes: string[];
+  created_by_connection_id?: string;
+  consent_version: string;
+  created_at_ms: number;
+  /** Zero explicitly means until revoked. */
+  expires_at_ms: number;
+  revoked_at_ms: number;
+  last_used_at_ms: number;
+}
+
 export interface WhoAmI {
+  connection?: ConnectionGrant;
+  auth_method?: "oauth" | "agent_key" | "connection";
+  key_tier?: "org" | "project" | "inbox";
+  inbox_scope?: "agent_owned" | "organization_subtree" | "single_inbox" | ConnectionGrant["reach"];
+  inbox_id?: string;
   connection_status?: "connected";
   summary?: string;
   agent_name?: string;
   organization_name?: string;
   project_name?: string;
   /** Granted permissions, not a guarantee of plan capacity or review approval. */
-  capabilities?: { read_domain_status: boolean; connect_owned_domains: boolean; create_inboxes: boolean; read_inboxes: boolean; submit_mail_for_review: boolean; request_purchases: boolean };
+  capabilities?: { read_domain_status: boolean; connect_owned_domains: boolean; create_inboxes: boolean; read_inboxes: boolean; submit_mail_for_review: boolean; request_purchases: boolean; administer_account?: boolean; approve_requests?: boolean; create_credentials?: boolean };
   customer_id: string;
   /** The fixed org the key is bound to. */
   org_id?: string;
@@ -931,7 +961,7 @@ export interface WhoAmI {
   project_id?: string;
   agent_id: string;
   key_id: string;
-  scopes: AgentScope[];
+  scopes: Array<AgentScope | "account:admin">;
 }
 
 /** Webhook event types Extrovert emits. */
@@ -949,11 +979,14 @@ export type WebhookEvent = "message.received" | "unsubscribe.received";
  * it. `inbox` is null when the webhook covers every inbox the agent owns.
  */
 export interface Webhook {
+  resource_scope?: "agent" | "inboxes" | "project" | "organization";
+  inbox_ids?: string[];
+  created_by_connection_id?: string;
   id: string;
   url: string;
   events: WebhookEvent[];
   inbox: string | null;
-  /** Agent that owns this webhook. */
+  /** Agent identity recorded when this webhook was created. */
   agent_id?: string;
   /** HMAC signing secret: returned ONCE at registration, omitted on reads. */
   secret?: string;
@@ -998,6 +1031,7 @@ export interface Page<T> {
   items: T[];
   /** Opaque cursor for the next page, when more results exist. Pass back as `?cursor`. */
   next_cursor?: string;
+  has_more?: boolean;
   /** Total count when cheaply known. */
   total?: number;
 }
@@ -1017,9 +1051,7 @@ export interface List<T> {
 
 /** Normalize the §5.2 `List` envelope into the MCP's internal {@link Page} shape. */
 export function listEnvelopeToPage<T>(list: List<T>): Page<T> {
-  const page: Page<T> = { items: Array.isArray(list.data) ? list.data : [] };
-  if (list.next_cursor) page.next_cursor = list.next_cursor;
-  return page;
+  return normalizeInboxPage<T>(list);
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,7 +1209,7 @@ export interface DomainReadiness {
   checked_at?: string;
   next_check_at?: string;
   poll_after_seconds: number;
-  inboxes?: { scope: "agent" | "project" | "organization"; total: number; ready: number; setting_up: number; needs_attention: number };
+  inboxes?: { scope: "agent" | "inbox" | "selected_inboxes" | "project" | "organization"; total: number; ready: number; setting_up: number; needs_attention: number };
 }
 
 export interface Domain {
@@ -1447,3 +1479,7 @@ export interface ListCategoriesParams { match?: string;
   limit?: number;
   page?: string;
 }
+
+/** Explicitly narrow a broader connection; legacy keys retain their fixed ceiling. */
+export interface ConnectionResourceSelection { org_id?: string; project_id?: string }
+export interface ListWebhooksParams extends ConnectionResourceSelection { limit?: number; cursor?: string }

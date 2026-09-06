@@ -1,3 +1,6 @@
+import type { ListWebhooksParams } from "./models.js";
+import { AdministrativeFixtures } from "./administration-fixtures.js";
+import type { AdministrativeRequest } from "./administration.js";
 /**
  * Offline fixtures for the Extrovert SDK.
  *
@@ -678,6 +681,10 @@ function forwardBodyText(note: string, parent: Message): string {
  * SDK exposes. One instance per mock client so tests/examples don't bleed into each other.
  */
 export class MockBackend {
+  private administrativeFixtures = new AdministrativeFixtures();
+  configureAdministrativeFixture(credential: string): void { this.administrativeFixtures = new AdministrativeFixtures(credential); }
+  administrativeRequest(request: AdministrativeRequest): Promise<unknown> { return this.administrativeFixtures.request(request); }
+
   private state: MockState = freshState();
 
   reset(): void {
@@ -836,9 +843,14 @@ export class MockBackend {
     let items = [...new Set(this.state.inboxes.values())].filter(
       (ibx) => ibx.id.startsWith("ibx"),
     );
-    if (params.domain) items = items.filter((i) => i.domain === params.domain);
+    if (params.domain) items = items.filter((i) => i.domain.toLowerCase() === params.domain!.trim().toLowerCase());
     if (params.status) items = items.filter((i) => i.status === params.status);
-    return { items, total: items.length };
+    items.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+    const limit = Math.min(Math.max(params.limit ?? 50, 1), 100);
+    const offset = params.cursor ? decodeMockCursor(params.cursor) : 0;
+    const slice = items.slice(offset, offset + limit);
+    const has_more = offset + limit < items.length;
+    return { items: slice, total: items.length, has_more, ...(has_more ? { next_cursor: encodeMockCursor(offset + limit) } : {}) };
   }
 
   getInbox(address: string): Inbox | undefined {
@@ -934,6 +946,8 @@ export class MockBackend {
   listInboxesInProject(projectId: string, params: ProjectInboxListParams = {}): List<Inbox> {
     this.resolveProjectSegment(projectId);
     let items = [...new Set(this.state.inboxes.values())].filter((ibx) => ibx.id.startsWith("ibx"));
+    if (params.domain) items = items.filter((i) => i.domain.toLowerCase() === params.domain!.trim().toLowerCase());
+    items.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
     // Opaque-cursor pagination over the offset-based mock store.
     const limit = Math.min(Math.max(params.limit ?? 50, 1), 100);
     const offset = params.cursor ? decodeMockCursor(params.cursor) : 0;
@@ -2965,9 +2979,14 @@ export class MockBackend {
   }
 
   /** List registered webhooks (secret redacted, mirroring the server). */
-  listWebhooks(): Page<Webhook> {
+  listWebhooks(params: ListWebhooksParams = {}): Page<Webhook> {
     const items = [...this.state.webhooks.values()].map((w) => redactSecret(w));
-    return { items, total: items.length };
+    const limit = params.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid webhook page limit");
+    if (params.cursor && !/^webhooks:\d+$/.test(params.cursor)) throw new Error("Invalid webhook cursor");
+    const offset = params.cursor ? Number(params.cursor.slice(9)) : 0;
+    const next = offset + limit < items.length ? `webhooks:${offset + limit}` : undefined;
+    return { items: items.slice(offset, offset + limit), total: items.length, has_more: !!next, next_cursor: next };
   }
 
   /** Get one webhook by id (secret redacted), or undefined when missing. */

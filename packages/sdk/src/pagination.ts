@@ -47,6 +47,8 @@ export type PageFetcher<T> = (cursor: Cursor | undefined, signal?: AbortSignal) 
  * ```
  */
 export class ListPage<T> implements AsyncIterable<T> {
+  /** Walkers fail visibly after 1,000 pages; they never return truncated success. */
+  static readonly maxPages = 1000;
   /** The rows on THIS page. */
   readonly data: T[];
   /** True when another page exists. */
@@ -59,7 +61,15 @@ export class ListPage<T> implements AsyncIterable<T> {
   constructor(
     raw: List<T>,
     private readonly fetcher: PageFetcher<T>,
+    private readonly visited: ReadonlySet<Cursor> = new Set(),
   ) {
+    if (!raw || raw.object !== "list" || !Array.isArray(raw.data) ||
+        typeof raw.has_more !== "boolean" ||
+        !(raw.next_cursor === null || (typeof raw.next_cursor === "string" && raw.next_cursor.length > 0)) ||
+        raw.has_more !== Boolean(raw.next_cursor)) {
+      throw new Error("Extrovert: invalid list response; inventory is unavailable, not empty.");
+    }
+    if (raw.next_cursor && visited.has(raw.next_cursor)) throw new Error("Extrovert: repeated pagination cursor.");
     this.data = raw.data;
     this.hasMore = raw.has_more;
     this.nextCursor = raw.next_cursor;
@@ -72,8 +82,11 @@ export class ListPage<T> implements AsyncIterable<T> {
     if (!this.hasMore || this.nextCursor === null) {
       throw new Error("Extrovert: no more pages (next_cursor is null).");
     }
+    if (this.visited.size + 1 >= ListPage.maxPages) throw new Error("Extrovert: pagination exceeded the 1,000-page safety limit; narrow your filters.");
+    const visited = new Set(this.visited);
+    visited.add(this.nextCursor);
     const raw = await this.fetcher(this.nextCursor, signal);
-    return new ListPage(raw, this.fetcher);
+    return new ListPage(raw, this.fetcher, visited);
   }
 
   /**

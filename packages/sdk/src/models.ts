@@ -53,7 +53,7 @@ export type OnboardingMode = "shared" | "purchased" | "ns_delegated" | "manual";
 export type AgentStatus = "active" | "disabled";
 
 /** Lifecycle status of an inbox. */
-export type InboxStatus = "provisioning" | "live" | "disabled" | "deleted";
+export type InboxStatus = "provisioning" | "live" | "disabled" | "deleting" | "deleted" | "degraded" | "unknown";
 
 /** Direction of a message relative to the inbox that owns it. */
 export type MessageDirection = "inbound" | "outbound";
@@ -257,6 +257,8 @@ export interface InboxCredentials {
 
 /** A provisioned inbox (read shape). */
 export interface Inbox {
+  /** Omitted if sender registration status is unavailable. */
+  sender_verified?: boolean;
   /**
    * Resource type discriminator. Always `"inbox"` on the redesigned surface (RFC D9:
    * every resource carries `object` + `org_id` + `project_id` + timestamps). Optional
@@ -342,6 +344,8 @@ export interface ListInboxesParams {
  * per-resource relation allowlist (`agent`, `domain`; depth ≤ 2).
  */
 export interface ProjectInboxListParams {
+  /** Filter to an exact domain name. */
+  domain?: string;
   /** Page size (server clamps to 1–100; default 50). */
   limit?: number;
   /** Opaque cursor from a prior page's `next_cursor`. */
@@ -364,7 +368,9 @@ export interface GetInboxParams {
 export interface Page<T> {
   items: T[];
   /** Total count when the server can compute it cheaply. */
-  total: number;
+  total?: number;
+  /** Whether the response has another page, when supplied. */
+  has_more?: boolean;
   /** Cursor to pass as `cursor` to fetch the next page; absent when exhausted. */
   next_cursor?: string;
 }
@@ -833,7 +839,7 @@ export interface Review {
    */
   send_error?: string;
   /**
-   * How the message was released, once sent: `human_reviewed`,
+   * How the message was released, once sent: `human_reviewed`, `delegated_reviewed`,
    * `reviewer_approved`, `graduated_auto` or `agent_direct`: without a turns
    * fetch.
    */
@@ -849,7 +855,7 @@ export interface ReviewTurn {
   id: string;
   seq: number;
   turn_type: string;
-  actor_kind: "agent" | "human" | "review_agent" | "system";
+  actor_kind: "agent" | "human" | "review_agent" | "system" | "connection";
   actor_id?: string;
   body?: string;
   revision?: number;
@@ -871,7 +877,7 @@ export interface ListReviewsParams {
 /** One human/agent comment in the assembled review feedback (spec §11). */
 export interface ReviewFeedbackComment {
   turn_id: string;
-  actor_kind: "agent" | "human" | "review_agent" | "system";
+  actor_kind: "agent" | "human" | "review_agent" | "system" | "connection";
   actor_id?: string;
   body: string;
   created_at: IsoTimestamp;
@@ -1042,7 +1048,7 @@ export interface Category {
   /** Survivor id when this category was merged / soft-deleted (cat_…). */
   merged_into?: string;
   created_by_agent_id?: string;
-  author_kind: "agent" | "human";
+  author_kind: "agent" | "human" | "connection";
   rule_high_water: number;
   rules_version: number;
   created_at: IsoTimestamp;
@@ -1334,7 +1340,7 @@ export interface Rule {
   priority: number;
   status: "proposed" | "active" | "superseded" | "retired";
   supersedes_id?: string;
-  author_kind: "agent" | "human";
+  author_kind: "agent" | "human" | "connection";
   created_at: IsoTimestamp;
   updated_at: IsoTimestamp;
   source_review_id?: string;
@@ -1402,7 +1408,7 @@ export interface RuleAuditEntry {
   entity_kind: "rule" | "category";
   entity_id: string;
   action: "create" | "supersede" | "retire" | "rename" | "redescribe" | "merge" | "restore";
-  actor_kind: "agent" | "human" | "system";
+  actor_kind: "agent" | "human" | "system" | "connection";
   actor_id?: string;
   before_json?: string;
   after_json?: string;
@@ -1542,7 +1548,7 @@ export interface WaitForEmailResult {
 export type WebhookEvent = "message.received";
 
 /** Request body for `POST /v1/webhooks`. Registers an HMAC-signed, timestamped endpoint. */
-export interface RegisterWebhookRequest {
+export interface RegisterWebhookRequest extends ConnectionResourceSelection {
   url: string;
   /** Events to subscribe to. Defaults to `["message.received"]`. */
   events?: WebhookEvent[];
@@ -1560,12 +1566,12 @@ export interface RegisterWebhookRequest {
  * field leaves the stored value unchanged (PATCH semantics). The signing secret
  * and id are immutable.
  */
-export interface UpdateWebhookRequest {
+export interface UpdateWebhookRequest extends ConnectionResourceSelection {
   /** Replace the HTTPS delivery endpoint. */
   url?: string;
   /** Replace the subscribed event set. */
   events?: WebhookEvent[];
-  /** Replace the inbox filter; an empty string clears it (covers all owned inboxes). */
+  /** Replace the inbox filter; an empty string clears the address filter without widening the persisted resource scope. */
   inbox?: string;
   /** Enable or disable delivery without deleting the webhook. */
   active?: boolean;
@@ -1573,11 +1579,14 @@ export interface UpdateWebhookRequest {
 
 /** A registered webhook (read shape). The `secret` is returned once at registration. */
 export interface Webhook {
+  resource_scope?: "agent" | "inboxes" | "project" | "organization";
+  inbox_ids?: string[];
+  created_by_connection_id?: string;
   id: string;
   url: string;
   events: WebhookEvent[];
   inbox: string | null;
-  /** Agent that owns this webhook. */
+  /** Agent identity recorded when this webhook was created. */
   agent_id?: string;
   /**
    * HMAC signing secret, returned once at registration. Used to verify the `X-Extrovert-Signature`
@@ -1811,7 +1820,7 @@ export interface DomainReadiness {
   next_check_at?: IsoTimestamp;
   poll_after_seconds: number;
   /** Omitted without inbox-read permission. Counts never imply organization-wide visibility for an agent. */
-  inboxes?: { scope: "agent" | "project" | "organization"; total: number; ready: number; setting_up: number; needs_attention: number };
+  inboxes?: { scope: "agent" | "inbox" | "selected_inboxes" | "project" | "organization"; total: number; ready: number; setting_up: number; needs_attention: number };
 }
 
 /**
@@ -2068,14 +2077,42 @@ export interface VerifyResponse {
  * scoped key: `whoami` is the canonical project-visibility surface; project
  * selection happens when the human/admin issues the enrollment token or agent key.
  */
+/** An immutable consent grant; token refresh never changes its expiry. */
+export interface ConnectionGrant {
+  id: string;
+  authorizer_id: string;
+  client_id: string;
+  name: string;
+  identity: "personal_assistant" | "dedicated_agent";
+  agent_id?: string;
+  agent_org_id?: string;
+  reach: "inboxes" | "project" | "organization" | "full_account";
+  org_id?: string;
+  project_id?: string;
+  inbox_ids: string[];
+  scopes: string[];
+  created_by_connection_id?: string;
+  consent_version: string;
+  created_at_ms: number;
+  /** Zero explicitly means until revoked. */
+  expires_at_ms: number;
+  revoked_at_ms: number;
+  last_used_at_ms: number;
+}
+
 export interface WhoAmI {
+  connection?: ConnectionGrant;
+  auth_method?: "oauth" | "agent_key" | "connection";
+  key_tier?: "org" | "project" | "inbox";
+  inbox_scope?: "agent_owned" | "organization_subtree" | "single_inbox" | ConnectionGrant["reach"];
+  inbox_id?: string;
   connection_status?: "connected";
   summary?: string;
   agent_name?: string;
   organization_name?: string;
   project_name?: string;
   /** Granted permissions, not a guarantee of plan capacity or review approval. */
-  capabilities?: { read_domain_status: boolean; connect_owned_domains: boolean; create_inboxes: boolean; read_inboxes: boolean; submit_mail_for_review: boolean; request_purchases: boolean };
+  capabilities?: { read_domain_status: boolean; connect_owned_domains: boolean; create_inboxes: boolean; read_inboxes: boolean; submit_mail_for_review: boolean; request_purchases: boolean; administer_account?: boolean; approve_requests?: boolean; create_credentials?: boolean };
   customer_id: string;
   /**
    * The fixed org the key is bound to. Optional to match the OpenAPI contract: a
@@ -2089,7 +2126,7 @@ export interface WhoAmI {
   project_id?: string;
   agent_id: string;
   key_id: string;
-  scopes: Scope[];
+  scopes: Array<Scope | "account:admin">;
 }
 
 
@@ -2111,3 +2148,7 @@ export interface LearnedReviewRule {
   audit_id: string;
   propagation: "queued";
 }
+
+/** Explicitly narrow a broader connection; legacy keys retain their fixed ceiling. */
+export interface ConnectionResourceSelection { org_id?: string; project_id?: string }
+export interface ListWebhooksParams extends ConnectionResourceSelection { limit?: number; cursor?: string }

@@ -1,3 +1,6 @@
+import type { ListWebhooksParams } from "./types.js";
+import { AdministrativeFixtures } from "./administration-fixtures.js";
+import type { AdministrativeRequest } from "./administration.js";
 import type { ListCategoriesParams } from "./types.js";
 import type { LearnReviewRuleRequest, LearnedReviewRule } from "./types.js";
 /**
@@ -282,6 +285,8 @@ interface StoredAttachment {
 }
 
 export class FixtureStore {
+  private administrativeFixtures: AdministrativeFixtures;
+  administrativeRequest(request: AdministrativeRequest): Promise<unknown> { return this.administrativeFixtures.request(request); }
   private inboxes = new Map<string, Inbox>();
   private messages = new Map<string, Message[]>(); // inbox_id -> messages
   /** message id -> stored attachments (mock mirror of the real MIME parts). */
@@ -362,7 +367,8 @@ export class FixtureStore {
    */
   private frontRunKeys = new Set<string>();
 
-  constructor(opts: { keyTier?: KeyTier; reviewPolicy?: ReviewPolicy } = {}) {
+  constructor(opts: { keyTier?: KeyTier; reviewPolicy?: ReviewPolicy; administrativeCredential?: string } = {}) {
+    this.administrativeFixtures = new AdministrativeFixtures(opts.administrativeCredential);
     this.keyTier = opts.keyTier ?? "project";
     this.reviewPolicy = opts.reviewPolicy ?? "require_review";
     this.seed();
@@ -500,6 +506,9 @@ export class FixtureStore {
       project_id: MOCK_PROJECT_ID,
       agent_id: this.agentId,
       key_id: "pkey_mock",
+      auth_method: "agent_key",
+      key_tier: this.keyTier,
+      inbox_scope: this.keyTier === "org" ? "organization_subtree" : this.keyTier === "inbox" ? "single_inbox" : "agent_owned",
       scopes: ["mailbox:create", "mailbox:read", "mailbox:send"],
     };
   }
@@ -579,7 +588,7 @@ export class FixtureStore {
   }
 
   listInboxes(
-    opts: { limit?: number; project?: string; wildcard?: boolean } | number = {},
+    opts: { limit?: number; project?: string; wildcard?: boolean; domain?: string; cursor?: string } | number = {},
   ): Page<Inbox> {
     const o = typeof opts === "number" ? { limit: opts } : opts;
     const limit = o.limit ?? 20;
@@ -605,10 +614,14 @@ export class FixtureStore {
       // A concrete project outside the key's ceiling is a 404 (no existence leak).
       throw new NotFoundError(`project "${projectSegment}" is outside this key's ceiling.`);
     }
-    const items = [...this.inboxes.values()]
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))
-      .slice(0, limit);
-    return { items, total: this.inboxes.size };
+    const matching = [...this.inboxes.values()]
+      .filter((inbox) => !o.domain || inbox.address.split("@")[1]?.toLowerCase() === o.domain.trim().toLowerCase())
+      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+    const offset = o.cursor ? matching.findIndex((inbox) => inbox.id === o.cursor) + 1 : 0;
+    if (o.cursor && offset === 0) throw new Error("Invalid inbox cursor");
+    const items = matching.slice(offset, offset + limit);
+    const has_more = offset + items.length < matching.length;
+    return { items, total: matching.length, has_more, ...(has_more ? { next_cursor: items.at(-1)!.id } : {}) };
   }
 
   getInbox(idOrAddress: string): Inbox | undefined {
@@ -2508,9 +2521,14 @@ export class FixtureStore {
   }
 
   /** List webhooks (secret redacted). */
-  listWebhooks(): Page<Webhook> {
+  listWebhooks(params: ListWebhooksParams = {}): Page<Webhook> {
     const items = [...this.webhooks.values()].map((w) => redactWebhookSecret(w));
-    return { items, total: items.length };
+    const limit = params.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid webhook page limit");
+    if (params.cursor && !/^webhooks:\d+$/.test(params.cursor)) throw new Error("Invalid webhook cursor");
+    const offset = params.cursor ? Number(params.cursor.slice(9)) : 0;
+    const next = offset + limit < items.length ? `webhooks:${offset + limit}` : undefined;
+    return { items: items.slice(offset, offset + limit), total: items.length, has_more: !!next, next_cursor: next };
   }
 
   /** Get one webhook (secret redacted). Throws NotFoundError when absent. */

@@ -60,31 +60,25 @@ annotations (`readOnlyHint`, `destructiveHint`, …) so hosts can present and ga
 
 ---
 
-## The security model (why a scoped key, not a master key)
+## Access and delegation
 
-> Don't hand an MCP host your master key. Hand it a scoped key.
+Hosted OAuth uses an explicit connection grant. Choose Personal assistant or a
+Dedicated agent, then choose selected inboxes, a project, an organization, or Full
+account control. Resource reach and permitted actions are separate. Current human
+authority remains the upper bound; public connections never gain private operator
+access.
 
-An MCP host should never hold the keys to your whole account: it only ever needs a narrow, outbound
-voice. With Extrovert it receives nothing more than a **scoped agent key**:
+Full account control is intended for interactive setup and administration. It can
+use other agents' inboxes, change access and policies, create credentials, and
+approve requests—including its own. The default is 24 hours; Until revoked is an
+explicit alternative. Refresh never extends the original deadline. Credentials
+created during setup, including administrative credentials, survive independently
+until separately expired or revoked. See **Connections** in the account menu to
+review activity and revoke the parent or its created access separately.
 
-- **scoped**: carries only the granted capabilities (e.g. `mailbox:create`, `mailbox:read`,
-  `mailbox:send`); quota changes require opt-in `mailbox:quota`, deletion requires
-  `mailbox:delete`, and the key may additionally be restricted to fixed domains;
-- **server-enforced**: the inbox counter and revocation live server-side; a cloned key can't
-  exceed its `max_mailboxes`;
-- **revocable**: killing one agent's key never rotates anyone else's;
-- **audited**: every action is attributed to the token + agent.
-
-The safe default for financial actions is no purchasing authority. `commerce:request` lets an agent
-quote, ask, and poll, but there is no MCP approval tool. Extrovert emails the verified billing owner;
-an agent may also send the platform approval URL through the governed Review Loop. Email content and
-replies cannot approve a charge. Only a signed-in console decision or a bounded organization,
-project, or agent spend policy created there can advance the request.
-
-This containment keeps an org-wide key out of the model host. Keep every model host on the
-narrowest scoped key it needs.
-
----
+Existing scoped agent keys remain available for unattended workers. Their scopes,
+resource ceiling, expiry, and revocation still apply. Knowing an inbox address
+never grants access. Do not automatically substitute credentials after expiry.
 
 ## Connect with hosted OAuth
 
@@ -118,7 +112,7 @@ npx -y @extrovert.dev/mcp@next setup --host claude
 npx -y @extrovert.dev/mcp@next setup --host hermes
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.10` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.11` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 

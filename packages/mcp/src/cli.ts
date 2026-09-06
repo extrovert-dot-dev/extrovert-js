@@ -8,7 +8,8 @@ import { renderDomain } from "./domain-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
 import { setupHermes } from "./hermes-setup.js";
-import { createCredentialStore, type CredentialStore } from "./credentials.js";
+import { Administration, type AdministrativeInput } from "./administration.js";
+import { createCredentialStore, isPersistentAPICredential, type CredentialStore } from "./credentials.js";
 import type { Message, Review } from "./types.js";
 
 const MCP_PACKAGE = "@extrovert.dev/mcp@next";
@@ -29,8 +30,12 @@ Usage:
   extrovert signup --human-email <email> [--username <name>]
   extrovert verify [--otp <code>]
   extrovert whoami [--json]
+  extrovert admin actions [--search <text>] [--mode read|change] [--limit <n>] [--cursor <cursor>]
+  extrovert admin describe <action-id>
+  extrovert admin read <action-id> [--input <json>]
+  extrovert admin change <action-id> --input-stdin
   extrovert doctor [--domain <domain>] [--json]
-  extrovert inbox list [--limit <n>] [--json]
+  extrovert inbox list [--domain <name>] [--project <id> | --wildcard] [--limit <n>] [--cursor <cursor>] [--json]
   extrovert message list --inbox <address> [--unread] [--limit <n>] [--json]
   extrovert message get <message-id> [--source] [--json]
   extrovert review list [--state <state>] [--limit <n>] [--json]
@@ -115,6 +120,8 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
         return await whoamiCommand(argv.slice(1), context);
       case "doctor":
         return await doctorCommand(argv.slice(1), context);
+      case "admin":
+        return await administrativeCommand(argv.slice(1), context);
       case "inbox":
         return await inboxCommand(argv.slice(1), context);
       case "message":
@@ -132,6 +139,36 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
     if (error instanceof CliUsageError) context.stderr.write("Run 'extrovert --help' for usage.\n");
     return error instanceof CliUsageError ? 2 : 1;
   }
+}
+
+async function administrativeCommand(args: string[], context: CliContext): Promise<number> {
+  const discovery = new Administration(async () => { throw new Error("Discovery cannot execute requests"); });
+  let result: unknown;
+  if (args[0] === "actions") {
+    const mode = option(args, "--mode");
+    if (mode !== undefined && mode !== "read" && mode !== "change") throw new CliUsageError("--mode must be read or change");
+    result = discovery.list({ search: option(args, "--search"), mode, limit: integerOption(args, "--limit", 20, 1, 100), cursor: option(args, "--cursor") });
+  } else if (args[0] === "describe") {
+    if (!args[1]) throw new CliUsageError("admin describe requires an action ID");
+    result = discovery.describe(args[1]);
+  } else if (args[0] === "read" || args[0] === "change") {
+    if (!args[1]) throw new CliUsageError("admin read/change requires an action ID");
+    if (args[0] === "change" && !hasFlag(args, "--input-stdin")) throw new CliUsageError("admin change reads JSON from --input-stdin to keep credential material out of shell history");
+    if (hasFlag(args, "--input-stdin") && option(args, "--input")) throw new CliUsageError("Use either --input or --input-stdin");
+    let raw = option(args, "--input") ?? "{}";
+    if (hasFlag(args, "--input-stdin")) {
+      raw = "";
+      for await (const chunk of context.stdin) {
+        raw += String(chunk);
+        if (raw.length > 1_000_000) throw new CliUsageError("Administrative input exceeds 1 MB");
+      }
+    }
+    let input: AdministrativeInput;
+    try { input = JSON.parse(raw) as AdministrativeInput; } catch { throw new CliUsageError("Administrative input must be valid JSON with path/query/body fields"); }
+    result = await requireAuthentication(context).client.runAdministrativeAction(args[1], input, args[0]);
+  } else throw new CliUsageError("admin requires actions, describe, read, or change");
+  context.stdout.write(`${JSON.stringify(result ?? null, null, 2)}\n`);
+  return 0;
 }
 
 function setupCommand(args: string[], context: CliContext): number {
@@ -185,8 +222,8 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
       if (!hasFlag(args, "--with-token")) {
         throw new CliUsageError("auth login requires --with-token; the key is read from EXTROVERT_API_KEY or a hidden stdin prompt");
       }
-      const token = (context.env.EXTROVERT_API_KEY ?? "").trim() || (await readSecret(context, "Agent key: "));
-      if (!token.startsWith("pk_agent_")) throw new CliUsageError("Expected a scoped pk_agent_… key");
+      const token = (context.env.EXTROVERT_API_KEY ?? "").trim() || (await readSecret(context, "API credential: "));
+      if (!isPersistentAPICredential(token)) throw new CliUsageError("Expected a scoped pk_agent_… key or independent ev_credential_… credential. Hosted OAuth access/refresh tokens remain managed by the host.");
       const client = clientForKey(token, context, context.env.EXTROVERT_API_BASE_URL);
       const me = await client.whoami();
       context.store.save(token, clientBaseUrl(token, context, context.env.EXTROVERT_API_BASE_URL));
@@ -330,12 +367,15 @@ async function doctorCommand(args: string[], context: CliContext): Promise<numbe
 async function inboxCommand(args: string[], context: CliContext): Promise<number> {
   if (args[0] !== "list") throw new CliUsageError("inbox requires list");
   const limit = integerOption(args, "--limit", 20, 1, 100);
-  const page = await requireAuthentication(context).client.listInboxes({ limit });
+  const page = await requireAuthentication(context).client.listInboxes({ limit, domain: option(args, "--domain"), project: option(args, "--project"), wildcard: hasFlag(args, "--wildcard"), cursor: option(args, "--cursor") });
   writeResult(
     context,
     page,
     hasFlag(args, "--json"),
-    (value) => value.items.map((inbox) => `${inbox.address}\t${inbox.status}\t${inbox.id}`).join("\n") || "No inboxes.",
+    (value) => {
+      const rows = value.items.map((inbox) => `${inbox.address}\t${inbox.status ?? "status unavailable"}\t${inbox.id}`).join("\n") || "No inboxes matched this connection’s scope and filters.";
+      return value.next_cursor ? `${rows}\nMore inboxes are available. Repeat with the same filters and --cursor ${JSON.stringify(value.next_cursor)}.` : rows;
+    },
   );
   return 0;
 }

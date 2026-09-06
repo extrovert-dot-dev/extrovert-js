@@ -90,7 +90,7 @@ export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): Cre
     paths,
     load: () => readCredential(paths.credential),
     save: (agentKey, apiBaseUrl) => {
-      assertAgentKey(agentKey);
+      assertStoredCredential(agentKey);
       const record: StoredCredential = {
         version: CURRENT_VERSION,
         agent_key: agentKey.trim(),
@@ -126,7 +126,7 @@ function readCredential(path: string): StoredCredential | undefined {
   const record = asRecord(value);
   if (record.version !== CURRENT_VERSION) throw invalidFile(path, "unsupported credential version");
   const agentKey = requiredRecordString(record, "agent_key", path);
-  assertAgentKey(agentKey, path);
+  assertStoredCredential(agentKey, path);
   return {
     version: CURRENT_VERSION,
     agent_key: agentKey,
@@ -236,6 +236,14 @@ function assertAgentKey(value: string, path?: string): void {
     const suffix = path ? ` in ${path}` : "";
     throw new Error(`Extrovert credential${suffix} is not a scoped agent key`);
   }
+}
+
+export function isPersistentAPICredential(value: string): boolean {
+  return value.trim().startsWith("pk_agent_") || value.trim().startsWith("ev_credential_");
+}
+
+function assertStoredCredential(value: string, path?: string): void {
+  if (!isPersistentAPICredential(value)) throw new Error(`Extrovert credential${path ? ` in ${path}` : ""} must be a scoped agent key or independent connection credential`);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -288,3 +288,9 @@ export { SDK_VERSION } from "./http.js";
 // ---------------------------------------------------------------------------
 export { CONTRACT_VERSION, CONTRACT_MANIFEST } from "./contract.js";
 export type { ContractManifest, ContractStability, DiffJson, DiffHunk } from "./contract.js";
+
+export { Administration } from "./administration.js";
+export type { AdministrativeActionID, AdministrativeMode, AdministrativeInput, AdministrativeActionSummary, AdministrativeOperations, AdministrativeDownload } from "./administration.js";
+export { ADMINISTRATIVE_FIXTURE_KEY } from "./administration-fixtures.js";
+
+export type { ConnectionResourceSelection, ListWebhooksParams } from "./models.js";

@@ -3,7 +3,7 @@
  *
  * MCP SDK v2 constructs a fresh server for every request. There is no in-memory
  * session map, so any cluster node can serve any request and a rolling deploy
- * cannot strand client sessions. Clerk remains the OAuth authorization server;
+ * cannot strand client sessions. Extrovert issues the consent-bound OAuth grants;
  * this process is only a protected resource server.
  */
 
@@ -100,7 +100,8 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
 
   const handler = createMcpHandler(
     ({ authInfo }) => {
-      const config = configForRequest(baseConfig, authInfo?.token);
+      const apiToken = authInfo?.extra?.apiToken;
+      const config = configForRequest(baseConfig, typeof apiToken === "string" ? apiToken : authInfo?.token);
       const client = new ExtrovertClient(config);
       return createExtrovertServer({ config, client }).server;
     },
