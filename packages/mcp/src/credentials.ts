@@ -67,6 +67,7 @@ export interface StoredCredential {
 }
 
 export interface PendingSignup {
+  activation_method?: "incoming_email";
   version: typeof CURRENT_VERSION;
   agent_key: string;
   human_email: string;
@@ -202,6 +203,7 @@ export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): Cre
         human_email: requiredString(input.human_email, "human email"),
         address: requiredString(input.address, "signup inbox"),
         otp_expires_at: requiredString(input.otp_expires_at, "OTP expiry"),
+        activation_method: input.activation_method,
         api_base_url: normalizeBaseUrl(input.api_base_url),
         saved_at: new Date().toISOString(),
       };
@@ -301,6 +303,7 @@ function readPendingSignup(path: string): PendingSignup | undefined {
     human_email: requiredRecordString(record, "human_email", path),
     address: requiredRecordString(record, "address", path),
     otp_expires_at: requiredRecordString(record, "otp_expires_at", path),
+    activation_method: record.activation_method === "incoming_email" ? "incoming_email" : undefined,
     api_base_url: normalizeBaseUrl(requiredRecordString(record, "api_base_url", path)),
     saved_at: requiredRecordString(record, "saved_at", path),
   };

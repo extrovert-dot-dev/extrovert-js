@@ -266,7 +266,7 @@ export type {
   StreamOptions,
   // self-signup + auth introspection
   SignUpRequest,
-  SignUpResponse,
+  SignUpResponse, InboxActivation,
   VerifyRequest,
   MailboxQuickstartCall,
   MailboxQuickstart,
@@ -288,6 +288,7 @@ export { SDK_VERSION } from "./http.js";
 // ---------------------------------------------------------------------------
 export { CONTRACT_VERSION, CONTRACT_MANIFEST } from "./contract.js";
 export type { ContractManifest, ContractStability, DiffJson, DiffHunk } from "./contract.js";
+export { storageWarningFromHeaders, type StorageWarning } from "./storage.js";
 
 export { Administration } from "./administration.js";
 export type { AdministrativeActionID, AdministrativeMode, AdministrativeInput, AdministrativeActionSummary, AdministrativeOperations, AdministrativeDownload } from "./administration.js";

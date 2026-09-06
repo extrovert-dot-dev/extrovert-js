@@ -260,7 +260,7 @@ pnpm run dev -- --http  # tsx watch, HTTP
 
 > **Offline fixtures are opt-in.** With no `EXTROVERT_API_KEY`, the server still talks to the live
 > API. Self-signup is currently disabled. When enabled, an agent can start with `sign_up` and receive a short-lived limited key in-session. The
-> key expires with the OTP and is revoked when `verify_signup` returns its replacement. Set
+> key expires with its activation reservation and is revoked when `verify_signup` returns its replacement. For an `incoming_email` response, ask the human to email the reserved inbox, call `check_activation`, then `verify_signup` without an OTP once proven. `correct_activation_email` requires the current revision and a fresh matching email; it does not extend expiry. Previously issued OTPs remain supported until their original expiry. Set
 > `EXTROVERT_MOCK=1` to use deterministic in-memory fixtures; `create_inbox`, `send_email`, and
 > `wait_for_email` then operate on one coherent offline dataset.
 

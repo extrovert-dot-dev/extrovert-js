@@ -84,7 +84,7 @@ import type {
   SendOutcome,
   SendRequest,
   SignUpRequest,
-  SignUpResponse,
+  SignUpResponse, InboxActivation,
   StreamEvent,
   SubmitRevisionRequest,
   SuppressionEntry,
@@ -117,6 +117,8 @@ export interface Transport {
   administrativeRequest(request: AdministrativeRequest): Promise<unknown>;
   enroll(req: EnrollRequest, signal?: AbortSignal): Promise<EnrollResponse>;
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse>;
+  activationStatus(signal?: AbortSignal): Promise<InboxActivation>;
+  correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation>;
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse>;
   whoami(signal?: AbortSignal): Promise<WhoAmI>;
   createInbox(req: CreateInboxRequest, idempotencyKey?: string, signal?: AbortSignal): Promise<Inbox>;
@@ -397,6 +399,9 @@ export class HttpTransport implements Transport {
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse> {
     return this.call({ method: "POST", path: "/v1/agent/sign-up", body: req, signal });
   }
+
+  activationStatus(signal?: AbortSignal): Promise<InboxActivation> { return this.call({ method: "GET", path: "/v1/agent/activation", signal }); }
+  correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation> { return this.call({ method: "PATCH", path: "/v1/agent/activation", body: { human_email, revision }, signal }); }
 
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {
     return this.call({ method: "POST", path: "/v1/agent/verify", body: req, signal });
@@ -1199,6 +1204,8 @@ export class MockTransport implements Transport {
   async signUp(req: SignUpRequest): Promise<SignUpResponse> {
     return this.backend.signUp(req);
   }
+  async activationStatus(): Promise<InboxActivation> { return this.backend.activationStatus(); }
+  async correctActivationEmail(email: string, revision: number): Promise<InboxActivation> { return this.backend.correctActivationEmail(email, revision); }
   async verify(req: VerifyRequest): Promise<VerifyResponse> {
     return this.backend.verify(req);
   }

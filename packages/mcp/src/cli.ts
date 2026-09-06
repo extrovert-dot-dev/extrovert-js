@@ -538,11 +538,12 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
     agent_key: result.agent_key,
     human_email: humanEmail,
     address: result.address,
-    otp_expires_at: result.otp_expires_at,
+    otp_expires_at: result.activation_expires_at ?? result.otp_expires_at ?? "",
+    activation_method: result.activation_method,
     api_base_url: config.apiBaseUrl,
   });
   context.stdout.write(
-    `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.\nInbox: ${result.address}\nPending credential saved securely; run 'extrovert verify'.\n`,
+    `${result.activation_method === "incoming_email" ? result.message : `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.`}\nInbox: ${result.address}\nPending credential saved securely; run 'extrovert verify'.\n`,
   );
   return 0;
 }
@@ -550,10 +551,19 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
 async function verifyCommand(args: string[], context: CliContext): Promise<number> {
   const pending = context.store.loadPendingSignup();
   if (!pending) throw new Error("No pending signup. Run 'extrovert signup --human-email <email>' first.");
-  const otp = option(args, "--otp") ?? (await readVisibleLine(context, "Verification code: "));
-  if (!otp.trim()) throw new CliUsageError("Verification code cannot be empty");
   const client = clientForKey(pending.agent_key, context, pending.api_base_url);
-  const result = await client.verify({ otp: otp.trim() });
+  let otp: string | undefined;
+  if (pending.activation_method === "incoming_email") {
+    const activation = await client.activationStatus();
+    if (activation.state !== "proven") {
+      context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent’s inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console, then run 'extrovert verify' again.\n`);
+      return 0;
+    }
+  } else {
+    otp = option(args, "--otp") ?? (await readVisibleLine(context, "Verification code: "));
+    if (!otp.trim()) throw new CliUsageError("Verification code cannot be empty");
+  }
+  const result = await client.verify({ otp: otp?.trim() });
   try {
     context.store.save(result.agent_key, pending.api_base_url);
   } catch (error) {

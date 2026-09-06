@@ -866,7 +866,20 @@ export interface WaitForEmailResult {
 }
 
 /** Result of a self-signup (Slice E). The key is LIMITED until verified. */
+export interface InboxActivation {
+  agent_id: string;
+  address: string;
+  human_email: string;
+  created_ms: number;
+  expires_ms: number;
+  revision: number;
+  state: "pending" | "proven" | "activated" | "expired";
+}
+
 export interface SignUpResult {
+  activation_method?: "incoming_email";
+  human_email?: string;
+  activation_expires_at?: string;
   customer_id: string;
   agent_id: string;
   /** Limited-scope agent key, shown once. */
@@ -877,8 +890,8 @@ export interface SignUpResult {
   address: string;
   verified: boolean;
   /** Where the verification code was sent. */
-  otp_sent_to: string;
-  otp_expires_at: string;
+  otp_sent_to?: string;
+  otp_expires_at?: string;
   message: string;
 }
 

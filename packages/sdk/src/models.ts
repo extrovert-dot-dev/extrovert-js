@@ -2009,7 +2009,20 @@ export interface SignUpRequest {
  * (verification-only, with no inbox read or send permission) that expires with the emailed code. Successful verification revokes
  * it and returns a replacement full-scope key. The OTP itself is never returned.
  */
+export interface InboxActivation {
+  agent_id: string;
+  address: string;
+  human_email: string;
+  created_ms: number;
+  expires_ms: number;
+  revision: number;
+  state: "pending" | "proven" | "activated" | "expired";
+}
+
 export interface SignUpResponse {
+  activation_method?: "incoming_email";
+  human_email?: string;
+  activation_expires_at?: string;
   customer_id: string;
   agent_id: string;
   /** Limited-scope bootstrap key, shown once and bounded by `otp_expires_at`. */
@@ -2020,15 +2033,15 @@ export interface SignUpResponse {
   address: string;
   verified: boolean;
   /** Where the verification code was sent. */
-  otp_sent_to: string;
-  otp_expires_at: IsoTimestamp;
+  otp_sent_to?: string;
+  otp_expires_at?: IsoTimestamp;
   message: string;
 }
 
 /** Request body for `POST /v1/agent/verify`. */
 export interface VerifyRequest {
   /** The one-time code delivered to the signup human email. */
-  otp: string;
+  otp?: string;
 }
 
 /** One copy-ready MCP operation in the post-verification mailbox handoff. */

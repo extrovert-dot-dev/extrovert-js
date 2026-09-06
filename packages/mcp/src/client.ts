@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ListWebhooksParams, ConnectionResourceSelection } from "./types.js";
 import { Administration, type AdministrativeInput, type AdministrativeMode } from "./administration.js";
 import { normalizeInboxPage } from "./inbox-page.js";
@@ -62,7 +63,7 @@ import type {
   ReplyEmailResult,
   ScanBacklogStatus,
   SendEmailResult,
-  SignUpResult,
+  SignUpResult, InboxActivation,
   SubmitForReviewResult,
   SuppressionEntry,
   SuppressionPrecheck,
@@ -615,6 +616,47 @@ export interface ExtrovertClientOptions {
 }
 
 export class ExtrovertClient {
+  private readonly storageWarnings = new AsyncLocalStorage<{ warning?: { threshold: number; used_bytes: number; limit_bytes: number; cleanup_url?: string; billing_url?: string }; key?: string }>();
+  private readonly storageNotified = new Map<string, number>();
+
+  async withStorageWarnings<T extends { content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown> }>(run: () => Promise<T>): Promise<T> {
+    return this.storageWarnings.run({}, async () => {
+      const result = await run();
+      const observation = this.storageWarnings.getStore();
+      const warning = observation?.warning;
+      if (!warning) return result;
+      const key = observation.key ?? "";
+      const previous = this.storageNotified.get(key) ?? 0;
+      const text = warning.threshold === 100
+        ? "Inbox storage is full. Delete messages or ask your human to increase storage; new mail is temporarily deferred."
+        : `Inbox storage is ${warning.threshold}% full. Delete messages you no longer need, or ask your human about more storage.`;
+      if (warning.threshold > previous) {
+        this.storageNotified.set(key, warning.threshold);
+        result.content.push({ type: "text", text: text + (warning.cleanup_url ? ` Review messages: ${warning.cleanup_url}` : "") + (warning.billing_url ? ` Storage options: ${warning.billing_url}` : "") });
+      }
+      result.structuredContent = { ...result.structuredContent, storage_warning: { ...warning, actions: ["delete_messages", "ask_human_to_increase_storage"] } };
+      return result;
+    });
+  }
+
+  private observeStorageHeaders(response: Response, key: string): void {
+    const state = this.storageWarnings.getStore();
+    if (!state || response.headers.get("x-extrovert-storage-status") !== "available") return;
+    const threshold = Number(response.headers.get("x-extrovert-storage-threshold"));
+    if (threshold < 50) this.storageNotified.delete(key);
+    if (threshold < 90) { state.warning = undefined; return; }
+    if (!response.headers.has("x-extrovert-storage-used-bytes") || !response.headers.has("x-extrovert-storage-limit-bytes")) return;
+    const used = Number(response.headers.get("x-extrovert-storage-used-bytes"));
+    const limit = Number(response.headers.get("x-extrovert-storage-limit-bytes"));
+    if (![90,95,99,100].includes(threshold) || !Number.isSafeInteger(used) || used < 0 || !Number.isSafeInteger(limit) || limit < 0) return;
+    state.key = key;
+    const safeLink = (name: string): string | undefined => {
+      const value = response.headers.get(name); if (!value || value.length > 2048) return;
+      try { const url = new URL(value); if (url.protocol === "https:" && !url.username && !url.password) return url.href; } catch { /* Omit malformed advisory links. */ }
+    };
+    state.warning = { threshold, used_bytes: used, limit_bytes: limit, cleanup_url: safeLink("x-extrovert-storage-cleanup-url"), billing_url: safeLink("x-extrovert-storage-billing-url") };
+  }
+
   readonly administration = new Administration(async (request) => {
     if (this.store) return this.store.administrativeRequest(request);
     if (request.responseFormat === "binary") return this.getBinary(request.path, request.query, request.signal);
@@ -696,16 +738,26 @@ export class ExtrovertClient {
     return res;
   }
 
-  /** Confirm the signup OTP and elevate scope: `POST /v1/agent/verify`. */
-  async verify(input: { otp: string }): Promise<VerifyResult> {
+  /** Complete proven incoming-email activation (or a previously issued OTP) and elevate scope: `POST /v1/agent/verify`. */
+  async verify(input: { otp?: string }): Promise<VerifyResult> {
     if (this.store) {
-      const res = this.store.verify(input.otp);
+      const res = this.store.verify(input.otp ?? "");
       this.setSessionKey(res.agent_key, true);
       return res;
     }
     const res = await this.post<VerifyResult>("/v1/agent/verify", { otp: input.otp });
     this.setSessionKey(res.agent_key, true);
     return res;
+  }
+
+  async activationStatus(): Promise<InboxActivation> {
+    if (this.store) return this.store.activationStatus();
+    return this.get<InboxActivation>("/v1/agent/activation");
+  }
+
+  async correctActivationEmail(human_email: string, revision: number): Promise<InboxActivation> {
+    if (this.store) return this.store.correctActivationEmail(human_email, revision);
+    return this.patch<InboxActivation>("/v1/agent/activation", { human_email, revision });
   }
 
   /** Report whether the latest full-scope key was durably stored by this host. */
@@ -2044,6 +2096,7 @@ export class ExtrovertClient {
       }
     }
 
+    const storageKey = this.apiKey ?? "";
     let res: Response;
     let raw: string;
     try {
@@ -2066,6 +2119,7 @@ export class ExtrovertClient {
       clearTimeout(timer);
     }
 
+    this.observeStorageHeaders(res, storageKey);
     const parsed = raw ? safeJsonParse(raw) : undefined;
 
     if (!res.ok) {

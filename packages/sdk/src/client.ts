@@ -29,7 +29,7 @@ import type {
   EnrollResponse,
   Job,
   SignUpRequest,
-  SignUpResponse,
+  SignUpResponse, InboxActivation,
   StreamEvent,
   StreamOptions,
   VerifyRequest,
@@ -226,6 +226,9 @@ export class ExtrovertClient {
    * Pending verification is also fail-closed with 403 `signup_disabled` while
    * free signup is paused.
    */
+  activationStatus(signal?: AbortSignal): Promise<InboxActivation> { return this.transport.activationStatus(signal); }
+  correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation> { return this.transport.correctActivationEmail(human_email, revision, signal); }
+
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {
     return this.transport.verify(req, signal);
   }

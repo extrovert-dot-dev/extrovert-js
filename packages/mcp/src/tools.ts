@@ -117,11 +117,13 @@ function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): Registera
         },
         // The SDK validates `args` against `inputSchema` before invoking us.
         async (args: z.output<z.ZodObject<Shape>>) => {
-          try {
-            return withReviewWorkflow(spec.name, args as Record<string, unknown>, await spec.handler(args, ctx));
-          } catch (err) {
-            return toErrorResult(err);
-          }
+          return ctx.client.withStorageWarnings(async () => {
+            try {
+              return withReviewWorkflow(spec.name, args as Record<string, unknown>, await spec.handler(args, ctx));
+            } catch (err) {
+              return toErrorResult(err);
+            }
+          });
         },
       );
     },
@@ -681,15 +683,13 @@ const signUp = defineTool({
   name: "sign_up",
   title: "Sign up for a free account",
   description:
-    "Grab a free Extrovert account in one call (no enrollment token needed). Provisions a tenant and a first inbox, then " +
-    "emails a one-time verification code to your human_email. Returns a LIMITED verification-only agent key that " +
-    "cannot read or send mail and that this " +
-    "MCP session keeps only through verify_signup; it expires with the code and is revoked after verification. " +
-    "Re-calling with the same human_email rotates the bootstrap key and resends the code. Free signup may be " +
-    "temporarily paused; in that state the tool " +
-    "returns signup_disabled and creates nothing. Enrollment tokens remain available.",
+    "Reserve a free inbox for your agent. Supply the human email expected to activate it. " +
+    "For incoming-email activation, ask the human to send from that email to the returned inbox within 24 hours, " +
+    "or approve it after verified console sign-in. The key can only check, correct, or complete activation; it cannot read or send mail. " +
+    "Keep the issued key: repeating signup does not extend the reservation. Existing human accounts enroll agents through their console. " +
+    "During migration, a legacy response may instead report an emailed OTP. Follow the returned activation method.",
   inputSchema: {
-    human_email: emailAddress.describe("Your email: receives the one-time verification code."),
+    human_email: emailAddress.describe("The human email that will activate this inbox."),
     username: z
       .string()
       .regex(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/i, "local-part of an email address")
@@ -701,11 +701,11 @@ const signUp = defineTool({
   handler: async (args, { client }) => {
     const res: SignUpResult = await client.signUp({ human_email: args.human_email, username: args.username });
     const text = [
-      `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
+      res.activation_method === "incoming_email" ? res.message : `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
       `inbox: ${res.address}`,
       `agent_key (limited, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
-      `expires: ${res.otp_expires_at}`,
+      `expires: ${res.activation_expires_at ?? res.otp_expires_at}`,
       `This MCP session will use the limited key until verify_signup atomically exchanges it for the durable key. Do not store this bootstrap key for long-term use.`,
       `After verification, verify_signup repeats the inbox and returns exact read_messages / get_message / wait_for_email calls so mailbox use can continue without raw HTTP.`,
     ].join("\n");
@@ -713,17 +713,41 @@ const signUp = defineTool({
   },
 });
 
+const checkActivation = defineTool({
+  name: "check_activation",
+  title: "Check inbox activation",
+  description: "Check whether the human has activated your pending inbox. This does not read mail. When state is proven, call verify_signup without an OTP to exchange the temporary key.",
+  inputSchema: {},
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  handler: async (_args, { client }) => {
+    const result = await client.activationStatus();
+    return ok(result.state === "proven" ? "Your human has approved this inbox. Call verify_signup to finish activation." : `Inbox activation: ${result.state}. Send an email from ${result.human_email} to ${result.address}. Reservation expires ${new Date(result.expires_ms).toISOString()}.`, result as unknown as Record<string, unknown>);
+  },
+});
+
+const correctActivationEmail = defineTool({
+  name: "correct_activation_email",
+  title: "Correct activation email",
+  description: "Correct the expected human email before activation. Requires the latest revision from check_activation. Clears previous email proof; the human must send a fresh message. The original 24-hour deadline stays fixed.",
+  inputSchema: { human_email: emailAddress, revision: z.number().int().positive() },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  handler: async (args, { client }) => {
+    const result = await client.correctActivationEmail(args.human_email, args.revision);
+    return ok(`Send a new email from ${result.human_email} to ${result.address} to activate this inbox.`, result as unknown as Record<string, unknown>);
+  },
+});
+
 const verifySignup = defineTool({
   name: "verify_signup",
-  title: "Verify signup code",
+  title: "Complete inbox activation",
   description:
-    "Confirm the one-time code emailed by sign_up. On success the bootstrap key is revoked and you receive a NEW " +
+    "Complete activation after check_activation reports proven, or supply a legacy emailed OTP. On success the bootstrap key is revoked and you receive a NEW " +
     "full-scope agent key (create/read/send/webhooks). This MCP session switches to it automatically. The packaged " +
     "local stdio server also stores it in its permission-restricted credential file for future sessions. Pending " +
     "signup verification returns signup_disabled while free signup is temporarily paused; keep the limited key and " +
     "retry after reopening.",
   inputSchema: {
-    otp: z.string().min(4).max(12).describe("The verification code from your signup email."),
+    otp: z.string().min(4).max(12).optional().describe("Only for a legacy OTP signup. Omit after incoming-email or console approval."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -3408,6 +3432,8 @@ const ALL_TOOLS = [
   redeemEnrollment,
   signUp,
   verifySignup,
+  checkActivation,
+  correctActivationEmail,
   whoami,
   createInbox,
   listInboxes,

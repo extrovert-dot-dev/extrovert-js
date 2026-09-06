@@ -590,6 +590,23 @@ EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
 
 MIT © Message Science. *A side gate for agents.*
 
+## Incoming-email activation
+
+When signup returns `activation_method: "incoming_email"`, ask the human to send an
+email from `human_email` to `address`. The inbox reservation expires at
+`activation_expires_at`. Keep the temporary key and call `activationStatus()` until
+`state` is `"proven"`, then call `verify({})` to receive the durable key. Pending keys
+cannot read or send mail. `correctActivationEmail(humanEmail, revision)` clears any
+previous proof and keeps the original deadline. Legacy signup responses that issued
+an OTP still require that OTP until its original expiry.
+
+Mail responses expose advisory `X-Extrovert-Storage-*` headers from 90% usage.
+Use the exported `storageWarningFromHeaders(response.headers)` in a custom fetch
+wrapper to read the threshold, byte counts, and cleanup/billing links without
+consuming the response body. A missing or unavailable measurement is not zero usage.
+Native writes enforce the cap; reads and deletion remain available. Deduplicate
+human-facing suggestions within your session instead of repeating them on every read.
+
 For choosing access and handing setup over to workers, read
 [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/).
 

@@ -1,3 +1,4 @@
+import type { InboxActivation } from "./models.js";
 import type { ListWebhooksParams } from "./models.js";
 import { AdministrativeFixtures } from "./administration-fixtures.js";
 import type { AdministrativeRequest } from "./administration.js";
@@ -681,6 +682,27 @@ function forwardBodyText(note: string, parent: Message): string {
  * SDK exposes. One instance per mock client so tests/examples don't bleed into each other.
  */
 export class MockBackend {
+  incomingActivation = false;
+  private pendingActivation?: InboxActivation;
+  activationStatus(): InboxActivation {
+    const activation = this.pendingActivation;
+    if (!activation) throw new Error("No incoming-email activation exists");
+    if (activation.expires_ms <= Date.now() && activation.state !== "activated") activation.state = "expired";
+    return { ...activation };
+  }
+  correctActivationEmail(email: string, revision: number): InboxActivation {
+    const activation = this.activationStatus();
+    if (activation.revision !== revision || !["pending", "proven"].includes(activation.state)) throw new Error("Activation changed or expired");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Invalid human email");
+    this.pendingActivation = { ...activation, human_email: email, revision: revision + 1, state: "pending" };
+    return this.activationStatus();
+  }
+  /** Test-only trusted delivery; never available through a production client. */
+  proveFixtureActivation(sender: string): void {
+    const activation = this.activationStatus();
+    if (activation.state !== "pending" || sender !== activation.human_email) throw new Error("Activation sender mismatch or expired");
+    this.pendingActivation = { ...activation, state: "proven" };
+  }
   private administrativeFixtures = new AdministrativeFixtures();
   configureAdministrativeFixture(credential: string): void { this.administrativeFixtures = new AdministrativeFixtures(credential); }
   administrativeRequest(request: AdministrativeRequest): Promise<unknown> { return this.administrativeFixtures.request(request); }
@@ -734,6 +756,10 @@ export class MockBackend {
     // Stable offline code keeps the full signup → mailbox handoff executable in
     // examples and contract tests without ever weakening the live API's CSPRNG.
     const otp = "492013";
+    if (this.incomingActivation) {
+      if (existing) throw new Error("Activation already pending; use the existing key");
+      this.pendingActivation = { agent_id: agentId, address, human_email: email, created_ms: Date.now(), expires_ms: Date.now() + 86400000, revision: 1, state: "pending" };
+    }
     this.state.signupByEmail.set(email, { customerId, agentId, address, otp, verified: false });
     return {
       customer_id: customerId,
@@ -743,9 +769,14 @@ export class MockBackend {
       scopes: ["signup:verify"],
       address,
       verified: false,
-      otp_sent_to: email,
-      otp_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      message: "A verification code was sent to your email. Call verify with it.",
+      ...(this.incomingActivation ? {
+        activation_method: "incoming_email" as const, human_email: email,
+        activation_expires_at: new Date(this.pendingActivation!.expires_ms).toISOString(),
+        message: `Your agent’s inbox is almost ready. Send an email from ${email} to ${address} to activate it and link it to your human email.`,
+      } : { otp_sent_to: email,
+        otp_expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        message: "A verification code was sent to your email. Call verify with it.",
+      }),
     };
   }
 
@@ -753,8 +784,9 @@ export class MockBackend {
   verify(req: VerifyRequest): VerifyResponse {
     // The mock matches the OTP against any pending signup (single-tenant fixture).
     for (const [, s] of this.state.signupByEmail) {
-      if (!s.verified && s.otp === req.otp.trim()) {
+      if (!s.verified && (this.incomingActivation ? this.activationStatus().state === "proven" && this.pendingActivation?.agent_id === s.agentId : s.otp === (req.otp ?? "").trim())) {
         s.verified = true;
+        if (this.incomingActivation && this.pendingActivation) this.pendingActivation.state = "activated";
         return {
           agent_id: s.agentId,
           agent_key: `pk_agent_${s.agentId.slice(4)}_${rid("sk").slice(3)}`,
