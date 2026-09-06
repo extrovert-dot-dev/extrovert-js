@@ -6,9 +6,10 @@
 
 `@extrovert.dev/mcp` is the [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Extrovert](../README.md): Message Science's agentic-email platform. It gives an AI agent a real,
-persistent inbox on a domain Extrovert owns: created in one tool call, sends and receives, behind a
-**scoped key that expires and revokes on its own**. The key is bound to a fixed org + project (call
-`whoami` to see them): there is no project selector to manage.
+persistent inbox on a platform or customer domain, with explicit permission to create, read, send,
+and administer. Hosted OAuth connections carry the resource reach and actions chosen during
+consent; existing scoped agent keys retain their fixed resource ceilings. Call `whoami` to inspect
+the actual connection, its reach, actions, and expiry before starting work.
 
 > **Prerelease status:** the package is published on npm under the `next` dist-tag. Extrovert also
 > operates `https://mcp.extrovert.dev/mcp` as a stateless Streamable HTTP endpoint with browser OAuth.
@@ -31,7 +32,7 @@ redeem an enrollment key  ->  create_inbox  ->  use it as a sign-up address  -> 
 |---|---|
 | `redeem_enrollment` | Exchange an enrollment token (`pk_enroll_…`) for a **scoped agent key** (`pk_agent_…`). |
 | `create_inbox` | Create an inbox. Paid accounts use `extrovertmail.com`; free signups use `free.extrovertmail.com`. Attach arbitrary metadata. |
-| `list_inboxes` | List the inboxes this agent owns. Project keys need no args; an **org-tier** key must pick a breadth (`project:<id>` or `wildcard:true`). |
+| `list_inboxes` | List readable inboxes within the connection grant or legacy key ceiling. Broader connections can narrow the selection; legacy org keys must choose `project:<id>` or `wildcard:true`. |
 | `get_inbox` | Fetch one inbox by opaque `inbox_id` (`pmbx_…`) or address (with its metadata). |
 | `update_inbox` | Update settings; `daily_send_limit` (1–10,000) sets the enforced rolling-24-hour recipient cap and requires opt-in `mailbox:quota`. |
 | `delete_inbox` | Permanently delete an inbox, its messages, and sender identity. Requires `mailbox:delete`; cannot be undone. |
@@ -112,7 +113,7 @@ npx -y @extrovert.dev/mcp@next setup --host claude
 npx -y @extrovert.dev/mcp@next setup --host hermes
 ```
 
-Pin `@extrovert.dev/mcp@0.1.0-pre.11` for a reproducible dogfood environment. The package installs the
+Pin `@extrovert.dev/mcp@0.1.0-pre.12` for a reproducible dogfood environment. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 

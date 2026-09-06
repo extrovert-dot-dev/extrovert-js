@@ -778,7 +778,7 @@ const createInbox = defineTool({
     "Provision a real, persistent inbox for this agent in one call. Omit username and domain to create an instant address on a " +
     "platform shared domain (extrovertmail.com for paid accounts; free.extrovertmail.com for free signups). Shared local parts " +
     "must normalize to at least 5 characters and cannot use reserved names. Sender registration is included, so the inbox can send and receive immediately. Attach arbitrary metadata (string/number/boolean values) to tag the " +
-    "inbox; it is echoed back and replayed on idempotent retries. The inbox is created in the key's fixed project. " +
+    "inbox; it is echoed back and replayed on idempotent retries. The inbox is created in the active authorized project; selected-inbox reach excludes new inboxes. " +
     "Returns the address and inbox id.",
   inputSchema: {
     username: z
@@ -2641,7 +2641,7 @@ const registerWebhook = defineTool({
       .min(1)
       .optional()
       .describe("Event types to subscribe to. Defaults to [message.received]."),
-    inbox: inboxRef.optional().describe("Scope to one owned inbox. Omit to use the connection's resource reach; selected inbox IDs exclude replacements and future inboxes."),
+    inbox: inboxRef.optional().describe("Scope to one accessible inbox. Omit to use the connection's resource reach; selected inbox IDs exclude replacements and future inboxes."),
     client_id: z
       .string()
       .min(1)
@@ -3054,9 +3054,9 @@ const onboardDomain = defineTool({
   description:
     "Add an inbox subdomain the customer controls. The customer publishes the returned nameserver records; " +
     "Extrovert serves the zone and manages its mail records. This tool never purchases or registers a domain. For a new " +
-    "registration, call quote_domain and then request_domain_purchase; only a signed-in human or an existing bounded " +
-    "spend policy can authorize it. Use `scope` to make the domain org-shared (default) or bind it to this key's " +
-    "fixed project. Returns the nameserver records to publish.",
+    "registration, call quote_domain and then request_domain_purchase. A human, an explicitly delegated full-control " +
+    "administrative action, or an applicable spend policy authorizes purchase. Use `scope` to make the domain org-shared " +
+    "(default) or project-bound. Broader administrative setup can use the administrative action catalog with explicit path selectors. Returns the nameserver records to publish.",
   inputSchema: {
     domain: z.string().min(1).describe("The inbox subdomain to connect (e.g. agents.example.com)."),
     scope: z
@@ -3141,7 +3141,7 @@ const getJob = defineTool({
 });
 
 // ---------------------------------------------------------------------------
-// Commerce: agents may quote/request/cancel/poll; approval remains human-only
+// Commerce request tools do not approve. Explicit full control uses administrative actions.
 // ---------------------------------------------------------------------------
 
 const quoteDomain = defineTool({
@@ -3283,7 +3283,7 @@ const streamInfo = defineTool({
     "replay everything after it. Events use the same envelope a webhook delivers (e.g. message.received). To get pushed " +
     "deliveries in an external worker, configure a webhook consumer. A webhook does not itself resume an MCP host session.",
   inputSchema: {
-    inbox: inboxRef.optional().describe("Scope the stream to one owned inbox. Omit for the all-inboxes stream."),
+    inbox: inboxRef.optional().describe("Scope the stream to one accessible inbox. Omit for the all-inboxes stream."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { config }) => {
