@@ -981,9 +981,10 @@ const exportEmailConfig = defineTool({
   description:
     "Export an inbox's IMAP/SMTP server settings + login so you can configure a real mail client (e.g. Himalaya). " +
     "Requires the dedicated mailbox:credentials scope and a paid plan; free accounts cannot export raw credentials. Credentials do not imply direct SMTP is enabled. " +
-    "Raw SMTP defaults off, a human controls it per inbox, and it is effective only while paid entitlement remains active. Direct SMTP bypasses Extrovert approval/review, suppression and " +
-    "contact-list enforcement, List-Unsubscribe injection, and Extrovert billing/accounting. API/MCP sends keep those " +
-    "controls. Returns a ready-to-use config; use format=json for raw connection fields.",
+    "Raw SMTP defaults off, requires administrator enablement and active paid entitlement, and follows the inbox review and recipient policies. " +
+    "SMTP acceptance means custody, not delivery: use the review thread for approval, edits and rejection. " +
+    "Use a stable Message-ID for retries; supported MIME is limited to 8 MiB, text/HTML and ordinary attachments. " +
+    "Returns a ready-to-use config; use format=json for raw connection fields.",
   inputSchema: {
     inbox: inboxRef,
     format: z
@@ -1000,8 +1001,9 @@ const exportEmailConfig = defineTool({
   handler: async (args, { client }) => {
     const creds = await client.getCredentials(args.inbox);
     const warning =
-      "DIRECT SMTP BYPASS: SMTP sends do not pass through Extrovert review, suppression/contact-list checks, " +
-      "List-Unsubscribe injection, or Extrovert billing/accounting. Use MCP/API send tools when those controls matter.";
+      "SMTP REVIEW: SMTP acceptance means custody, not delivery. Required review is held in the Extrovert review thread; " +
+      "approval, edits and rejection happen there. Recipient checks and billing apply at final sending. " +
+      "Keep the same Message-ID when retrying an uncertain submission; use a new one for changed content.";
     if (args.format === "json") {
       const warnedCredentials = {
         ...(creds as unknown as Record<string, unknown>),
