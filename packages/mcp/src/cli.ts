@@ -26,7 +26,7 @@ Usage:
   extrovert agent status [--json]
   extrovert agent status --host auto|claude|codex|hermes --scope project|user
                          --skills <comma-separated Extrovert names> [--json]
-  extrovert setup [--host auto|codex|claude|hermes] [--transport stdio|hosted]
+  extrovert setup [--host auto|codex|claude|hermes] [--transport stdio|hosted] [--json]
   extrovert setup --refresh --host claude [--json]
   extrovert auth login [--no-browser | --browser] [--json] [--reconnect]
   extrovert auth login --with-token
@@ -255,8 +255,22 @@ function setupCommand(args: string[], context: CliContext): number {
   const transport = option(args, "--transport") ?? (requestedHost === "auto" ? "hosted" : "stdio");
   if (transport !== "stdio" && transport !== "hosted") throw new CliUsageError("--transport must be stdio or hosted");
   const credentialAvailable = transport === "stdio" && Boolean(context.env.EXTROVERT_API_KEY?.trim() || context.store.load());
+  const reportPending = (configurationChanged: boolean, instruction: string): void => {
+    const result = {
+      status: "host_reload_required", host, configuration_changed: configurationChanged,
+      mcp_runtime_verified: false, skill_reload_verified: false,
+      authentication_verified: false,
+      next_action: { actor: "human", action: "reload_host", retry_by_agent: false,
+        instruction: `${instruction} Restart or reload ${host}, then ask the agent in the new session to call the Extrovert MCP whoami tool. CLI whoami or doctor does not verify the host connection. Report setup as pending until that MCP call succeeds.` },
+    };
+    writeResult(context, result, hasFlag(args, "--json"), value => `Setup pending: host reload required. ${value.next_action.instruction}`);
+  };
   if (host === "hermes") {
     const result = setupHermes(context.env, context.store.paths.directory, transport);
+    if (hasFlag(args, "--json")) {
+      reportPending(!result.existed, `${result.existed ? "Existing Hermes configuration was preserved." : "Extrovert configured for this Hermes profile."} ${result.warning ?? ""} ${!result.existed && transport === "hosted" ? "Run 'hermes mcp login extrovert' and sign in to your existing account first." : !credentialAvailable && !result.existed ? "Run 'extrovert auth login' for this profile first." : ""}`);
+      return 0;
+    }
     context.stdout.write(`Hermes configuration: ${result.path}\n`);
     if (result.warning) context.stdout.write(`${result.warning}\n`);
     if (result.existed) {
@@ -276,7 +290,7 @@ function setupCommand(args: string[], context: CliContext): number {
   }
   if (existing.error) throw existing.error;
   if (existing.status === 0) {
-    context.stdout.write(`Extrovert MCP configuration exists for ${host}; it has not been changed. Configuration alone does not confirm a working connection. Start a new session and call whoami to verify access.\n`);
+    reportPending(false, `Extrovert MCP configuration exists for ${host}; it has not been changed.`);
     return 0;
   }
   if (!/no MCP server named|^not found$/im.test(`${existing.stderr}\n${existing.stdout}`)) {
@@ -285,7 +299,11 @@ function setupCommand(args: string[], context: CliContext): number {
   if (transport === "hosted" && host === "codex") {
     // Codex add can immediately start OAuth. Do not hide its login prompt inside
     // the installer's piped subprocess or wait indefinitely for a browser callback.
+    if (hasFlag(args, "--json")) {
+      context.stdout.write(`${JSON.stringify({ status: "human_action_required", host, configuration_changed: false, mcp_runtime_verified: false, skill_reload_verified: false, authentication_verified: false, next_action: { actor: "human", action: "configure_host", retry_by_agent: false, instruction: "Run codex mcp add extrovert --url https://mcp.extrovert.dev/mcp in your terminal and sign in to your existing account. Reload Codex, then ask the agent to call the Extrovert MCP whoami tool." } }, null, 2)}\n`);
+    } else {
     context.stdout.write("Setup required: Extrovert has not been configured for Codex. Run this native command in an interactive terminal and complete its sign-in flow:\ncodex mcp add extrovert --url https://mcp.extrovert.dev/mcp\nSign in to your existing Extrovert account first. Create an account only if you do not have one. Then start or reload Codex and call whoami to verify access.\n");
+    }
     return 1;
   }
   const addArgs = transport === "hosted"
@@ -299,12 +317,12 @@ function setupCommand(args: string[], context: CliContext): number {
     throw new Error(cleanCommandError(added.stderr) || `Could not configure Extrovert MCP for ${host}`);
   }
   if (transport === "hosted") {
-    context.stdout.write("Configured Extrovert hosted MCP for Claude Code in this project's local scope. Open /mcp in Claude Code to sign in to your existing Extrovert account; create an account only if you do not have one. Start or reload the session and call whoami to verify access.\n");
+    reportPending(true, "Configured Extrovert hosted MCP for Claude Code in this project's local scope. Open /mcp in Claude Code to sign in to your existing Extrovert account; create an account only if you do not have one.");
     return 0;
   }
-  context.stdout.write(`Configured Extrovert MCP for ${host}. ${credentialAvailable
-    ? "An agent credential is already available for this profile. Run 'extrovert doctor'."
-    : "Run 'extrovert auth login' to sign in to your existing account, or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'."} Start a new session and call whoami to verify the connection.\n`);
+  reportPending(true, `Configured Extrovert MCP for ${host}. ${credentialAvailable
+    ? "An agent credential is available for this profile; its validity has not been checked."
+    : "Run 'extrovert auth login' to sign in to your existing account, or redeem an enrollment key with 'extrovert enroll --agent-handle <name>'."}`);
   return 0;
 }
 
