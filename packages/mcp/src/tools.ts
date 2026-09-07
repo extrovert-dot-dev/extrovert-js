@@ -1583,6 +1583,9 @@ const submitRevision = defineTool({
       .min(0)
       .describe("The revision you composed against, from get_review's `revision` (PRIMARY CAS; 409 `stale` on mismatch)."),
     version: z.number().int().optional().describe("Optional row-version CAS (defense in depth)."),
+    to: z.array(z.string().min(1)).max(1000).optional().describe("Replace To recipients. Omit to preserve; [] clears the group. Additional recipients require available quota."),
+    cc: z.array(z.string().min(1)).max(1000).optional().describe("Replace Cc recipients. Each recipient consumes quota."),
+    bcc: z.array(z.string().min(1)).max(1000).optional().describe("Replace Bcc recipients. Each recipient consumes quota."),
     subject: z.string().optional().describe("New subject."),
     text: z.string().optional().describe("New body text (canonical: matches send/reply/forward's `text`)."),
     body: z
@@ -1617,6 +1620,7 @@ const submitRevision = defineTool({
       id: args.id,
       parent_revision: args.parent_revision,
       version: args.version,
+      to: args.to, cc: args.cc, bcc: args.bcc,
       subject: args.subject,
       text: args.text,
       body: args.body,
@@ -1638,7 +1642,7 @@ const cancelReview = defineTool({
     "Withdraw your own pending review (rr_…) to the terminal cancelled state: you decided not to send it after all. " +
     "Only the composing agent may cancel its own review. It is also the ONLY legal close-out for a `failed` review: " +
     "after a send_failed event the row cannot be retried by anyone, so cancel it and compose a NEW message.\n\n" +
-    "An already-terminal (sent/auto_sent/cancelled) review answers 409 `terminal`: STOP, do not retry. An `approved` " +
+    "An already-cancelled review returns its existing result and releases no quota twice. Sent/auto_sent answers 409 `terminal`: STOP, do not retry. An `approved` " +
     "review answers 409 `wrong_state`: it is mid-delivery, so wait for the `sent` or `send_failed` event instead.",
   inputSchema: {
     id: z.string().min(1).describe("Review id (rr_…)."),

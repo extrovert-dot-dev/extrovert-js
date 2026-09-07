@@ -910,6 +910,10 @@ export interface PostReviewChatRequest {
  * revision, else 409 STALE with NO mutation. version is OPTIONAL belt-and-suspenders.
  */
 export interface SubmitRevisionRequest {
+  /** Replace a recipient group; omit to preserve, [] to clear. Quota adjusts atomically. */
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
   parent_revision: number;
   version?: number;
   subject?: string;

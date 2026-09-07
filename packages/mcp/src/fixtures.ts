@@ -1372,15 +1372,19 @@ export class FixtureStore {
     if (input.version !== undefined && review.version !== input.version) {
       throw new StaleError("version is stale; re-read the review and retry", review);
     }
-    review.revision += 1;
-    review.version += 1;
-    review.state = "needs_review";
-    if (input.subject !== undefined) review.proposed_subject = input.subject;
     // `text` is canonical; `body` is the deprecated alias. Both-but-different is a
     // caller bug the server rejects rather than guessing which bytes to relay.
     if (input.text !== undefined && input.body !== undefined && input.text !== input.body) {
       throw new ConflictingAliasError("`body` is a deprecated alias for `text`; send one or the other");
     }
+    const recipients = {to: input.to ?? review.proposed_to, cc: input.cc ?? review.proposed_cc, bcc: input.bcc ?? review.proposed_bcc};
+    const envelope = [...(recipients.to ?? []), ...(recipients.cc ?? []), ...(recipients.bcc ?? [])];
+    if (envelope.length < 1 || envelope.length > 1000) throw new Error("A draft needs 1–1000 recipients");
+    review.proposed_to = [...(recipients.to ?? [])]; review.proposed_cc = [...(recipients.cc ?? [])]; review.proposed_bcc = [...(recipients.bcc ?? [])];
+    review.revision += 1;
+    review.version += 1;
+    review.state = "needs_review";
+    if (input.subject !== undefined) review.proposed_subject = input.subject;
     const newText = input.text ?? input.body;
     if (newText !== undefined) review.proposed_body_text = newText;
     if (input.html !== undefined) review.proposed_body_html = input.html;
@@ -1406,6 +1410,7 @@ export class FixtureStore {
   cancelReview(id: string): Review {
     const review = this.reviews.get(id);
     if (!review) throw new NotFoundError(`Review not found: ${id}`);
+    if (review.state === "cancelled") return review;
     this.assertMutable(review, "cancel_review", review.revision);
     if (review.state === "approved") {
       throw new WrongStateError(

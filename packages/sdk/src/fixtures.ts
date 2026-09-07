@@ -1594,10 +1594,6 @@ export class MockBackend {
         "version is stale; re-read the review, re-apply your edit on top, and resubmit",
       );
     }
-    review.revision += 1;
-    review.version += 1;
-    this.setReviewState(review, "needs_review");
-    if (req.subject !== undefined) review.proposed_subject = req.subject;
     // `text` is canonical, `body` a permanent alias - resolved here EXACTLY as the
     // server does, including the conflicting_alias rejection. The mock must not be
     // more permissive than the wire: a fixture that quietly accepts what the server
@@ -1613,6 +1609,14 @@ export class MockBackend {
         message: "`body` is a deprecated alias for `text`; send one or the other",
       });
     }
+    const recipients = {to: req.to ?? review.proposed_to, cc: req.cc ?? review.proposed_cc, bcc: req.bcc ?? review.proposed_bcc};
+    const envelope = [...(recipients.to ?? []), ...(recipients.cc ?? []), ...(recipients.bcc ?? [])];
+    if (envelope.length < 1 || envelope.length > 1000) throw new ValidationError({status:400,code:"invalid",message:"A draft needs 1–1000 recipients"});
+    review.proposed_to = [...(recipients.to ?? [])]; review.proposed_cc = [...(recipients.cc ?? [])]; review.proposed_bcc = [...(recipients.bcc ?? [])];
+    review.revision += 1;
+    review.version += 1;
+    this.setReviewState(review, "needs_review");
+    if (req.subject !== undefined) review.proposed_subject = req.subject;
     const revisedText = req.text ?? req.body;
     if (revisedText !== undefined) review.proposed_body_text = revisedText;
     if (req.html !== undefined) review.proposed_body_html = req.html;
@@ -1646,6 +1650,7 @@ export class MockBackend {
   cancelReview(reviewId: string): Review | undefined {
     const review = this.state.reviews.get(reviewId);
     if (!review) return undefined;
+    if (review.state === "cancelled") return review;
     if (TERMINAL_REVIEW_STATES.has(review.state)) {
       this.enqueueFrontRunNudge(review, review.revision);
       throw reviewConflict("terminal", review, `this review is already ${review.state}.`);

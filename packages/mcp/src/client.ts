@@ -357,6 +357,10 @@ export interface PostReviewChatInput {
 
 /** Post a new agent draft under a parent_revision CAS (Review Loop M5, spec §5.2). */
 export interface SubmitRevisionInput {
+  /** Replace a recipient group; omit to preserve, [] to clear. Quota adjusts atomically. */
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
   /** Review id (rr_…). */
   id: string;
   /** The revision the agent composed against (PRIMARY CAS; 409 STALE on mismatch). */
@@ -1122,6 +1126,7 @@ export class ExtrovertClient {
   async submitRevision(input: SubmitRevisionInput): Promise<Review> {
     if (this.store) return this.store.submitRevision(input);
     const body: Record<string, unknown> = { parent_revision: input.parent_revision };
+    for (const key of ["to", "cc", "bcc"] as const) if (input[key] !== undefined) body[key] = input[key];
     if (input.version !== undefined) body.version = input.version;
     if (input.subject !== undefined) body.subject = input.subject;
     // `text` is canonical; `body` is the permanent deprecated alias. BOTH are
