@@ -769,12 +769,13 @@ const verifySignup = defineTool({
     const persistence = client.credentialPersistenceStatus();
     const text = [
       `Verified. ${res.message}`,
+      `Next call: whoami {}. Call it now with the new credential, even if you called whoami while activation was pending. Explain this verified identity before continuing.`,
       ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, res.onboarding.guidance] : []),
       `agent_key (full, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
       credentialPersistenceMessage(persistence),
       `mailbox ready: ${res.address}`,
-      `First call: ${quick.list_mail.tool} ${JSON.stringify(quick.list_mail.arguments)}`,
+      `Mailbox reading after whoami: ${quick.list_mail.tool} ${JSON.stringify(quick.list_mail.arguments)}`,
       `Read one result: ${quick.read_message.tool} ${JSON.stringify(quick.read_message.arguments)}`,
       `Wait for new mail: ${quick.wait_for_mail.tool} ${JSON.stringify(quick.wait_for_mail.arguments)}`,
       `These tools return readable text plus structured message fields; do not download raw responses or invoke jq for ordinary mailbox work.`,
@@ -1396,7 +1397,7 @@ const listReviews = defineTool({
     const text = pageResult.items.length
       ? pageResult.items.map(renderReview).join("\n\n")
       : "No reviews match.";
-    const continuation = "Unless inspection-only was requested, handle outstanding authenticated feedback with get_review_feedback, learn_review_rule and submit_revision on the same review; acknowledge only after successful handling. Continue one wait_for_review_event(wait_seconds:55) without review_id across pending reviews until confirmed sent or terminal. Sent reviews still require reusable-learning reconciliation. A stopped host requires resumption.";
+    const continuation = "Before composing a new message, also call list_review_events, even when this review list is empty. Unless inspection-only was requested, handle outstanding authenticated feedback with get_review_feedback, learn_review_rule and submit_revision on the same review; acknowledge only after successful handling. Continue one wait_for_review_event(wait_seconds:55) without review_id across pending reviews until confirmed sent or terminal. Sent reviews still require reusable-learning reconciliation. A stopped host requires resumption.";
     return ok(`${pageResult.items.length} review(s).\n\n${text}\n\n${continuation}\nNext cursor: ${pageResult.next_cursor ?? "none"}`, {
       items: pageResult.items,
       total: pageResult.total,
