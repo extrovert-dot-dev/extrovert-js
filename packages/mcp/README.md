@@ -147,6 +147,24 @@ For reproducible environments, replace `@next` with the exact release version yo
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 
+To refresh an existing Claude Code stdio installation, run from its project root:
+
+```bash
+npx --yes --prefer-online @extrovert.dev/mcp@next setup --refresh --host claude --json
+```
+
+Refresh privately updates one supported local/user `npx` entry to the prerelease `@next`
+channel and puts `--prefer-online` before the package argument. It preserves every other
+argument, environment value and credential, and saves a private backup when changing the file.
+An entry already using both needs no write. Pins, custom launchers, project-scoped entries,
+busy files and ambiguous scopes return `manual_required`; inspect those configurations privately
+without putting credentials in commands or chat. A `restart_required` result means Claude must
+restart its Extrovert MCP connection, then check the live release and call `whoami`.
+This command does not restart the host or reload installed skill instructions.
+
+`auth whoami` is an alias for the local profile's `whoami` command; both support
+`--json` and neither verifies a separate hosted MCP session.
+
 ### CLI fallback
 
 The CLI uses the same typed client as MCP and prints ordinary message text without a `curl | jq`

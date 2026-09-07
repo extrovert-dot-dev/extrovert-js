@@ -9,6 +9,8 @@ import { renderDomain } from "./domain-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
 import { setupHermes } from "./hermes-setup.js";
+import { refreshClaude } from "./claude-refresh.js";
+import { inspectSkills, parseSkillInspection } from "./skill-status.js";
 import { Administration, type AdministrativeInput } from "./administration.js";
 import { createCredentialStore, credentialFingerprint, isPersistentAPICredential, type CredentialStore } from "./credentials.js";
 import { createLocalCredentialProvider, logoutLocalCredential } from "./local-oauth.js";
@@ -22,7 +24,10 @@ export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert with
 Usage:
   extrovert version [--json]
   extrovert agent status [--json]
+  extrovert agent status --host auto|claude|codex|hermes --scope project|user
+                         --skills <comma-separated Extrovert names> [--json]
   extrovert setup [--host auto|codex|claude|hermes] [--transport stdio|hosted]
+  extrovert setup --refresh --host claude [--json]
   extrovert auth login [--no-browser | --browser] [--json] [--reconnect]
   extrovert auth login --with-token
   extrovert auth complete [--json]
@@ -38,6 +43,7 @@ Usage:
   extrovert signup --human-email <email> [--username <name>]
   extrovert verify [--otp <code>]
   extrovert whoami [--json]
+  extrovert auth whoami [--json]
   extrovert admin actions [--search <text>] [--mode read|change] [--limit <n>] [--cursor <cursor>]
   extrovert admin describe <action-id>
   extrovert admin read <action-id> [--input <json>]
@@ -85,9 +91,15 @@ MCP transport:
   explicit-host setup configure that published server directly. --host auto prefers
   hosted OAuth when exactly one supported host is detected; Codex hosted setup
   provides its native interactive sign-in command. Existing entries stay intact.
+  setup --refresh --host claude privately updates one supported local/user npx
+  entry to @next with --prefer-online. It preserves credentials and other arguments,
+  refuses pins and ambiguous configurations, and still requires an MCP restart.
+  Refresh bypasses ordinary setup and accepts no --transport override. JSON returns
+  restart_required (exit 0) or manual_required (exit 1); runtime_verified stays false.
 `;
 
 export interface CliOptions {
+  cwd?: string;
   env?: NodeJS.ProcessEnv;
   stdin?: NodeJS.ReadStream | Readable;
   stdout?: NodeJS.WriteStream | Writable;
@@ -98,6 +110,7 @@ export interface CliOptions {
 }
 
 interface CliContext {
+  cwd: string;
   env: NodeJS.ProcessEnv;
   stdin: NodeJS.ReadStream | Readable;
   stdout: NodeJS.WriteStream | Writable;
@@ -110,6 +123,7 @@ interface CliContext {
 export async function runCli(argv: string[], options: CliOptions = {}): Promise<number> {
   const env = options.env ?? process.env;
   const context: CliContext = {
+    cwd: options.cwd ?? process.cwd(),
     env,
     stdin: options.stdin ?? process.stdin,
     stdout: options.stdout ?? process.stdout,
@@ -212,6 +226,16 @@ async function administrativeCommand(args: string[], context: CliContext): Promi
 }
 
 function setupCommand(args: string[], context: CliContext): number {
+  if (hasFlag(args, "--refresh")) {
+    if (option(args, "--host") !== "claude" || option(args, "--transport") !== undefined) {
+      throw new CliUsageError("Refresh requires --host claude without --transport; it preserves the existing stdio connection.");
+    }
+    const result = refreshClaude(context.env);
+    writeResult(context, result, hasFlag(args, "--json"), value => value.status === "restart_required"
+      ? `Extrovert's ${value.scope}-scope Claude configuration ${value.configuration_changed ? "was refreshed privately" : "already uses @next with --prefer-online"}. Restart Extrovert MCP in Claude, then check the live release and call whoami. The running connection has not been verified.${value.backup ? ` Private backup: ${value.backup}.` : ""}${value.cleanup_required ? " Configuration was saved, but temporary-file or lock cleanup needs private inspection before another refresh." : ""}`
+      : `No configuration was changed (${value.reason}). Review the existing Extrovert entry privately in Claude's MCP settings; preserve its scope, arguments and credentials. Do not copy credentials into commands or chat.`);
+    return result.status === "restart_required" ? 0 : 1;
+  }
   const requestedHost = option(args, "--host") ?? "codex";
   let host = requestedHost;
   if (host === "auto") {
@@ -286,9 +310,17 @@ function setupCommand(args: string[], context: CliContext): number {
 
 async function agentStatusCommand(args: string[], context: CliContext): Promise<number> {
   if (args[0] !== "status") throw new CliUsageError("agent requires status");
+  let inspection: ReturnType<typeof parseSkillInspection>;
+  try { inspection = parseSkillInspection(args, context.env); } catch (error) { throw new CliUsageError((error as Error).message); }
   const config = loadConfig(context.env);
   try {
     const remote = config.mock ? await buildAgentContext(config) : await fetchAgentContext();
+    if (inspection) {
+      const local = inspectSkills(inspection, remote.skills, context.env, context.cwd);
+      const result = { ...remote, status: local.status, installed_cli_version: SERVER_VERSION, release_match: remote.release_version === SERVER_VERSION, local_skills: local, next_action: local.next_action };
+      writeResult(context, result, hasFlag(args, "--json"), value => `${value.status}: ${value.local_skills.skills.map(skill => `${skill.name}: ${skill.status}`).join(", ")}\n${value.local_skills.summary}`);
+      return local.status === "files_ready" ? 0 : 1;
+    }
     const matches = remote.release_version === SERVER_VERSION;
     const result = {
       status: "ok", installed_cli_version: SERVER_VERSION,
@@ -300,6 +332,11 @@ async function agentStatusCommand(args: string[], context: CliContext): Promise<
       `Installed CLI: ${value.installed_cli_version}. Hosted release: ${value.release_version}.\nSignup: ${value.signup.status}.\nRead ${value.docs.agent_index}\nSkill files were not inspected or changed. Preserve pins and local edits.`);
     return 0;
   } catch {
+    if (inspection) {
+      const local = inspectSkills(inspection, undefined, context.env, context.cwd);
+      writeResult(context, { status: "unavailable", installed_cli_version: SERVER_VERSION, local_skills: local, next_action: "read_live_guide", contract_url: AGENT_CONTEXT_URL }, hasFlag(args, "--json"), () => `unavailable: Current published skill hashes could not be checked. ${local.summary}`);
+      return 1;
+    }
     const result = { status: "unavailable", installed_cli_version: SERVER_VERSION, next_action: "read_live_guide", agent_index: AGENT_GUIDE_URL, contract_url: AGENT_CONTEXT_URL,
       summary: "Could not verify the hosted release. Read the live guide; do not treat this local CLI as current or retry an ambiguous mutation." };
     writeResult(context, result, hasFlag(args, "--json"), value => `${value.summary}\n${value.agent_index}`);
@@ -311,6 +348,8 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
   const action = args[0];
   if (action === "complete" || action === "cancel" || (action === "login" && !hasFlag(args, "--with-token"))) return browserAuthCommand(args, context);
   switch (action) {
+    case "whoami":
+      return whoamiCommand(args.slice(1), context);
     case "login": {
       const token = (context.env.EXTROVERT_API_KEY ?? "").trim() || (await readSecret(context, "API credential: "));
       if (!isPersistentAPICredential(token)) throw new CliUsageError("Expected a scoped pk_agent_… key or independent ev_credential_… credential. Hosted OAuth access/refresh tokens remain managed by the host.");
@@ -342,7 +381,7 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
       return result.status === "remote_unconfirmed" ? 1 : 0;
     }
     default:
-      throw new CliUsageError("auth requires login, complete, cancel, status, or logout");
+      throw new CliUsageError("auth requires login, complete, cancel, status, whoami, or logout");
   }
 }
 
