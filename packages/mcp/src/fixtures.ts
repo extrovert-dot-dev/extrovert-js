@@ -358,7 +358,7 @@ export class FixtureStore {
   /** udo id -> change/undo audit row (mock mirror of extrovert_rule_undo_log). */
   private ruleAudit = new Map<string, RuleAuditEntry>();
   /** human_email -> mock self-signup state (in-memory OTP). */
-  private signups = new Map<string, { customerId: string; agentId: string; address: string; otp: string; verified: boolean }>();
+  private signups = new Map<string, { customerId: string; agentId: string; address: string; otp: string; verified: boolean; displayName?: string }>();
   /** "<scope>:<client_id>" -> the created resource id, mirroring the server's
    *  idempotency replay (a repeat with the same key returns the first result). */
   private idempotency = new Map<string, string>();
@@ -476,7 +476,7 @@ export class FixtureStore {
 
   // ---- self-signup + auth (Slice E) -------------------------------------
 
-  signUp(input: { human_email: string; username?: string }): SignUpResult {
+  signUp(input: { human_email: string; username?: string; display_name?: string }): SignUpResult {
     const email = input.human_email.trim().toLowerCase();
     const existing = this.signups.get(email);
     const customerId = existing?.customerId ?? nextId("cus");
@@ -489,7 +489,7 @@ export class FixtureStore {
       if (existing) throw new Error("Activation already pending; use the existing key");
       this.pendingActivation = { agent_id: agentId, address, human_email: email, created_ms: Date.now(), expires_ms: Date.now() + 86400000, revision: 1, state: "pending" };
     }
-    this.signups.set(email, { customerId, agentId, address, otp, verified: false });
+    this.signups.set(email, { customerId, agentId, address, otp, verified: false, displayName: normalizeFriendlyName(input.display_name ?? "") || fixtureDefaultName(address.split("@")[0]!) });
     const keyPrefix = "pk_agent_" + nextId("").split("_")[1];
     return {
       customer_id: customerId,
@@ -526,6 +526,7 @@ export class FixtureStore {
           message:
             "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
           mailbox_quickstart: mailboxQuickstart(s.address),
+          onboarding: { human_email: this.pendingActivation?.human_email ?? "human@example.com", display_name: s.displayName ?? "", plan: "free", console_url: "https://app.extrovert.dev", guidance: `Your inbox is ready. Initially, messages wait for your approval. You can approve, edit, or coach your agent in the review conversation. Your agent will save reusable feedback as writing rules for future messages; one-message edits stay with that draft. Your agents organize messages into categories and apply your rules. House rules apply across message categories, while category rules guide particular kinds of messages. Projects can have their own rules shared by their agents. Later, you can choose automatic sending under your policy or explicitly authorize a separate review agent. This connection has agent-scoped permissions, not full account control. Call whoami and explain its actual capabilities. Close setup by telling the human they can sign in to Extrovert and ask you to help explore what they and their agents can do. Broader administration requires their explicit consent. Continue with one brief hello email to the verified human through the normal review workflow. Before drafting, call list_reviews with composer: me AND list_review_events to recover prior work. If this hello already exists, resume it instead of creating another. Then call get_inbox, browse list_categories (propose a reusable category if none fits), get_rules for that category, and check_suppression for the human address. Use send_email with the category, composition token and intent. Use the stable client_id signup-hello:${s.agentId} for this first hello. Do not install example writing rules or manufacture bad prose. Explain the review link before waiting.` },
         };
       }
     }
@@ -612,7 +613,7 @@ export class FixtureStore {
       // patch drops any `null` values per the merge-null-clear semantics.
       metadata: applyMetadataPatch({}, opts.metadata),
     };
-    if (opts.displayName) inbox.display_name = opts.displayName;
+    inbox.display_name = normalizeFriendlyName(opts.displayName ?? "") || fixtureDefaultName(username);
     if (opts.inboundWebhookUrl) inbox.webhook_url = opts.inboundWebhookUrl;
     this.inboxes.set(inbox.id, inbox);
     this.messages.set(inbox.id, []);
@@ -682,7 +683,7 @@ export class FixtureStore {
     const inbox = this.resolveInbox(idOrAddress);
     if (!inbox) return undefined;
     if (opts.displayName !== undefined) {
-      inbox.display_name = opts.displayName || undefined;
+      inbox.display_name = normalizeFriendlyName(opts.displayName ?? "");
     }
     if (opts.inboundWebhookUrl !== undefined) {
       inbox.webhook_url = opts.inboundWebhookUrl || undefined;
@@ -1379,7 +1380,7 @@ export class FixtureStore {
     }
     const recipients = {to: input.to ?? review.proposed_to, cc: input.cc ?? review.proposed_cc, bcc: input.bcc ?? review.proposed_bcc};
     const envelope = [...(recipients.to ?? []), ...(recipients.cc ?? []), ...(recipients.bcc ?? [])];
-    if (envelope.length < 1 || envelope.length > 1000) throw new Error("A draft needs 1–1000 recipients");
+    if (envelope.length < 1 || envelope.length > 50) throw new Error("A draft needs 1–50 recipients");
     review.proposed_to = [...(recipients.to ?? [])]; review.proposed_cc = [...(recipients.cc ?? [])]; review.proposed_bcc = [...(recipients.bcc ?? [])];
     review.revision += 1;
     review.version += 1;
@@ -2116,6 +2117,7 @@ export class FixtureStore {
       mode: opts.mode ?? "review",
       effective_mode: opts.mode ?? "review",
       kind: opts.kind,
+      from_display_name: this.requireInbox(opts.fromAddress).display_name ?? "",
       from_address: opts.fromAddress,
       agent_id: this.agentId,
       category_id: opts.categoryId,
@@ -3380,4 +3382,20 @@ function base64ByteLength(b64: string): number {
   if (clean.length === 0) return 0;
   const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
   return Math.floor((clean.length * 3) / 4) - padding;
+}
+
+// Storage normalization for fixtures; the live API owns Unicode validation.
+function normalizeFriendlyName(name: string): string {
+  return name.replace(/\p{Zs}+/gu, " ").replace(/^ | $/g, "").normalize("NFC");
+}
+
+// Fixture-only default for ASCII mailbox handles. The live Go service owns
+// validation of user-supplied names and returns the effective stored value.
+function fixtureDefaultName(localPart: string): string {
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,38}[a-z0-9])?$/i.test(localPart)) return "Agent";
+  if (/^agent$/i.test(localPart)) return "Agent";
+  const suffix = /^agent[0-9._-]/i.test(localPart)
+    ? localPart.slice(5).replace(/^[._-]+/, "")
+    : localPart;
+  return `Agent ${suffix.replace(/_/g, "-")}`;
 }

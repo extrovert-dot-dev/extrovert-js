@@ -358,11 +358,14 @@ export interface ReviewIntent {
 
 /** A review request (rr_…): the pre-send record under the Review Loop. */
 export interface Review {
+  review_path?: string;
   id: string;
   state: ReviewState;
   mode: ReviewMode;
   effective_mode: ReviewMode;
   kind: "send" | "reply" | "forward";
+  /** Captured sender name; empty means bare address, absent means legacy/unknown. */
+  from_display_name?: string;
   from_address: string;
   agent_id: string;
   category_id?: string;
@@ -787,7 +790,7 @@ export interface RuleAuditEntry {
 /** A Review Loop submit that was parked for human review (202). */
 export interface QueuedForReviewResult {
   kind: "queued_for_review";
-  review: { id: string; state: ReviewState; effective_mode?: ReviewMode };
+  review: { review_path?: string; id: string; state: ReviewState; effective_mode?: ReviewMode };
 }
 
 /**
@@ -911,6 +914,7 @@ export interface MailboxQuickstart {
 
 /** Result of confirming a signup OTP: a new full-scope key and ready inbox. */
 export interface VerifyResult {
+  onboarding?: { human_email: string; display_name: string; plan: string; console_url: string; guidance: string };
   agent_id: string;
   agent_key: string;
   key_prefix: string;

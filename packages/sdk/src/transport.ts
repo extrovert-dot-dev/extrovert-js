@@ -117,7 +117,7 @@ export interface Transport {
   administrativeRequest(request: AdministrativeRequest): Promise<unknown>;
   enroll(req: EnrollRequest, signal?: AbortSignal): Promise<EnrollResponse>;
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse>;
-  activationStatus(signal?: AbortSignal): Promise<InboxActivation>;
+  activationStatus(signal?: AbortSignal, waitSeconds?: number): Promise<InboxActivation>;
   correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation>;
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse>;
   whoami(signal?: AbortSignal): Promise<WhoAmI>;
@@ -400,7 +400,7 @@ export class HttpTransport implements Transport {
     return this.call({ method: "POST", path: "/v1/agent/sign-up", body: req, signal });
   }
 
-  activationStatus(signal?: AbortSignal): Promise<InboxActivation> { return this.call({ method: "GET", path: "/v1/agent/activation", signal }); }
+  activationStatus(signal?: AbortSignal, waitSeconds?: number): Promise<InboxActivation> { return this.call({ method: "GET", path: "/v1/agent/activation", query: { wait_seconds: waitSeconds }, timeoutMs: ((waitSeconds ?? 0) + 10) * 1000, signal }); }
   correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation> { return this.call({ method: "PATCH", path: "/v1/agent/activation", body: { human_email, revision }, signal }); }
 
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {

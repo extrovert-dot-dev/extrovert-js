@@ -168,7 +168,7 @@ export interface CreateInboxRequest {
    * scoped to. If omitted, the account's shared domain is used.
    */
   domain?: string;
-  /** Human-readable display name used in the `From:` header on sends. */
+  /** Sender name for API mail. Up to 60 Unicode characters after normalization. No emoji, controls, invisibles, embedded addresses or thread markers. SMTP preserves its own validated name. Empty or omitted generates Agent {username}; agent007 becomes Agent 007 and alice_bot becomes Agent alice-bot. If a default cannot be generated safely, it falls back to Agent. Invalid explicit names are rejected. */
   display_name?: string;
   /**
    * Idempotency handle. Re-creating with the same `client_id` returns the existing inbox rather
@@ -208,8 +208,9 @@ export interface CreateInboxRequest {
  */
 export interface UpdateInboxRequest {
   /**
-   * New sender display / `From` name, propagated to the inbox and the authenticated sender.
-   * An empty string falls back to the address local-part at the mail layers.
+   * Sender name for future API mail; same validation as create.
+   * Empty string clears to a bare address. Omission leaves unchanged.
+   * Queued reviews retain their captured name; SMTP uses its own validated name.
    */
   display_name?: string;
   /** Replace the inbox's inbound webhook target. An empty string clears it. */
@@ -402,6 +403,7 @@ export interface Attachment {
  * An outbound attachment on send / reply. `content_base64` is the standard
  * base64 encoding of the file bytes. Mirrors the Go `attachmentRequest`.
  */
+/** Up to 20 files per email; all encoded files, headers and bodies share a 1,800,000-byte budget. */
 export interface AttachmentInput {
   filename: string;
   content_type: string;
@@ -521,7 +523,7 @@ export interface DeleteResult {
   count: number;
 }
 
-/** Request body for `POST /v1/inboxes/{addr}/send`. */
+/** Request body for `POST /v1/inboxes/{addr}/send`. Maximum 50 combined To/Cc/Bcc entries and 1,800,000 encoded email bytes, including attachments. */
 export interface SendRequest {
   /** A single address or a list; the SDK normalizes it to an array on the wire. */
   to: string | string[];
@@ -582,6 +584,8 @@ export interface SendRequest {
  * selects the parent; the server derives `to` (original participants), the
  * `Re:`-prefixed subject, and the `In-Reply-To` / `References` headers: you do
  * NOT pass `to`. Set `reply_all` to reply to every thread recipient.
+ * The derived envelope is limited to 50 combined To/Cc/Bcc recipients; the full
+ * encoded message, including attachments, must fit within 1,800,000 bytes.
  */
 export interface ReplyRequest {
   /** Reply to the latest message in this thread. One of thread_id / message_id. */
@@ -794,11 +798,14 @@ export interface ReviewIntent {
 
 /** A review request (rr_…): the pre-send record under the Review Loop. */
 export interface Review {
+  review_path?: string;
   id: string;
   state: ReviewState;
   mode: ReviewMode;
   effective_mode: ReviewMode;
   kind: "send" | "reply" | "forward";
+  /** Captured sender name; empty means bare address, absent means legacy/unknown. */
+  from_display_name?: string;
   from_address: string;
   agent_id: string;
   category_id?: string;
@@ -1446,7 +1453,7 @@ export interface AckReviewEventResult {
 /** A Review Loop submit parked for human review (202). */
 export interface QueuedForReviewResult {
   kind: "queued_for_review";
-  review: { id: string; state: ReviewState; effective_mode?: ReviewMode };
+  review: { review_path?: string; id: string; state: ReviewState; effective_mode?: ReviewMode };
 }
 
 /** A Review Loop submit sent immediately (200). */
@@ -2002,7 +2009,9 @@ export interface StreamOptions {
 
 /** Request body for the unauthenticated `POST /v1/agent/sign-up`. */
 export interface SignUpRequest {
-  /** Human email that receives the one-time verification code. */
+  /** Friendly From name; same validation/defaults as inbox creation. */
+  display_name?: string;
+  /** Human email that activates the inbox using the returned verification method. */
   human_email: string;
   /** Desired local part on `free.extrovertmail.com`. It must normalize to at least 5 characters and cannot use a reserved name. */
   username?: string;
@@ -2073,6 +2082,7 @@ export interface MailboxQuickstart {
  * a process restart or context compaction.
  */
 export interface VerifyResponse {
+  onboarding?: { human_email: string; display_name: string; plan: string; console_url: string; guidance: string };
   agent_id: string;
   agent_key: string;
   key_prefix: string;

@@ -418,10 +418,16 @@ function renderSendResult(r: SendResult): string {
  * only handle an agent has to resume after a crash, and it is what every
  * follow-up verb (get_review, submit_revision, the event drain) keys on.
  */
+function reviewHandoff(review: { review_path?: string }): string {
+  const link = review.review_path ? `https://app.extrovert.dev${review.review_path}` : "https://app.extrovert.dev";
+  return `Your next action is a message to the human. Include this complete handoff before any waiting tool call:\n"Your draft is ready for your review; it has not been sent. Open ${link} and sign in with your linked human email. Connect the workspace if prompted. You can approve it, edit it, or coach me on revisions in the review conversation. I can save your reusable feedback as writing rules for future messages."\nInclude the actual link, not "the link above". Do not assume the notification email arrived or describe the send as complete. After this human-facing message, continue monitoring the review.`;
+}
+
 function renderSendOutcome(verb: string, result: SendEmailResult | ReplyEmailResult): string {
   if ("kind" in result) {
     return [
       `Queued for human review: NOT sent.`,
+      reviewHandoff(result.review),
       `review: ${result.review.id} · state: ${result.review.state}${
         result.review.effective_mode ? ` · effective_mode: ${result.review.effective_mode}` : ""
       }`,
@@ -445,6 +451,7 @@ function renderSubmitResult(r: SubmitForReviewResult): string {
   }
   return [
     `Queued for review: NOT sent.`,
+    reviewHandoff(r.review),
     `review: ${r.review.id} · state: ${r.review.state}${
       r.review.effective_mode ? ` · effective_mode: ${r.review.effective_mode}` : ""
     }`,
@@ -468,7 +475,7 @@ function renderReview(r: Review): string {
   const cat = r.category_id ? ` · category: ${r.category_id}` : "";
   const version = r.version !== undefined ? ` · version: ${r.version}` : "";
   const lines = [
-    `${r.id}  [${r.state}]  ${r.kind} from ${r.from_address}${cat}`,
+    `${r.id}  [${r.state}]  ${r.kind} from ${r.from_display_name ? `${r.from_display_name} <${r.from_address}>` : r.from_address}${cat}`,
     `   revision: ${r.revision}${version}  (pass revision as parent_revision to submit_revision)`,
     `   subject: ${subject}${intent}`,
   ];
@@ -690,6 +697,7 @@ const signUp = defineTool({
     "During migration, a legacy response may instead report an emailed OTP. Follow the returned activation method.",
   inputSchema: {
     human_email: emailAddress.describe("The human email that will activate this inbox."),
+    display_name: z.string().max(512).optional().describe("The sender name humans see, for example Coleman. Separate from the email username. Omit for the validated Agent {username} default; up to 60 Unicode characters after normalization."),
     username: z
       .string()
       .regex(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/i, "local-part of an email address")
@@ -699,10 +707,11 @@ const signUp = defineTool({
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
-    const res: SignUpResult = await client.signUp({ human_email: args.human_email, username: args.username });
+    const res: SignUpResult = await client.signUp({ human_email: args.human_email, username: args.username, display_name: args.display_name });
     const text = [
       res.activation_method === "incoming_email" ? res.message : `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
       `inbox: ${res.address}`,
+      ...(res.activation_method === "incoming_email" ? [`Tell the human the activation instructions now, then call check_activation {"wait_seconds":55}. While this session is active, repeat pending waits for up to five minutes. A timeout preserves the reservation; resume with the same key.`] : []),
       `agent_key (limited, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
       `expires: ${res.activation_expires_at ?? res.otp_expires_at}`,
@@ -716,12 +725,16 @@ const signUp = defineTool({
 const checkActivation = defineTool({
   name: "check_activation",
   title: "Check inbox activation",
-  description: "Check whether the human has activated your pending inbox. This does not read mail. When state is proven, call verify_signup without an OTP to exchange the temporary key.",
-  inputSchema: {},
+  description: "Check whether the human has activated your pending inbox. Pass wait_seconds:55 to wait for proof while this session is running. Show the activation instructions before waiting. On pending timeout, continue a bounded watch or report how to resume; do not claim activation. This does not read mail. When state is proven, call verify_signup without an OTP to exchange the temporary key.",
+  inputSchema: { wait_seconds: z.number().int().min(0).max(55).optional() },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  handler: async (_args, { client }) => {
-    const result = await client.activationStatus();
-    return ok(result.state === "proven" ? "Your human has approved this inbox. Call verify_signup to finish activation." : `Inbox activation: ${result.state}. Send an email from ${result.human_email} to ${result.address}. Reservation expires ${new Date(result.expires_ms).toISOString()}.`, result as unknown as Record<string, unknown>);
+  handler: async (args, { client }) => {
+    const result = await client.activationStatus(args.wait_seconds);
+    const message = result.state === "proven" ? "Your human has approved this inbox. Call verify_signup without an OTP to finish activation."
+      : result.state === "activated" ? "This inbox is activated. Verify your durable connection with whoami."
+      : result.state === "expired" ? "This reservation expired. Sign in to Extrovert to continue; do not keep waiting for this activation."
+      : `Inbox activation: ${result.state}. Send an email from ${result.human_email} to ${result.address}. Reservation expires ${new Date(result.expires_ms).toISOString()}.`;
+    return ok(message, result as unknown as Record<string, unknown>);
   },
 });
 
@@ -756,6 +769,7 @@ const verifySignup = defineTool({
     const persistence = client.credentialPersistenceStatus();
     const text = [
       `Verified. ${res.message}`,
+      ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, res.onboarding.guidance] : []),
       `agent_key (full, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
       credentialPersistenceMessage(persistence),
@@ -834,7 +848,7 @@ const createInbox = defineTool({
       .string()
       .optional()
       .describe("Domain to create the inbox on (must be an org domain). Omit for the account's shared domain."),
-    display_name: z.string().max(128).optional().describe("Display name on outbound mail."),
+    display_name: z.string().max(512).optional().describe("Sender name for API mail, up to 60 Unicode characters after normalization. Use a clear identity without emoji, invisible characters, addresses or thread markers. Omit/empty defaults to Agent {username}: agent007 becomes Agent 007; alice_bot becomes Agent alice-bot. Unsafe generated defaults fall back to Agent; invalid explicit names are rejected. SMTP preserves its own validated name."),
     inbound_webhook_url: z
       .string()
       .url()
@@ -943,9 +957,9 @@ const updateInbox = defineTool({
     inbox: inboxRef,
     display_name: z
       .string()
-      .max(128)
+      .max(512)
       .optional()
-      .describe("New sender display / 'From' name. Empty string falls back to the address local-part."),
+      .describe("Sender name for future API mail, up to 60 Unicode characters after normalization. Empty string clears to a bare address; omission leaves unchanged. No emoji, invisibles, embedded addresses or thread markers. Queued reviews retain their name; SMTP uses its own validated name."),
     inbound_webhook_url: z
       .string()
       .optional()
@@ -983,7 +997,7 @@ const exportEmailConfig = defineTool({
     "Requires the dedicated mailbox:credentials scope and a paid plan; free accounts cannot export raw credentials. Credentials do not imply direct SMTP is enabled. " +
     "Raw SMTP defaults off, requires administrator enablement and active paid entitlement, and follows the inbox review and recipient policies. " +
     "SMTP acceptance means custody, not delivery: use the review thread for approval, edits and rejection. " +
-    "Use a stable Message-ID for retries; supported MIME is limited to 8 MiB, text/HTML and ordinary attachments. " +
+    "Use a stable Message-ID for retries; supported MIME is limited to 1,800,000 bytes including encoded attachments, text/HTML and ordinary attachments. " +
     "Returns a ready-to-use config; use format=json for raw connection fields.",
   inputSchema: {
     inbox: inboxRef,
@@ -1041,7 +1055,7 @@ const sendEmail = defineTool({
   name: "send_email",
   title: "Send email",
   description:
-    "Compose a new email from one of this agent's inboxes and submit it for HUMAN REVIEW: the default path. " +
+    "Compose a new email from one of this agent's inboxes and submit it for HUMAN REVIEW: the default path. Limits: 50 total To/Cc/Bcc recipients, 1,800,000 encoded message bytes including attachments, at most 20 attachments. " +
     "Starts a new thread. Use reply_email to respond within an existing thread. Before composing, recover composer=me list_reviews and list_review_events. Select one primary list_categories category by semantic fit; automatically propose_category if none fits, then use it immediately under supervision. Fetch get_rules with that category so category and house rules both apply.\n\n" +
     "ALWAYS pass `intent`. The account's review policy governs EVERY send, and the default policy is " +
     "`require_review`: a send with no `intent` is REFUSED with 422 intent_required, and nothing is sent OR queued. " +
@@ -1058,12 +1072,12 @@ const sendEmail = defineTool({
     "avoid the round-trip.",
   inputSchema: {
     inbox: inboxRef,
-    to: z.array(emailAddress).min(1).describe("One or more recipient addresses."),
+    to: z.array(emailAddress).max(50).min(1).describe("One or more recipient addresses."),
     subject: z.string().max(255).describe("Subject line."),
     text: z.string().describe("Plain-text body."),
     html: z.string().optional().describe("Optional HTML body."),
-    cc: z.array(emailAddress).optional().describe("Optional Cc recipients."),
-    bcc: z.array(emailAddress).optional().describe("Optional Bcc recipients."),
+    cc: z.array(emailAddress).max(50).optional().describe("Optional Cc recipients."),
+    bcc: z.array(emailAddress).max(50).optional().describe("Optional Bcc recipients."),
     reply_to: emailAddress.optional().describe("Override the Reply-To header."),
     headers: z
       .record(z.string(), z.string())
@@ -1174,8 +1188,8 @@ const replyEmail = defineTool({
       .describe("Optional last_message_id from get_thread. Returns 409 if the thread advanced; this is stale-context detection, not an atomic send lock."),
     text: z.string().optional().describe("Plain-text reply body."),
     html: z.string().optional().describe("Optional HTML reply body."),
-    cc: z.array(emailAddress).optional().describe("Optional Cc recipients."),
-    bcc: z.array(emailAddress).optional().describe("Optional Bcc recipients."),
+    cc: z.array(emailAddress).max(50).optional().describe("Optional Cc recipients."),
+    bcc: z.array(emailAddress).max(50).optional().describe("Optional Bcc recipients."),
     reply_to: emailAddress.optional().describe("Override the Reply-To header."),
     headers: z
       .record(z.string(), z.string())
@@ -1278,9 +1292,9 @@ const forwardEmail = defineTool({
   inputSchema: {
     inbox: inboxRef,
     message_id: z.string().min(1).describe("Opaque id of the message to forward (msg_…)."),
-    to: z.array(emailAddress).min(1).describe("One or more recipient addresses."),
-    cc: z.array(emailAddress).optional().describe("Optional Cc recipients."),
-    bcc: z.array(emailAddress).optional().describe("Optional Bcc recipients."),
+    to: z.array(emailAddress).max(50).min(1).describe("One or more recipient addresses."),
+    cc: z.array(emailAddress).max(50).optional().describe("Optional Cc recipients."),
+    bcc: z.array(emailAddress).max(50).optional().describe("Optional Bcc recipients."),
     text: z.string().optional().describe("Optional note to prepend (plain text)."),
     html: z
       .string()
@@ -1583,9 +1597,9 @@ const submitRevision = defineTool({
       .min(0)
       .describe("The revision you composed against, from get_review's `revision` (PRIMARY CAS; 409 `stale` on mismatch)."),
     version: z.number().int().optional().describe("Optional row-version CAS (defense in depth)."),
-    to: z.array(z.string().min(1)).max(1000).optional().describe("Replace To recipients. Omit to preserve; [] clears the group. Additional recipients require available quota."),
-    cc: z.array(z.string().min(1)).max(1000).optional().describe("Replace Cc recipients. Each recipient consumes quota."),
-    bcc: z.array(z.string().min(1)).max(1000).optional().describe("Replace Bcc recipients. Each recipient consumes quota."),
+    to: z.array(z.string().min(1)).max(50).optional().describe("Replace To recipients. Omit to preserve; [] clears the group. Additional recipients require available quota."),
+    cc: z.array(z.string().min(1)).max(50).optional().describe("Replace Cc recipients. Each recipient consumes quota."),
+    bcc: z.array(z.string().min(1)).max(50).optional().describe("Replace Bcc recipients. Each recipient consumes quota."),
     subject: z.string().optional().describe("New subject."),
     text: z.string().optional().describe("New body text (canonical: matches send/reply/forward's `text`)."),
     body: z

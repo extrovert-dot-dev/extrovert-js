@@ -387,6 +387,7 @@ interface MockState {
 
 /** Mock self-signup bookkeeping (in-memory OTP). */
 interface SignupState {
+  displayName?: string;
   customerId: string;
   agentId: string;
   address: string;
@@ -760,7 +761,7 @@ export class MockBackend {
       if (existing) throw new Error("Activation already pending; use the existing key");
       this.pendingActivation = { agent_id: agentId, address, human_email: email, created_ms: Date.now(), expires_ms: Date.now() + 86400000, revision: 1, state: "pending" };
     }
-    this.state.signupByEmail.set(email, { customerId, agentId, address, otp, verified: false });
+    this.state.signupByEmail.set(email, { customerId, agentId, address, otp, verified: false, displayName: normalizeFriendlyName(req.display_name ?? "") || fixtureDefaultName(address.split("@")[0]!) });
     return {
       customer_id: customerId,
       agent_id: agentId,
@@ -797,6 +798,7 @@ export class MockBackend {
           message:
             "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
           mailbox_quickstart: mailboxQuickstart(s.address),
+          onboarding: {human_email: this.pendingActivation?.human_email ?? "human@example.com",display_name:s.displayName ?? "",plan:"free",console_url:"https://app.extrovert.dev",guidance:"Your agent drafts; you approve, edit, or coach it before sending. Call whoami to explain current access."},
         };
       }
     }
@@ -841,7 +843,7 @@ export class MockBackend {
       address: `${username}@${domain}`,
       username,
       domain,
-      display_name: req.display_name ?? null,
+      display_name: normalizeFriendlyName(req.display_name ?? "") || fixtureDefaultName(username),
       status: "live",
       onboarding_mode: req.domain ? "ns_delegated" : "shared",
       agent_id: null,
@@ -913,8 +915,8 @@ export class MockBackend {
     assertProjectMatch(req.project_id);
     const inbox = this.state.inboxes.get(address);
     if (!inbox) return undefined;
-    if (req.display_name !== undefined) {
-      inbox.display_name = req.display_name === "" ? null : req.display_name;
+    if (req.display_name != null) {
+      inbox.display_name = normalizeFriendlyName(req.display_name ?? "");
     }
     if (req.webhook_url !== undefined) {
       inbox.webhook_url = req.webhook_url === "" ? null : req.webhook_url;
@@ -1611,7 +1613,7 @@ export class MockBackend {
     }
     const recipients = {to: req.to ?? review.proposed_to, cc: req.cc ?? review.proposed_cc, bcc: req.bcc ?? review.proposed_bcc};
     const envelope = [...(recipients.to ?? []), ...(recipients.cc ?? []), ...(recipients.bcc ?? [])];
-    if (envelope.length < 1 || envelope.length > 1000) throw new ValidationError({status:400,code:"invalid",message:"A draft needs 1–1000 recipients"});
+    if (envelope.length < 1 || envelope.length > 50) throw new ValidationError({status:400,code:"invalid",message:"A draft needs 1–50 recipients"});
     review.proposed_to = [...(recipients.to ?? [])]; review.proposed_cc = [...(recipients.cc ?? [])]; review.proposed_bcc = [...(recipients.bcc ?? [])];
     review.revision += 1;
     review.version += 1;
@@ -2548,6 +2550,7 @@ export class MockBackend {
       effective_mode: mode,
       closed: false,
       kind: opts.kind,
+      from_display_name: this.state.inboxes.get(address)?.display_name ?? "",
       from_address: address,
       agent_id: rid("agt"),
       category_id: opts.categoryId,
@@ -3497,4 +3500,20 @@ function base64ByteLength(b64: string): number {
   if (clean.length === 0) return 0;
   const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
   return Math.floor((clean.length * 3) / 4) - padding;
+}
+
+// Storage normalization for fixtures; the live API owns Unicode validation.
+function normalizeFriendlyName(name: string): string {
+  return name.replace(/\p{Zs}+/gu, " ").replace(/^ | $/g, "").normalize("NFC");
+}
+
+// Fixture-only default for ASCII mailbox handles. The live Go service owns
+// validation of user-supplied names and returns the effective stored value.
+function fixtureDefaultName(localPart: string): string {
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,38}[a-z0-9])?$/i.test(localPart)) return "Agent";
+  if (/^agent$/i.test(localPart)) return "Agent";
+  const suffix = /^agent[0-9._-]/i.test(localPart)
+    ? localPart.slice(5).replace(/^[._-]+/, "")
+    : localPart;
+  return `Agent ${suffix.replace(/_/g, "-")}`;
 }

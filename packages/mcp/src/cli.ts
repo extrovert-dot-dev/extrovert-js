@@ -40,8 +40,8 @@ Usage:
   extrovert domain wait <domain> [--timeout-seconds <0-50>] [--json]
   extrovert domain recheck <domain> [--json]
   extrovert domain connect <domain> [--scope org|project] [--json]
-  extrovert signup --human-email <email> [--username <name>]
-  extrovert verify [--otp <code>]
+  extrovert signup --human-email <email> [--username <name>] [--display-name <name>]
+  extrovert verify [--otp <code>] [--wait-seconds <0-55>]
   extrovert whoami [--json]
   extrovert auth whoami [--json]
   extrovert admin actions [--search <text>] [--mode read|change] [--limit <n>] [--cursor <cursor>]
@@ -590,7 +590,7 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
   const apiBaseUrl = context.env.EXTROVERT_API_BASE_URL;
   const config = loadConfig({ ...context.env, EXTROVERT_API_KEY: "", ...(apiBaseUrl ? { EXTROVERT_API_BASE_URL: apiBaseUrl } : {}) });
   const client = new ExtrovertClient(config);
-  const result = await client.signUp({ human_email: humanEmail, username });
+  const result = await client.signUp({ human_email: humanEmail, username, display_name: option(args, "--display-name") });
   context.store.savePendingSignup({
     agent_key: result.agent_key,
     human_email: humanEmail,
@@ -611,7 +611,9 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
   const client = clientForKey(pending.agent_key, context, pending.api_base_url);
   let otp: string | undefined;
   if (pending.activation_method === "incoming_email") {
-    const activation = await client.activationStatus();
+    const wait = integerOption(args, "--wait-seconds", 55, 0, 55);
+    context.stdout.write(`Watching for your activation email for up to ${wait} seconds.\n`);
+    const activation = await client.activationStatus(wait);
     if (activation.state !== "proven") {
       context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent’s inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console, then run 'extrovert verify' again.\n`);
       return 0;
@@ -627,8 +629,9 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
     throw new Error(`Verification succeeded, but the new credential could not be saved. No key was printed. Fix this profile's storage permissions and ask the account owner for a replacement scoped key; do not repeat signup or create another account. ${renderError(error)}`);
   }
   context.store.clearPendingSignup();
+  if (result.onboarding) context.stdout.write(`Sender: ${result.onboarding.display_name} <${result.address}>\nPlan: ${result.onboarding.plan}\nOpen your workspace: ${result.onboarding.console_url}\n${result.onboarding.guidance}\n`);
   context.stdout.write(
-    `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nStart a new agent session; Extrovert MCP will authenticate automatically.\n`,
+    `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nCall whoami through your MCP connection now. A running local MCP using this profile can pick up the saved credential; restart an older MCP if it still reports missing access.\n`,
   );
   return 0;
 }
@@ -752,8 +755,16 @@ async function sendCommand(args: string[], context: CliContext): Promise<number>
     intent: { summary },
     client_id: clientId,
   });
-  context.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  writeResult(context, result, hasFlag(args, "--json"), (value) =>
+    value.kind === "queued_for_review"
+      ? `Queued for review: NOT sent.\n${formatReviewHandoff(value.review)}\nCheck status: extrovert review status ${value.review.id}`
+      : JSON.stringify(value, null, 2));
   return 0;
+}
+
+function formatReviewHandoff(review: { review_path?: string }): string {
+  const url = review.review_path ? `https://app.extrovert.dev${review.review_path}` : "https://app.extrovert.dev";
+  return `Review: ${url}\nSign in with your verified human email and link the workspace to your sign-in if prompted. Approve, edit, or coach your agent on revisions. Your agent can save reusable feedback as writing rules.`;
 }
 
 function resolveAuthentication(context: CliContext): { client: ExtrovertClient; source: string } | undefined {
@@ -814,6 +825,7 @@ function formatReview(review: Review): string {
     `Closed: ${review.closed === undefined ? "unknown" : String(review.closed)}`,
     `Subject: ${review.sent_subject ?? review.proposed_subject}`,
     `Updated: ${review.updated_at}`,
+    formatReviewHandoff(review),
     ...(review.sent_at ? [`Sent: ${review.sent_at}`] : []),
     ...(review.send_error ? [`Error: ${review.send_error}`] : []),
   ].join("\n");

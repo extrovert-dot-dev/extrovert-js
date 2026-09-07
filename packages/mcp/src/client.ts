@@ -728,7 +728,7 @@ export class ExtrovertClient {
   // ---- self-signup + auth (Slice E) -------------------------------------
 
   /** Grab a free account: `POST /v1/agent/sign-up` (unauthenticated). */
-  async signUp(input: { human_email: string; username?: string }): Promise<SignUpResult> {
+  async signUp(input: { human_email: string; username?: string; display_name?: string }): Promise<SignUpResult> {
     if (this.store) {
       const res = this.store.signUp(input);
       this.setSessionKey(res.agent_key);
@@ -737,6 +737,7 @@ export class ExtrovertClient {
     const res = await this.post<SignUpResult>("/v1/agent/sign-up", {
       human_email: input.human_email,
       username: input.username,
+      display_name: input.display_name,
     });
     this.setSessionKey(res.agent_key);
     return res;
@@ -754,9 +755,9 @@ export class ExtrovertClient {
     return res;
   }
 
-  async activationStatus(): Promise<InboxActivation> {
+  async activationStatus(wait_seconds = 0): Promise<InboxActivation> {
     if (this.store) return this.store.activationStatus();
-    return this.get<InboxActivation>("/v1/agent/activation");
+    return this.request<InboxActivation>("GET", "/v1/agent/activation", undefined, { wait_seconds }, (wait_seconds + 10) * 1000);
   }
 
   async correctActivationEmail(human_email: string, revision: number): Promise<InboxActivation> {
@@ -2075,7 +2076,7 @@ export class ExtrovertClient {
     extraHeaders?: Record<string, string>,
     signal?: AbortSignal,
   ): Promise<T> {
-    const credential = !this.sessionKeyOverride && this.options.credentialProvider ? await this.options.credentialProvider() : this.apiKey;
+    const credential = (path === "/v1/agent/sign-up" || path === "/v1/enroll") ? undefined : !this.sessionKeyOverride && this.options.credentialProvider ? await this.options.credentialProvider() : this.apiKey;
     const url = new URL(this.config.apiBaseUrl + path);
     if (query) {
       for (const [k, v] of Object.entries(query)) {

@@ -41,9 +41,13 @@ try {
   const childEnv = Object.fromEntries(
     Object.entries(process.env).filter((entry) => typeof entry[1] === "string"),
   );
+  delete childEnv.EXTROVERT_API_KEY;
   childEnv.EXTROVERT_CONFIG_DIR = configDirectory;
   childEnv.EXTROVERT_API_BASE_URL = `http://127.0.0.1:${address.port}`;
 
+  const waiting = await connect(childEnv);
+  const before = await waiting.client.callTool({name: "whoami", arguments: {}});
+  assert.equal(before.isError, true, "new profile must not inherit access");
   const first = await connect(childEnv);
   try {
     const signup = await first.client.callTool({
@@ -53,8 +57,12 @@ try {
     assert.notEqual(signup.isError, true);
     const verify = await first.client.callTool({ name: "verify_signup", arguments: { otp: "528698" } });
     assert.notEqual(verify.isError, true);
+    const resumed = await waiting.client.callTool({name: "whoami", arguments: {}});
+    assert.notEqual(resumed.isError, true, "already-running MCP must pick up the newly saved profile");
+    assert.match(toolText(resumed), /pagt_smoke/);
   } finally {
     await first.client.close();
+    await waiting.client.close();
   }
 
   const credentialPath = join(configDirectory, "credentials.json");
@@ -84,7 +92,7 @@ try {
   }
 
   assert.ok(calls.some((call) => call.path === "/v1/auth/me" && call.authorization === "Bearer pk_agent_proj_smoke_full"));
-  process.stdout.write("fresh-session MCP smoke passed: signup → verify → restart → whoami/read/review\n");
+  process.stdout.write("fresh-session MCP smoke passed: signup → verify → running-profile pickup → restart → whoami/read/review\n");
 } finally {
   await new Promise((resolveClose, reject) => api.close((error) => (error ? reject(error) : resolveClose())));
 }

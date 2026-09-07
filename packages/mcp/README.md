@@ -16,9 +16,8 @@ the actual connection, its reach, actions, and expiry before starting work.
 > The same package installs `extrovert-mcp` for transports and `extrovert` for supported setup,
 > authentication, mailbox, review-status, and reviewed-send commands.
 
-The standout tool is **`wait_for_email`**: a blocking call that returns the next matching message
-with the **OTP code and verification link already extracted**. Trigger a sign-in elsewhere, then act
-on the code in the same turn. No polling loop, no losing the 5-minute window.
+**`wait_for_email`** waits for a matching incoming message and returns it with any
+**OTP code and verification link already extracted**. Use it to continue a sign-in or verification flow.
 
 ```text
 redeem an enrollment key  ->  create_inbox  ->  use it as a sign-up address  ->  wait_for_email -> { otp_code, verification_link }
@@ -69,7 +68,7 @@ recipient address and check Spam/Junk. See [agent updates](https://docs.extrover
 | `get_thread` | Read the complete oldest-first conversation plus extracted-first context. |
 | `delete_thread` | Move every message in a thread to Trash, or permanently expunge it. |
 | `search` | Full-text search across one or all inboxes. |
-| **`wait_for_email`** | **Block until a matching message arrives; return it + extracted `otp_code` / `verification_link`.** |
+| **`wait_for_email`** | **Wait for a matching message; return it with any extracted `otp_code` / `verification_link`.** |
 | `quote_domain` | Return a short-lived registration and renewal quote without reserving, charging, or registering. |
 | `request_domain_purchase` | Create an idempotent, durable domain-purchase request for human approval. |
 | `request_plan_change` | Create an idempotent upgrade or downgrade request for human approval. |
@@ -270,15 +269,15 @@ pnpm run dev -- --http  # tsx watch, HTTP
 | `EXTROVERT_CONFIG_DIR` | platform config directory | Override the local credential directory. |
 | `EXTROVERT_MOCK` | *(off)* | Set `1` to force offline fixtures. |
 | `EXTROVERT_REQUEST_TIMEOUT_MS` | `30000` | Per-request timeout for non-blocking calls. |
-| `EXTROVERT_MAX_WAIT_MS` | `300000` | Upper bound the server allows `wait_for_email` to block. |
+| `EXTROVERT_MAX_WAIT_MS` | `300000` | Maximum time `wait_for_email` can wait. |
 | `EXTROVERT_MCP_OAUTH_ENABLED` | *(off)* | Require consent-bound Extrovert OAuth or an introspected agent key on HTTP. |
 | `EXTROVERT_MCP_OAUTH_ISSUER` | `https://api.extrovert.dev` | Extrovert OAuth authorization-server issuer. |
 | `EXTROVERT_MCP_PUBLIC_URL` | `https://mcp.extrovert.dev/mcp` | Public RFC 9728 resource identifier. |
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | `--http` bind. |
 
 > **Offline fixtures are opt-in.** With no `EXTROVERT_API_KEY`, the server still talks to the live
-> API. Self-signup is currently disabled. When enabled, an agent can start with `sign_up` and receive a short-lived limited key in-session. The
-> key expires with its activation reservation and is revoked when `verify_signup` returns its replacement. For an `incoming_email` response, ask the human to email the reserved inbox, call `check_activation`, then `verify_signup` without an OTP once proven. `correct_activation_email` requires the current revision and a fresh matching email; it does not extend expiry. Previously issued OTPs remain supported until their original expiry. Set
+> API. Check live signup availability first. When enabled, an agent can start with `sign_up` and receive a short-lived limited key in-session. The
+> key expires with its activation reservation and is revoked when `verify_signup` returns its replacement. For an `incoming_email` response, ask the human to email the reserved inbox, call `check_activation` with `wait_seconds: 55` for a bounded watch, then `verify_signup` without an OTP once proven. `correct_activation_email` requires the current revision and a fresh matching email; it does not extend expiry. Previously issued OTPs remain supported until their original expiry. Set
 > `EXTROVERT_MOCK=1` to use deterministic in-memory fixtures; `create_inbox`, `send_email`, and
 > `wait_for_email` then operate on one coherent offline dataset.
 
@@ -346,7 +345,7 @@ Optionally tag it with arbitrary `metadata` (string/number/boolean values).
 > (a key whose value is `null` deletes it), pass a top-level `null` to clear all metadata, or omit
 > `metadata` entirely to leave it untouched. Reads always return an object (`{}` when empty).
 
-**3. Use the address to sign up somewhere** (the agent fills a form, hits an API, etc.), then block
+**3. Use the address to sign up somewhere** (the agent fills a form, hits an API, etc.), then wait
 for the verification email and read the code straight out of the result:
 
 ```jsonc
@@ -358,8 +357,7 @@ for the verification email and read the code straight out of the result:
 //      verification_link: "https://dashboard.stripe.com/verify?code=481920&id=evt_9" }
 ```
 
-The agent now has the OTP and the link in the same turn: paste the code, or open the link, and
-continue. No polling, no separate "check the inbox" round-trips.
+Use the returned OTP code or verification link to continue.
 
 **4. Keep working.** Send, reply in-thread, search, list:
 
@@ -448,7 +446,7 @@ supplied cursor. Recheck never fabricates confirmation. The endpoints the client
 | `get_thread` | `GET /v1/inboxes/{inbox_id}/threads/{thread_id}` |
 | `delete_thread` | `DELETE /v1/inboxes/{inbox_id}/threads/{thread_id}` |
 | `search` | `GET /v1/inboxes/{inbox_id}/messages/search` (fans out across inboxes when none given) |
-| `wait_for_email` | `POST /v1/inboxes/{inbox_id}/wait` (server holds the connection via IMAP IDLE) |
+| `wait_for_email` | `POST /v1/inboxes/{inbox_id}/wait` |
 
 The path key is the canonical opaque **`inbox_id`** (`pmbx_…`); the inbox's email address is accepted
 as a within-project alias. **Scope is in the KEY** (no scope headers): a `pk_agent_proj_…` key's
@@ -475,3 +473,13 @@ pnpm run start:http # node dist/bin.js --http
 
 MIT © Message Science. Extrovert is *steel-at-dusk*: a dark, technical developer brand whose single
 warm signal is the amber seam of a side-gate.
+
+
+Signup accepts `display_name` for the name people see next to the agent address;
+`username` chooses the address itself. The CLI uses `signup --display-name "Coleman"`.
+A verified incoming claim triggers an Extrovert welcome with the sender name, address and plan.
+The verification response supplies the first-message handoff and current onboarding guidance.
+Show the human the review link before waiting for approval. They can approve, edit, or coach
+the agent, which saves reusable feedback as writing rules. End setup with a brief explanation
+of the connection's actual `whoami` capabilities and an offer to explore Extrovert together
+through human sign-in and explicit consent for broader access.

@@ -10,8 +10,8 @@ call, sends and receives, behind a scoped key that expires and revokes on its ow
 
 - **One call to a live inbox.** Paid accounts use `agent7@extrovertmail.com`; free
   signups use `agent7@free.extrovertmail.com`. No DNS setup is required.
-- **`waitForEmail`, the killer primitive.** Block until the next matching message lands and get the
-  OTP code / verification link extracted as a structured field. No polling loop.
+- **Wait for email.** `waitForEmail` waits for a matching incoming message and returns it
+  with any OTP code or verification link extracted.
 - **Typed everything.** Request and response models matching the Extrovert `/v1` contract, a typed
   `ApiError` hierarchy, full `.d.ts` declarations.
 - **Runs where your agent runs.** Pure `fetch`. Node 18+, Cloudflare Workers, Vercel Edge, Deno,
@@ -171,7 +171,7 @@ to opt into the server's transform shim.
 ## The OTP flow: `waitForEmail`
 
 Agents sign up for things. The high-value, time-boxed task is "wait for the verification email and
-read the code." Extrovert holds the request open, polls the mailbox server-side, and hands you the extracted code.
+read the code." Extrovert waits for a matching message and returns any extracted code or verification link.
 
 ```ts
 import { Extrovert } from "@extrovert.dev/sdk";
@@ -185,7 +185,7 @@ await fetch("https://acme.test/signup", {
   body: JSON.stringify({ email: inbox.address }),
 });
 
-// Block until it lands (up to 2 min), then read the structured result.
+// Wait for the message (up to 2 min), then read the structured result.
 const result = await inbox.waitForEmail({
   from: "no-reply@acme.test",
   subject: "verification",

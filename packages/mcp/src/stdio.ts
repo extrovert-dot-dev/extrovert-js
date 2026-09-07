@@ -28,7 +28,7 @@ export async function runStdio(): Promise<void> {
 
   const config = loadConfig(env);
   const client = new ExtrovertClient(config, {
-    credentialProvider: !config.mock && !(process.env.EXTROVERT_API_KEY ?? "").trim() && stored
+    credentialProvider: !config.mock && !(process.env.EXTROVERT_API_KEY ?? "").trim()
       ? createLocalCredentialProvider(credentialStore, { apiBaseUrl: config.apiBaseUrl }) : undefined,
     onDurableAgentKey: config.mock
       ? undefined
