@@ -613,6 +613,9 @@ export interface ExtrovertClientOptions {
    * Local-host hook for storing a newly issued full-scope key. Hosted HTTP leaves
    * this unset because OAuth credentials belong to the MCP client, not the server.
    */
+  beforeSignup?: () => void;
+  /** Persist a limited reservation separately so another local process can resume it. */
+  onPendingSignup?: (result: SignUpResult, apiBaseUrl: string) => void;
   onDurableAgentKey?: (
     agentKey: string,
     apiBaseUrl: string,
@@ -729,6 +732,7 @@ export class ExtrovertClient {
 
   /** Grab a free account: `POST /v1/agent/sign-up` (unauthenticated). */
   async signUp(input: { human_email: string; username?: string; display_name?: string }): Promise<SignUpResult> {
+    this.options.beforeSignup?.();
     if (this.store) {
       const res = this.store.signUp(input);
       this.setSessionKey(res.agent_key);
@@ -740,6 +744,10 @@ export class ExtrovertClient {
       display_name: input.display_name,
     });
     this.setSessionKey(res.agent_key);
+    if (this.options.onPendingSignup) {
+      this.options.onPendingSignup(res, this.config.apiBaseUrl);
+      if (this.options.credentialProvider) this.sessionKeyOverride = false;
+    }
     return res;
   }
 
@@ -2149,6 +2157,7 @@ export class ExtrovertClient {
     }
     try {
       const saved = sink(trimmed, this.config.apiBaseUrl);
+      if (this.options.credentialProvider) this.sessionKeyOverride = false;
       this.durableCredentialStatus = {
         attempted: true,
         persisted: true,

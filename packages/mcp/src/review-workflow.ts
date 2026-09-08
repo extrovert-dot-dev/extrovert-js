@@ -45,7 +45,9 @@ export function withReviewWorkflow(name: string, args: Record<string, unknown>, 
     next = { tool: "get_review", arguments: { id: data.source_review_id ?? args.id }, reason: "Learning is saved and propagation is queued. Read the latest draft and get_rules for its category, apply the new rule without overwriting human edits, submit_revision, acknowledge handled feedback, then wait again." };
   } else if (state === "chatting" || state === "rejected" || state === "stale") {
     workflow.status = "action_required";
-    next = { tool: "get_review_feedback", arguments: { id: reviewID }, reason: "Process the human feedback, save reusable writing rules, then revise this same review or answer the reviewer. A rejected draft is not authorization to abandon or resend the message." };
+    next = { tool: "get_review_feedback", arguments: { id: reviewID }, reason: state === "chatting"
+      ? "This chatting draft accepts submit_revision now. Read the feedback, save and read back reusable rules, fetch fresh rules, then revise this same review using its current parent_revision without asking the human to reopen or return it to the queue. Answer a question only when clarification is needed. Acknowledge feedback after handling it and keep waiting for review."
+      : "Process the human feedback, save reusable writing rules, then revise this same review or answer the reviewer. A rejected draft is not authorization to abandon or resend the message." };
   } else if (sent || state === "cancelled" || state === "failed") {
     next = { tool: "list_review_events", arguments: {}, reason: sent ? "Sending succeeded for this review. Process any final human edits for learning, acknowledge its outcome, and continue other pending reviews." : "This message did not send successfully. Reconcile its outcome, acknowledge the event, and report the failure or cancellation. Do not create a replacement send automatically." };
   } else if (data.pending_reviews === 0) {

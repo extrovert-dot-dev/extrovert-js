@@ -216,9 +216,36 @@ precedence; remove that override from the intended environment before new browse
 Keep the same profile and API environment throughout a pending login.
 
 For Hermes hosted OAuth, use `extrovert setup --host hermes --transport hosted`, then
-`hermes mcp login extrovert`. Finish browser consent, restart Hermes, and call `whoami`.
+`hermes mcp login extrovert`. Finish browser consent, reload MCP through Hermes, and call `whoami`.
 If approved OAuth fails, keep the non-secret request ID and report the failed step instead of
 repeating consent or creating another account. Read live context for signup availability.
+
+### Finish a new signup in the same Hermes session
+
+`extrovert signup --human-email human@example.com --username coleman --display-name Coleman`
+prints the incoming-email instructions and watches for ownership proof for up to five minutes.
+Each status request waits at most 55 seconds. If it times out, retain the selected profile and
+resume with `extrovert verify --wait-seconds 300`; no second signup is needed.
+
+At proof, Extrovert queues a welcome and one practice draft owned by the signup agent. Verification
+and `whoami` return its stable review ID, account-aware link and optional coaching prompt. Recover
+that review instead of composing another hello. Console sign-in is separate from inbox ownership.
+
+Local stdio MCP and CLI read the same profile, including the pending-to-durable key exchange.
+While Hermes loads its native MCP catalog, continue through the CLI in the active turn:
+
+```bash
+extrovert tool describe get_review
+# Supply JSON with the returned review id on stdin.
+extrovert tool call get_review --input-stdin --json
+```
+
+The bridge exposes the same review tool schemas and handlers for reading feedback, learning an
+Extrovert writing rule from an authenticated human source turn, reading rules back, revising the
+same review and waiting for its outcome. Use `tool describe` before constructing each input.
+It grants no extra permissions. Hermes reloads changed MCP configuration while idle when automatic
+reload is enabled; `/reload-mcp` is the manual fallback. A full Hermes restart is unnecessary.
+Verify native MCP `whoami` separately once those tools appear.
 
 ### Is my domain ready?
 

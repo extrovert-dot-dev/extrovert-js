@@ -17,7 +17,7 @@ import { withReviewWorkflow } from "./review-workflow.js";
 import { createHash } from "node:crypto";
 import { renderDomain, domainResult } from "./domain-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
-import { formatWhoAmI } from "./identity-presentation.js";
+import { formatWhoAmI, formatSignupStarter } from "./identity-presentation.js";
 
 import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
@@ -95,6 +95,8 @@ interface ToolSpec<Shape extends ZodRawShape> {
 interface RegisterableTool {
   name: string;
   register: (server: McpServer, ctx: ToolContext) => void;
+  describe: () => Record<string, unknown>;
+  invoke: (args: unknown, ctx: ToolContext) => Promise<ToolResult>;
 }
 
 /**
@@ -103,29 +105,20 @@ interface RegisterableTool {
  * object carries a `register` closure the server calls during setup.
  */
 function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): RegisterableTool {
+  const inputSchema = z.object(spec.inputSchema);
+  const invoke = (input: unknown, ctx: ToolContext): Promise<ToolResult> => ctx.client.withStorageWarnings(async () => {
+    try {
+      const args = inputSchema.parse(input);
+      return withReviewWorkflow(spec.name, args as Record<string, unknown>, await spec.handler(args, ctx));
+    } catch (err) { return toErrorResult(err); }
+  });
   return {
     name: spec.name,
+    describe: () => ({ name: spec.name, description: spec.description, inputSchema: z.toJSONSchema(inputSchema), annotations: spec.annotations }),
+    invoke,
     register(server, ctx) {
-      const inputSchema = z.object(spec.inputSchema);
-      server.registerTool(
-        spec.name,
-        {
-          title: spec.title,
-          description: spec.description,
-          inputSchema,
-          annotations: spec.annotations,
-        },
-        // The SDK validates `args` against `inputSchema` before invoking us.
-        async (args: z.output<z.ZodObject<Shape>>) => {
-          return ctx.client.withStorageWarnings(async () => {
-            try {
-              return withReviewWorkflow(spec.name, args as Record<string, unknown>, await spec.handler(args, ctx));
-            } catch (err) {
-              return toErrorResult(err);
-            }
-          });
-        },
-      );
+      server.registerTool(spec.name, { title: spec.title, description: spec.description, inputSchema, annotations: spec.annotations },
+        async (args: z.output<z.ZodObject<Shape>>) => invoke(args, ctx));
     },
   };
 }
@@ -770,7 +763,8 @@ const verifySignup = defineTool({
     const text = [
       `Verified. ${res.message}`,
       `Next call: whoami {}. Call it now with the new credential, even if you called whoami while activation was pending. Explain this verified identity before continuing.`,
-      ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, res.onboarding.guidance] : []),
+      ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, ...(res.onboarding.starter ? [] : [res.onboarding.guidance])] : []),
+      ...(res.onboarding?.starter ? [formatSignupStarter(res.onboarding.starter)] : []),
       `agent_key (full, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
       credentialPersistenceMessage(persistence),
@@ -849,7 +843,7 @@ const createInbox = defineTool({
       .string()
       .optional()
       .describe("Domain to create the inbox on (must be an org domain). Omit for the account's shared domain."),
-    display_name: z.string().max(512).optional().describe("Sender name for API mail, up to 60 Unicode characters after normalization. Use a clear identity without emoji, invisible characters, addresses or thread markers. Omit/empty defaults to Agent {username}: agent007 becomes Agent 007; alice_bot becomes Agent alice-bot. Unsafe generated defaults fall back to Agent; invalid explicit names are rejected. SMTP preserves its own validated name."),
+    display_name: z.string().max(512).optional().describe("Sender name for API mail, up to 60 Unicode characters after normalization. Use a clear identity without emoji, unsupported invisible characters, addresses or thread markers. Contextually valid Persian and Indic join controls are supported. Omit/empty defaults to Agent {username}: agent007 becomes Agent 007; alice_bot becomes Agent alice-bot. Unsafe generated defaults fall back to Agent; invalid explicit names are rejected. SMTP preserves its own validated name."),
     inbound_webhook_url: z
       .string()
       .url()
@@ -960,7 +954,7 @@ const updateInbox = defineTool({
       .string()
       .max(512)
       .optional()
-      .describe("Sender name for future API mail, up to 60 Unicode characters after normalization. Empty string clears to a bare address; omission leaves unchanged. No emoji, invisibles, embedded addresses or thread markers. Queued reviews retain their name; SMTP uses its own validated name."),
+      .describe("Sender name for future API mail, up to 60 Unicode characters after normalization. Empty string clears to a bare address; omission leaves unchanged. No emoji, unsupported invisibles, embedded addresses or thread markers. Contextually valid Persian and Indic join controls are supported. Queued reviews retain their name; SMTP uses its own validated name."),
     inbound_webhook_url: z
       .string()
       .optional()
@@ -3540,6 +3534,15 @@ const ALL_TOOLS = [
 
 /** The set of tool names this server exposes (handy for tests/docs). */
 export const TOOL_NAMES: string[] = ALL_TOOLS.map((t) => t.name);
+
+// The CLI uses the same schemas, handlers, and workflow guidance while a native
+// host is loading its MCP catalog. This is an in-process call, not a transport.
+const CLI_REVIEW_TOOLS = new Set(["whoami", "get_inbox", "list_inboxes", "list_reviews", "get_review", "get_review_turns", "get_review_feedback", "list_review_events", "wait_for_review_event", "ack_review_event", "post_review_chat", "submit_revision", "restamp_review", "list_categories", "get_rules", "learn_review_rule"]);
+export function cliReviewTool(name: string): RegisterableTool {
+  const tool = ALL_TOOLS.find(item => item.name === name);
+  if (!tool || !CLI_REVIEW_TOOLS.has(name)) throw new Error("This tool is not available through the CLI review bridge. Use its native CLI command or MCP tool.");
+  return tool;
+}
 
 /** Register every Extrovert tool onto an MCP server instance. */
 export function registerTools(server: McpServer, ctx: ToolContext): void {

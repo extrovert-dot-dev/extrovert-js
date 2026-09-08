@@ -168,7 +168,7 @@ export interface CreateInboxRequest {
    * scoped to. If omitted, the account's shared domain is used.
    */
   domain?: string;
-  /** Sender name for API mail. Up to 60 Unicode characters after normalization. No emoji, controls, invisibles, embedded addresses or thread markers. SMTP preserves its own validated name. Empty or omitted generates Agent {username}; agent007 becomes Agent 007 and alice_bot becomes Agent alice-bot. If a default cannot be generated safely, it falls back to Agent. Invalid explicit names are rejected. */
+  /** Sender name for API mail. Up to 60 Unicode characters after normalization. No emoji, controls, unsupported invisibles, embedded addresses or thread markers. Contextually valid Persian and Indic join controls are supported. SMTP preserves its own validated name. Empty or omitted generates Agent {username}; agent007 becomes Agent 007 and alice_bot becomes Agent alice-bot. If a default cannot be generated safely, it falls back to Agent. Invalid explicit names are rejected. */
   display_name?: string;
   /**
    * Idempotency handle. Re-creating with the same `client_id` returns the existing inbox rather
@@ -2081,8 +2081,15 @@ export interface MailboxQuickstart {
  * `address` repeats the ready inbox so the handoff remains self-contained after
  * a process restart or context compaction.
  */
+export interface SignupStarter {
+  review_id: string;
+  review_path: string;
+  status: string;
+  coaching_prompt: string;
+}
+
 export interface VerifyResponse {
-  onboarding?: { human_email: string; display_name: string; plan: string; console_url: string; guidance: string };
+  onboarding?: { human_email: string; display_name: string; plan: string; console_url: string; guidance: string; starter?: SignupStarter };
   agent_id: string;
   agent_key: string;
   key_prefix: string;
@@ -2128,6 +2135,7 @@ export interface ConnectionGrant {
 }
 
 export interface WhoAmI {
+  signup_starter?: SignupStarter;
   connection?: ConnectionGrant;
   auth_method?: "oauth" | "agent_key" | "connection";
   key_tier?: "org" | "project" | "inbox";

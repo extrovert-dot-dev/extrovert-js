@@ -17,7 +17,7 @@ export async function runStdio(): Promise<void> {
   const credentialStore = createCredentialStore();
   // Explicit host credentials are authoritative; do not even read an unrelated
   // local profile (which may be stale, malformed or belong to another account).
-  const stored = (process.env.EXTROVERT_API_KEY ?? "").trim() ? undefined : credentialStore.load();
+  const stored = (process.env.EXTROVERT_API_KEY ?? "").trim() ? undefined : (credentialStore.load() ?? credentialStore.loadPendingSignup());
   const env = { ...process.env };
   if (!(env.EXTROVERT_API_KEY ?? "").trim() && stored) {
     env.EXTROVERT_API_KEY = stored.agent_key;
@@ -29,11 +29,23 @@ export async function runStdio(): Promise<void> {
   const config = loadConfig(env);
   const client = new ExtrovertClient(config, {
     credentialProvider: !config.mock && !(process.env.EXTROVERT_API_KEY ?? "").trim()
-      ? createLocalCredentialProvider(credentialStore, { apiBaseUrl: config.apiBaseUrl }) : undefined,
+      ? createLocalCredentialProvider(credentialStore, { apiBaseUrl: config.apiBaseUrl, allowPendingSignup: true }) : undefined,
+    beforeSignup: config.mock ? undefined : () => {
+      if ((process.env.EXTROVERT_API_KEY ?? "").trim() || credentialStore.load()) throw new Error("This profile already has Extrovert access. Verify whoami; use a separate profile for an intended new account.");
+      if (credentialStore.loadPendingSignup()) throw new Error("Signup is already pending in this profile. Resume check_activation and verify_signup; do not create another account.");
+    },
+    onPendingSignup: config.mock ? undefined : (result, apiBaseUrl) => {
+      credentialStore.savePendingSignup({ agent_key: result.agent_key,
+        human_email: result.human_email ?? result.otp_sent_to ?? "",
+        address: result.address, activation_method: result.activation_method,
+        otp_expires_at: result.activation_expires_at ?? result.otp_expires_at ?? "",
+        api_base_url: apiBaseUrl });
+    },
     onDurableAgentKey: config.mock
       ? undefined
       : (agentKey, apiBaseUrl) => {
           credentialStore.save(agentKey, apiBaseUrl);
+          credentialStore.clearPendingSignup();
           return { location: credentialStore.paths.credential };
         },
   });

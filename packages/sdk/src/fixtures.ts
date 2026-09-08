@@ -685,6 +685,7 @@ function forwardBodyText(note: string, parent: Message): string {
 export class MockBackend {
   incomingActivation = false;
   private pendingActivation?: InboxActivation;
+  private signupStarter?: import("./models.js").SignupStarter;
   activationStatus(): InboxActivation {
     const activation = this.pendingActivation;
     if (!activation) throw new Error("No incoming-email activation exists");
@@ -693,7 +694,7 @@ export class MockBackend {
   }
   correctActivationEmail(email: string, revision: number): InboxActivation {
     const activation = this.activationStatus();
-    if (activation.revision !== revision || !["pending", "proven"].includes(activation.state)) throw new Error("Activation changed or expired");
+    if (activation.revision !== revision || activation.state !== "pending") throw new Error("Activation changed or expired");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Invalid human email");
     this.pendingActivation = { ...activation, human_email: email, revision: revision + 1, state: "pending" };
     return this.activationStatus();
@@ -703,6 +704,16 @@ export class MockBackend {
     const activation = this.activationStatus();
     if (activation.state !== "pending" || sender !== activation.human_email) throw new Error("Activation sender mismatch or expired");
     this.pendingActivation = { ...activation, state: "proven" };
+    const signup = [...this.state.signupByEmail.values()].find(s => s.agentId === activation.agent_id)!;
+    const inbox = this.createInbox({ username: activation.address.split("@")[0], domain: FREE_SHARED_DOMAIN, display_name: signup.displayName });
+    inbox.agent_id = activation.agent_id;
+    const result = this.submitForReview(activation.address, { to: [activation.human_email], subject: `Hello from ${signup.displayName}`, text: `Hi there,\n\nI hope this email finds you well! I'm ${signup.displayName} — your new email agent — and I'm absolutely delighted to embark on this journey with you.\n\nYou can reach me at ${activation.address} — I'm looking forward to helping with your messages!`, mode: "review", intent: { summary: "Extrovert prepared this practice draft so you can coach your agent before its first email is sent.", meta: { goal: "signup_onboarding_v1", recipient: activation.human_email } } });
+    if (result.kind !== "queued_for_review") throw new Error("Fixture practice review must be held");
+    const review = this.getReview(result.review.id)!;
+    review.agent_id = activation.agent_id;
+    const path = `/onboarding?org_id=${MOCK_ORG_ID}&project_id=${MOCK_PROJECT_ID}&review_id=${review.id}`;
+    review.review_path = path;
+    this.signupStarter = { review_id: review.id, review_path: path, status: review.state, coaching_prompt: "Save an Extrovert writing rule for all our messages: never use em dashes. Revise this draft to follow that rule, too." };
   }
   private administrativeFixtures = new AdministrativeFixtures();
   configureAdministrativeFixture(credential: string): void { this.administrativeFixtures = new AdministrativeFixtures(credential); }
@@ -798,7 +809,7 @@ export class MockBackend {
           message:
             "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
           mailbox_quickstart: mailboxQuickstart(s.address),
-          onboarding: {human_email: this.pendingActivation?.human_email ?? "human@example.com",display_name:s.displayName ?? "",plan:"free",console_url:"https://app.extrovert.dev",guidance:"Your agent drafts; you approve, edit, or coach it before sending. Call whoami to explain current access."},
+          onboarding: {human_email: this.pendingActivation?.human_email ?? "human@example.com",display_name:s.displayName ?? "",plan:"free",console_url:"https://app.extrovert.dev"+(this.signupStarter?.review_path ?? ""),starter:this.signupStarter,guidance:"Your agent drafts; you approve, edit, or coach it before sending. Call whoami to explain current access."},
         };
       }
     }
@@ -811,7 +822,8 @@ export class MockBackend {
       customer_id: "cus_pn_mock",
       org_id: MOCK_ORG_ID,
       project_id: MOCK_PROJECT_ID,
-      agent_id: this.state.agents.keys().next().value ?? "agt_mock",
+      agent_id: this.pendingActivation?.agent_id ?? this.state.agents.keys().next().value ?? "agt_mock",
+      ...(this.signupStarter ? {signup_starter:this.signupStarter} : {}),
       key_id: "pkey_mock",
       scopes: ["mailbox:create", "mailbox:read", "mailbox:send", "webhook:write"],
     };
@@ -3006,7 +3018,8 @@ export class MockBackend {
       url: req.url,
       events: req.events ?? ["message.received"],
       inbox: req.inbox ?? null,
-      agent_id: this.state.agents.keys().next().value ?? "agt_mock",
+      agent_id: this.pendingActivation?.agent_id ?? this.state.agents.keys().next().value ?? "agt_mock",
+      ...(this.signupStarter ? {signup_starter:this.signupStarter} : {}),
       secret: `whsec_${rid("s").slice(2)}${rid("s").slice(2)}`,
       secret_prefix: `whsec_${rid("s").slice(2, 6)}`,
       active: true,

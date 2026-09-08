@@ -288,6 +288,7 @@ interface StoredAttachment {
 export class FixtureStore {
   incomingActivation = false;
   private pendingActivation?: InboxActivation;
+  private signupStarter?: import("./types.js").SignupStarter;
   activationStatus(): InboxActivation {
     const activation = this.pendingActivation;
     if (!activation) throw new Error("No incoming-email activation exists");
@@ -296,7 +297,7 @@ export class FixtureStore {
   }
   correctActivationEmail(email: string, revision: number): InboxActivation {
     const activation = this.activationStatus();
-    if (activation.revision !== revision || !["pending", "proven"].includes(activation.state)) throw new Error("Activation changed or expired");
+    if (activation.revision !== revision || activation.state !== "pending") throw new Error("Activation changed or expired");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Invalid human email");
     this.pendingActivation = { ...activation, human_email: email, revision: revision + 1, state: "pending" };
     return this.activationStatus();
@@ -306,6 +307,14 @@ export class FixtureStore {
     const activation = this.activationStatus();
     if (activation.state !== "pending" || sender !== activation.human_email) throw new Error("Activation sender mismatch or expired");
     this.pendingActivation = { ...activation, state: "proven" };
+    this.agentId = activation.agent_id;
+    const signup = [...this.signups.values()].find(s => s.agentId === activation.agent_id)!;
+    this.createInbox({ username: activation.address.split("@")[0], domain: FREE_SHARED_DOMAIN, displayName: signup.displayName });
+    const result = this.submitForReview({ inbox: activation.address, to: [activation.human_email], subject: `Hello from ${signup.displayName}`, text: `Hi there,\n\nI hope this email finds you well! I'm ${signup.displayName} — your new email agent — and I'm absolutely delighted to embark on this journey with you.\n\nYou can reach me at ${activation.address} — I'm looking forward to helping with your messages!`, mode: "review", intent: { summary: "Extrovert prepared this practice draft so you can coach your agent before its first email is sent.", meta: { goal: "signup_onboarding_v1", recipient: activation.human_email } }, client_id: `signup-hello:${activation.agent_id}` });
+    if (result.kind !== "queued_for_review") throw new Error("Fixture practice review must be held");
+    const path = `/onboarding?org_id=${MOCK_ORG_ID}&project_id=${MOCK_PROJECT_ID}&review_id=${result.review.id}`;
+    this.signupStarter = { review_id: result.review.id, review_path: path, status: result.review.state, coaching_prompt: "Save an Extrovert writing rule for all our messages: never use em dashes. Revise this draft to follow that rule, too." };
+    result.review.review_path = path;
   }
 
   private administrativeFixtures: AdministrativeFixtures;
@@ -362,7 +371,7 @@ export class FixtureStore {
   /** "<scope>:<client_id>" -> the created resource id, mirroring the server's
    *  idempotency replay (a repeat with the same key returns the first result). */
   private idempotency = new Map<string, string>();
-  private readonly agentId = "agt_demo7";
+  private agentId = "agt_demo7";
   /**
    * The ceiling tier of the session's key (redesign §3.1). Default `project`
    * (legacy bare `pk_agent_` behavior). Drives the bare-vs-wildcard list ceiling:
@@ -526,7 +535,7 @@ export class FixtureStore {
           message:
             "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
           mailbox_quickstart: mailboxQuickstart(s.address),
-          onboarding: { human_email: this.pendingActivation?.human_email ?? "human@example.com", display_name: s.displayName ?? "", plan: "free", console_url: "https://app.extrovert.dev", guidance: `Your inbox is ready. Initially, messages wait for your approval. You can approve, edit, or coach your agent in the review conversation. Your agent will save reusable feedback as writing rules for future messages; one-message edits stay with that draft. Your agents organize messages into categories and apply your rules. House rules apply across message categories, while category rules guide particular kinds of messages. Projects can have their own rules shared by their agents. Later, you can choose automatic sending under your policy or explicitly authorize a separate review agent. This connection has agent-scoped permissions, not full account control. Call whoami and explain its actual capabilities. Close setup by telling the human they can sign in to Extrovert and ask you to help explore what they and their agents can do. Broader administration requires their explicit consent. Continue with one brief hello email to the verified human through the normal review workflow. Before drafting, call list_reviews with composer: me AND list_review_events to recover prior work. If this hello already exists, resume it instead of creating another. Then call get_inbox, browse list_categories (propose a reusable category if none fits), get_rules for that category, and check_suppression for the human address. Use send_email with the category, composition token and intent. Use the stable client_id signup-hello:${s.agentId} for this first hello. Do not install example writing rules or manufacture bad prose. Explain the review link before waiting.` },
+          onboarding: { human_email: this.pendingActivation?.human_email ?? "human@example.com", display_name: s.displayName ?? "", plan: "free", console_url: "https://app.extrovert.dev" + (this.signupStarter?.review_path ?? ""), starter: this.signupStarter, guidance: this.signupStarter ? "Your inbox is claimed. Recover the practice review in starter; Extrovert prepared the template and you receive its feedback. Do not submit another hello. Show the review link and optional coaching prompt. Learn reusable rules only after authenticated human feedback, read them back, revise the same review, and keep its event loop active." : "Your inbox is ready. Call whoami and recover existing reviews before sending your authorized first message under its review policy." },
         };
       }
     }
@@ -535,6 +544,7 @@ export class FixtureStore {
 
   whoami(): WhoAmI {
     return {
+      ...(this.signupStarter ? { signup_starter: this.signupStarter } : {}),
       customer_id: "cus_pn_mock",
       org_id: MOCK_ORG_ID,
       project_id: MOCK_PROJECT_ID,

@@ -913,8 +913,15 @@ export interface MailboxQuickstart {
 }
 
 /** Result of confirming a signup OTP: a new full-scope key and ready inbox. */
+export interface SignupStarter {
+  review_id: string;
+  review_path: string;
+  status: string;
+  coaching_prompt: string;
+}
+
 export interface VerifyResult {
-  onboarding?: { human_email: string; display_name: string; plan: string; console_url: string; guidance: string };
+  onboarding?: { human_email: string; display_name: string; plan: string; console_url: string; guidance: string; starter?: SignupStarter };
   agent_id: string;
   agent_key: string;
   key_prefix: string;
@@ -959,6 +966,7 @@ export interface ConnectionGrant {
 }
 
 export interface WhoAmI {
+  signup_starter?: SignupStarter;
   connection?: ConnectionGrant;
   auth_method?: "oauth" | "agent_key" | "connection";
   key_tier?: "org" | "project" | "inbox";

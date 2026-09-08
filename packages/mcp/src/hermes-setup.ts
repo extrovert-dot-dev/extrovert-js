@@ -34,7 +34,7 @@ export function setupHermes(env: NodeJS.ProcessEnv, credentialDirectory: string,
     }
     const entry = transport === "hosted"
       ? { url: "https://mcp.extrovert.dev/mcp", auth: "oauth", timeout: 90, enabled: true }
-      : { command: "npx", args: ["-y", "@extrovert.dev/mcp@next"], env: { EXTROVERT_CONFIG_DIR: credentialDirectory }, timeout: 90, enabled: true };
+      : { command: "npx", args: ["--yes", "--prefer-online", "@extrovert.dev/mcp@next"], env: { EXTROVERT_CONFIG_DIR: credentialDirectory }, timeout: 90, enabled: true };
     document.setIn(["mcp_servers", "extrovert"], entry);
     writeFileSync(temporary, document.toString(), { flag: "wx", mode: 0o600 });
     if ((existsSync(path) ? readFileSync(path, "utf8") : "") !== original) throw new Error("Hermes config changed during setup. No changes were applied; retry.");

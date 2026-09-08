@@ -2,6 +2,7 @@ import type { CredentialStore, OAuthCredentialInput, StoredCredential } from "./
 
 export interface LocalCredentialProviderOptions {
   apiBaseUrl?: string;
+  allowPendingSignup?: boolean;
   fetch?: typeof fetch;
   now?: () => number;
 }
@@ -46,7 +47,7 @@ export function createLocalCredentialProvider(store: CredentialStore, options: L
   const now = options.now ?? Date.now;
   const request = options.fetch ?? fetch;
   const read = (allowUncertain = false): StoredCredential => {
-    const record = store.load();
+    const record: StoredCredential | undefined = store.load() ?? (options.allowPendingSignup ? store.loadPendingSignup() : undefined);
     if (!record) throw new Error("Extrovert credentials were removed. Sign in again.");
     if (options.apiBaseUrl && options.apiBaseUrl.replace(/\/+$/, "") !== record.api_base_url) throw new Error("Stored Extrovert credential does not match the requested API. Select the correct profile.");
     if (record.oauth?.refresh_uncertain && !allowUncertain) throw new Error("The previous Extrovert OAuth refresh has an unknown outcome. Sign in again; do not retry its refresh token.");

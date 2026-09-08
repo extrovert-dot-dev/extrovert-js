@@ -6,6 +6,8 @@ import { ExtrovertApiError, ExtrovertClient } from "./client.js";
 import { loadConfig, SERVER_VERSION } from "./config.js";
 import { AGENT_CONTEXT_URL, AGENT_GUIDE_URL, buildAgentContext, fetchAgentContext } from "./agent-context.js";
 import { renderDomain } from "./domain-presentation.js";
+import { cliReviewTool } from "./tools.js";
+import { waitForActivation } from "./activation-wait.js";
 import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
 import { setupHermes } from "./hermes-setup.js";
@@ -22,6 +24,8 @@ const MCP_PACKAGE = "@extrovert.dev/mcp@next";
 export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert without custom transport code
 
 Usage:
+  extrovert tool describe <review-tool-name>
+  extrovert tool call <review-tool-name> --input-stdin [--json]
   extrovert version [--json]
   extrovert agent status [--json]
   extrovert agent status --host auto|claude|codex|hermes --scope project|user
@@ -41,7 +45,7 @@ Usage:
   extrovert domain recheck <domain> [--json]
   extrovert domain connect <domain> [--scope org|project] [--json]
   extrovert signup --human-email <email> [--username <name>] [--display-name <name>]
-  extrovert verify [--otp <code>] [--wait-seconds <0-55>]
+  extrovert verify [--otp <code>] [--wait-seconds <0-300>]
   extrovert whoami [--json]
   extrovert auth whoami [--json]
   extrovert admin actions [--search <text>] [--mode read|change] [--limit <n>] [--cursor <cursor>]
@@ -156,6 +160,8 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
       case "version":
         writeResult(context, { version: SERVER_VERSION, package: "@extrovert.dev/mcp", channel: "next" }, hasFlag(argv, "--json"), value => value.version);
         return 0;
+      case "tool":
+        return await reviewToolCommand(argv.slice(1), context);
       case "agent":
         return await agentStatusCommand(argv.slice(1), context);
       case "setup":
@@ -193,6 +199,26 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
     if (error instanceof CliUsageError) context.stderr.write("Run 'extrovert --help' for usage.\n");
     return error instanceof CliUsageError ? 2 : 1;
   }
+}
+
+async function reviewToolCommand(args: string[], context: CliContext): Promise<number> {
+  const tool = cliReviewTool(args[1] ?? "");
+  if (args[0] === "describe") {
+    context.stdout.write(`${JSON.stringify(tool.describe(), null, 2)}\n`);
+    return 0;
+  }
+  if (args[0] !== "call" || !hasFlag(args, "--input-stdin")) throw new CliUsageError("Use tool describe <name>, then tool call <name> --input-stdin with JSON matching that schema.");
+  let raw = "";
+  for await (const chunk of context.stdin) {
+    raw += String(chunk);
+    if (Buffer.byteLength(raw) > 1_000_000) throw new CliUsageError("Tool input exceeds 1 MB");
+  }
+  let input: unknown;
+  try { input = JSON.parse(raw); } catch { throw new CliUsageError("Tool input must be a JSON object."); }
+  const result = await tool.invoke(input, { client: requireAuthentication(context).client, config: loadConfig(context.env) });
+  if (hasFlag(args, "--json")) context.stdout.write(`${JSON.stringify(result)}\n`);
+  else context.stdout.write(`${result.content.map(item => item.text).join("\n")}\n`);
+  return result.isError ? 1 : 0;
 }
 
 async function administrativeCommand(args: string[], context: CliContext): Promise<number> {
@@ -267,6 +293,13 @@ function setupCommand(args: string[], context: CliContext): number {
   };
   if (host === "hermes") {
     const result = setupHermes(context.env, context.store.paths.directory, transport);
+    if (transport === "stdio") {
+      const instruction = `${result.existed ? "Existing Hermes configuration was preserved." : "Extrovert is configured for this Hermes profile."} ${result.warning ?? ""} ${credentialAvailable ? "An agent credential is already available. Run extrovert doctor, then whoami." : "For the requested new account, run extrovert signup with the supplied human email and display name. For existing access use auth login or enrollment."} Hermes reloads changed MCP configuration while idle when its automatic reload is enabled. Continue setup through the packaged CLI in this active turn, including the activation watch and review recovery. For review tools, use extrovert tool describe <tool>, then extrovert tool call <tool> --input-stdin with its JSON arguments; do not ask for a full Hermes restart. Once native Extrovert tools appear, call MCP whoami to verify that connection separately. /reload-mcp is the native manual fallback if automatic reload is disabled.`;
+      writeResult(context, { status: "cli_available_mcp_pending", host, configuration_changed: !result.existed,
+        mcp_runtime_verified: false, skill_reload_verified: false, authentication_verified: false,
+        next_action: { actor: "agent", action: "continue_with_cli", retry_by_agent: true, instruction } }, hasFlag(args, "--json"), value => value.next_action.instruction);
+      return 0;
+    }
     if (hasFlag(args, "--json")) {
       reportPending(!result.existed, `${result.existed ? "Existing Hermes configuration was preserved." : "Extrovert configured for this Hermes profile."} ${result.warning ?? ""} ${!result.existed && transport === "hosted" ? "Run 'hermes mcp login extrovert' and sign in to your existing account first." : !credentialAvailable && !result.existed ? "Run 'extrovert auth login' for this profile first." : ""}`);
       return 0;
@@ -585,6 +618,8 @@ async function domainCommand(args: string[], context: CliContext): Promise<numbe
 }
 
 async function signupCommand(args: string[], context: CliContext): Promise<number> {
+  if (context.env.EXTROVERT_API_KEY?.trim() || context.store.load()) throw new Error("This profile already has Extrovert access. Use whoami, or select a separate EXTROVERT_PROFILE for an intended new account.");
+  if (context.store.loadPendingSignup()) return verifyCommand(args, context);
   const humanEmail = requiredOption(args, "--human-email");
   const username = option(args, "--username");
   const apiBaseUrl = context.env.EXTROVERT_API_BASE_URL;
@@ -600,8 +635,10 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
     api_base_url: config.apiBaseUrl,
   });
   context.stdout.write(
-    `${result.activation_method === "incoming_email" ? result.message : `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.`}\nInbox: ${result.address}\nPending credential saved securely; run 'extrovert verify'.\n`,
+    `${result.activation_method === "incoming_email" ? result.message : `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.`}\nInbox: ${result.address}\nPending credential saved securely.\n`,
   );
+  if (result.activation_method === "incoming_email") return verifyCommand(args, context);
+  context.stdout.write("Run 'extrovert verify' with the code from your email.\n");
   return 0;
 }
 
@@ -611,11 +648,11 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
   const client = clientForKey(pending.agent_key, context, pending.api_base_url);
   let otp: string | undefined;
   if (pending.activation_method === "incoming_email") {
-    const wait = integerOption(args, "--wait-seconds", 55, 0, 55);
-    context.stdout.write(`Watching for your activation email for up to ${wait} seconds.\n`);
-    const activation = await client.activationStatus(wait);
+    const wait = integerOption(args, "--wait-seconds", 300, 0, 300);
+    context.stdout.write(`Send an email from ${pending.human_email} to ${pending.address}. Watching for up to ${wait} seconds; verification continues automatically when it arrives. Keep this agent turn active. If your terminal returns a running process ID, poll it through completion, then recover your practice review. A background CLI cannot resume a stopped agent.\n`);
+    const activation = await waitForActivation(seconds => client.activationStatus(seconds), { timeoutSeconds: wait });
     if (activation.state !== "proven") {
-      context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent’s inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console, then run 'extrovert verify' again.\n`);
+      context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent’s inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console. This watch ended with your reservation preserved. Resume with 'extrovert verify' in this same profile.\n`);
       return 0;
     }
   } else {
@@ -631,7 +668,7 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
   context.store.clearPendingSignup();
   if (result.onboarding) context.stdout.write(`Sender: ${result.onboarding.display_name} <${result.address}>\nPlan: ${result.onboarding.plan}\nOpen your workspace: ${result.onboarding.console_url}\n${result.onboarding.guidance}\n`);
   context.stdout.write(
-    `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nCall whoami through your MCP connection now. A running local MCP using this profile can pick up the saved credential; restart an older MCP if it still reports missing access.\n`,
+    `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nCall whoami through your MCP connection now. A running local MCP using this profile can pick up the saved credential; use the host’s native MCP reload if an older process still reports missing access. In Hermes, continue through this CLI now if its MCP tools have not loaded yet (extrovert tool describe/call exposes the review workflow); no full Hermes restart is needed.\n`,
   );
   return 0;
 }
