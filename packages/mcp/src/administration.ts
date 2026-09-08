@@ -1,4 +1,4 @@
-/** Customer administration through an explicitly approved full-control connection.
+/** Customer administration through an explicitly approved account or project connection.
  * Source of this runtime: sdk/ts/src/administration.ts. The contract generator
  * copies it into the independently published MCP package.
  */
@@ -31,6 +31,7 @@ export interface AdministrativeActionSummary {
 interface Action extends Omit<AdministrativeActionSummary, "mode"> {
   path: string;
   description?: string | null;
+  projectScope?: string | null;
   inputSchema: Schema;
   responseFormat: AdministrativeRequest["responseFormat"];
 }
@@ -79,7 +80,7 @@ export class Administration {
     };
     const inputSchema = rewrite(a.inputSchema) as Schema;
     return { ...summary(a), description: a.description ?? a.summary, input_schema: { ...inputSchema, $defs: definitions },
-      required_authority: "Explicit full account control (account:admin); current human customer-admin authority. Private platform access is excluded.",
+      required_authority: a.projectScope ? `Project-only connection with ${a.projectScope}, or full account control (account:admin). Current human administrative authority and the selected project remain the ceiling.` : "Explicit full account control (account:admin); current human customer-admin authority. Private platform access is excluded.",
       result_format: a.responseFormat === "binary" ? "Base64 content with content_type and optional filename" : "API response JSON; list cursors are opaque",
       credential_lifetime: "Created credentials survive independently, including administrative credentials; revoke them separately." };
   }

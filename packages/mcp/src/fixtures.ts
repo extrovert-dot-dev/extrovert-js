@@ -2658,7 +2658,7 @@ export class FixtureStore {
   onboardDomain(input: {
     domain: string;
     mode?: "ns_delegated";
-    scope?: "org" | "project";
+    scope?: "project";
     project_id?: string;
   }): Domain {
     const name = input.domain.trim().toLowerCase();
@@ -2773,7 +2773,7 @@ export class FixtureStore {
       kind: "domain_purchase",
       state: "awaiting_human_approval",
       domain: quote.domain,
-      domain_scope: input.scope ?? "org",
+      domain_scope: input.scope ?? "project",
       rationale: input.rationale,
       currency: quote.currency,
       quote_cents: quote.quote_cents,

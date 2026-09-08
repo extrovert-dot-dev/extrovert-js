@@ -542,12 +542,9 @@ export interface OnboardDomainInput {
    */
   mode?: "ns_delegated";
   /**
-   * Domain visibility. `org` (default) makes it usable by every project in the
-   * org; `project` binds it to the key's OWN bound project (never client-selected)
-   * so it is only visible/creatable from that project. A legacy/unscoped key falls
-   * back to `org`.
+   * Ordinary domains belong to this connection's fixed project.
    */
-  scope?: "org" | "project";
+  scope?: "project";
   /**
    * Optional assertion that must match the key's bound project - NEVER a
    * selector. A mismatch is rejected server-side; the binding is always derived
@@ -563,7 +560,7 @@ export interface QuoteDomainInput {
 export interface RequestDomainPurchaseInput {
   domain: string;
   idempotency_key: string;
-  scope?: "org" | "project";
+  scope?: "project";
   rationale?: string;
   auto_renew?: boolean;
 }

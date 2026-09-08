@@ -604,7 +604,7 @@ function renderCommerceRequest(request: CommerceRequest): string {
   const lines = [
     `${request.id}  [${request.state}]  ${request.kind}`,
     request.domain
-      ? `domain: ${request.domain} · scope: ${request.domain_scope ?? "org"}`
+      ? `domain: ${request.domain} · scope: ${request.domain_scope ?? "project"}`
       : `plan: ${request.current_plan ?? "unknown"} -> ${request.target_plan ?? "unknown"}`,
     `quote: ${request.quote_cents} ${request.currency} cents · renewal: ${request.renewal_cents} cents${request.approved_max_cents !== undefined ? ` · approved max: ${request.approved_max_cents} cents` : ""}`,
   ];
@@ -3123,16 +3123,14 @@ const onboardDomain = defineTool({
     "Add an inbox subdomain the customer controls. The customer publishes the returned nameserver records; " +
     "Extrovert serves the zone and manages its mail records. This tool never purchases or registers a domain. For a new " +
     "registration, call quote_domain and then request_domain_purchase. A human, an explicitly delegated full-control " +
-    "administrative action, or an applicable spend policy authorizes purchase. Use `scope` to make the domain org-shared " +
-    "(default) or project-bound. Broader administrative setup can use the administrative action catalog with explicit path selectors. Returns the nameserver records to publish.",
+    "administrative action, or an applicable spend policy authorizes purchase. Ordinary domains belong to this connection's project. Broader administrative setup can use the administrative action catalog with explicit path selectors. Returns the nameserver records to publish.",
   inputSchema: {
     domain: z.string().min(1).describe("The inbox subdomain to connect (e.g. agents.example.com)."),
     scope: z
-      .enum(["org", "project"])
+      .enum(["project"])
       .optional()
       .describe(
-        "Domain visibility. `org` (default) lets every project in the org use it; `project` binds it to this key's " +
-          "fixed project only (never client-selected: derived from the key).",
+        "Domain visibility is project-only, derived from the connection. Ordinary domains cannot be organization-wide.",
       ),
     project_id: projectAssertion,
   },
@@ -3245,9 +3243,9 @@ const requestDomainPurchase = defineTool({
       .max(255)
       .describe("Stable retry identity for this exact purchase intent; reuse it after timeouts or ambiguous responses."),
     scope: z
-      .enum(["org", "project"])
+      .enum(["project"])
       .optional()
-      .describe("Visibility of the eventual domain. Defaults to org; project binds it to this key's project."),
+      .describe("The domain belongs to this connection's project. Defaults to project."),
     rationale: z.string().max(2000).optional().describe("Concise reason shown to the human approver."),
     auto_renew: z.boolean().optional().describe("Whether the request asks for annual auto-renewal. Defaults server-side."),
   },
@@ -3427,7 +3425,7 @@ const administrativeInput = {
 const readAdministrativeAction = defineTool({
   name: "read_administrative_action",
   title: "Read administrative account data",
-  description: "Execute a documented GET action under explicitly granted full account control. Start with adminMe to discover currently administered organizations and projects. Inputs are checked against the action schema. Returns the API response and its opaque list cursor. It cannot execute changes. Private platform access is excluded.",
+  description: "Execute a documented GET action permitted by the connection. Inspect required_authority first. For project connections, use the organization and project from whoami; adminMe requires full account control. Inputs are checked against the action schema. Returns the API response and its opaque list cursor. It cannot execute changes. Private platform access is excluded.",
   inputSchema: administrativeInput,
   annotations: { readOnlyHint: true, openWorldHint: true },
   async handler({ action_id, ...input }, { client }) {
@@ -3438,7 +3436,7 @@ const readAdministrativeAction = defineTool({
 const changeAdministrativeAction = defineTool({
   name: "change_administrative_action",
   title: "Perform an administrative action",
-  description: "Execute a documented customer administrative change under explicitly granted full account control: configure resources and policy, approve reviews or purchases, create independent credentials, or revoke access. Inspect its schema first. Current human roles remain the ceiling; actions are attributed to the delegated connection. Created credentials (including admin credentials) survive this connection's expiry or revocation and require separate revocation. Raw credentials are returned only once: keep them private and store securely. Changes are not automatically retried; resolve ambiguous results by reading state before repeating. Private platform access is excluded.",
+  description: "Execute a documented customer administrative change within explicitly granted authority: configure resources and policy, approve reviews or purchases, create independent credentials, or revoke access. Inspect its schema and required_authority first. Project managers can create personas, inboxes, and worker credentials only in their selected project and within their scopes. Current human roles remain the ceiling; actions are attributed to the delegated connection. Created credentials (including admin credentials) survive this connection's expiry or revocation and require separate revocation. Raw credentials are returned only once: keep them private and store securely. Changes are not automatically retried; resolve ambiguous results by reading state before repeating. Private platform access is excluded.",
   inputSchema: administrativeInput,
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   async handler({ action_id, ...input }, { client }) {

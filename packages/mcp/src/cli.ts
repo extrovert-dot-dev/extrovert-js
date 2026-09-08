@@ -43,7 +43,7 @@ Usage:
   extrovert domain status <domain> [--json]
   extrovert domain wait <domain> [--timeout-seconds <0-50>] [--json]
   extrovert domain recheck <domain> [--json]
-  extrovert domain connect <domain> [--scope org|project] [--json]
+  extrovert domain connect <domain> [--scope project] [--json]
   extrovert signup --human-email <email> [--username <name>] [--display-name <name>]
   extrovert verify [--otp <code>] [--wait-seconds <0-300>]
   extrovert whoami [--json]
@@ -609,10 +609,10 @@ async function domainCommand(args: string[], context: CliContext): Promise<numbe
     return 0;
   }
   const scope = option(args, "--scope");
-  if (scope && scope !== "org" && scope !== "project") throw new CliUsageError("--scope must be org or project");
+  if (scope && scope !== "project") throw new CliUsageError("--scope must be project; ordinary domains belong to one project");
   const result = action === "status" ? await client.getDomain(domain)
     : action === "recheck" ? await client.verifyDomain(domain)
-    : await client.onboardDomain({ domain, mode: "ns_delegated", scope: scope as "org" | "project" | undefined });
+    : await client.onboardDomain({ domain, mode: "ns_delegated", scope: scope as "project" | undefined });
   writeResult(context, result, hasFlag(args, "--json"), (value) => renderDomain(value, hasFlag(args, "--diagnostics")));
   return 0;
 }

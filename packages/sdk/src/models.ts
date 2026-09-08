@@ -1776,13 +1776,8 @@ export interface OnboardDomainRequest {
    * Onboarding path. Defaults to `ns_delegated` server-side when omitted.
    */
   mode?: "ns_delegated";
-  /**
-   * Domain visibility. Defaults to `org` (org-shared, usable by every project in the
-   * org). `project` binds the domain to the key's OWN bound project (never
-   * client-selected) so it is only visible/creatable from that project. A
-   * legacy/unscoped key (no bound project) falls back to `org`.
-   */
-  scope?: DomainScope;
+  /** Ordinary domains bind to this connection's project. */
+  scope?: "project";
   /**
    * Optional assertion that must match the key's bound project: NEVER a selector.
    * A mismatch is a 403. The binding is always derived from the key.
