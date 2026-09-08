@@ -2248,7 +2248,10 @@ const ackReviewEvent = defineTool({
   description:
     "Advance the agent's per-review cursor(s) to the supplied through_seq and/or mark broadcast nudges done. Idempotent " +
     "and monotonic: re-acking an older seq is a no-op (exactly-once effect). Call this AFTER you have acted on the " +
-    "events from list_review_events / wait_for_review_event so the queue does not keep re-surfacing them.",
+    "events from list_review_events / wait_for_review_event so the queue does not keep re-surfacing them. " +
+    "Acknowledgement completes event handling, not the email task. If any email in your current task lacks a confirmed " +
+    "terminal outcome, immediately call wait_for_review_event with wait_seconds:55 and no review_id. " +
+    "Then read each affected review. An empty event queue does not prove sending is complete.",
   inputSchema: {
     acks: z
       .array(

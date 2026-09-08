@@ -31,7 +31,7 @@ export const AGENT_RELEASE = {
     },
     "extrovert-send-email": {
       "version": "0.1.0-pre.27",
-      "sha256": "7d0ae5f415fb62fd6e3ed378344c78a255c01896d4a35716c76f32a4653dcccc",
+      "sha256": "3fef37d954e5222513dd930a21546321d99e5f2ad162e3a8c237c168665db734",
       "source": "https://github.com/extrovert-dot-dev/extrovert-skills/tree/main/extrovert-send-email"
     },
     "extrovert-writing-rules": {
