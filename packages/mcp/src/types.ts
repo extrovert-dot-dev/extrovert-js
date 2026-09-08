@@ -136,6 +136,17 @@ export interface Inbox {
    * because the value is identical for every inbox in the org.
    */
   effective_review_policy?: ReviewPolicy;
+  human_email_review?: HumanEmailReview;
+}
+
+/** Read-only discovery. Changing this requires explicit Full account control. */
+export interface HumanEmailReview {
+  enabled: boolean;
+  available: boolean;
+  verified_email: string | null;
+  single_recipient_only: boolean;
+  settings_url: string;
+  unavailable_reason: string | null;
 }
 
 /**

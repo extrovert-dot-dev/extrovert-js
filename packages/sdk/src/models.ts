@@ -323,6 +323,8 @@ export interface Inbox {
    * identical across every inbox in the org.
    */
   effective_review_policy?: ReviewPolicy;
+  /** Default-off sole verified-human recipient exception; all writing rules still apply. */
+  human_email_review?: HumanEmailReview;
   /** Present only on the create response when `return_credentials` was requested. */
   credentials?: InboxCredentials;
 }
@@ -770,6 +772,20 @@ export type ReviewMode = "review" | "direct";
  * than learning the policy by being refused.
  */
 export type ReviewPolicy = "require_review" | "allow_direct" | "auto_send_graduated";
+
+/** Account-wide exception, not a replacement for the inbox's review policy.
+ * Exactly one To recipient matching verified_email, no Cc/Bcc or aliases.
+ * Protected signup practice still requires human review. Ordinary agents may
+ * inspect this but cannot enable it; Full account control can administer it.
+ */
+export interface HumanEmailReview {
+  enabled: boolean;
+  available: boolean;
+  verified_email: string | null;
+  single_recipient_only: boolean;
+  settings_url: string;
+  unavailable_reason: string | null;
+}
 
 /** Review-request state machine (spec §3.1). */
 export type ReviewState =

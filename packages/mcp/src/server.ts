@@ -31,6 +31,7 @@ const INSTRUCTIONS = [
   "     Explain its summary and next action; do not infer readiness from verification or DKIM diagnostics.",
   "     list_domain_events resumes status updates using its saved cursor. Disconnected agents need polling or a host scheduler.",
   "  3. send_email / reply_email: submit via the inbox's authenticated sender and its review policy.",
+  "     get_inbox.human_email_review exposes a default-off exception: exactly one To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others retain their policy. Protected signup practice requires review. Ordinary agents cannot enable it; do not repeatedly prompt the human.",
   "     A queued result is IN PROGRESS. Immediately wait_for_review_event with wait_seconds=55 and no review_id.",
   "     Process human feedback, learn reusable category/org house rules with learn_review_rule, revise the SAME review,",
   "     acknowledge handled events, and wait again. A timeout is a heartbeat, not completion. Only confirmed sent succeeds.",

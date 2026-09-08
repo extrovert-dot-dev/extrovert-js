@@ -294,6 +294,11 @@ function renderInbox(inbox: Inbox): string {
     lines.push(`review policy: ${inbox.effective_review_policy}: ${note}`);
   }
   if (inbox.webhook_url) lines.push(`webhook: ${inbox.webhook_url}`);
+  if (inbox.human_email_review) {
+    const h = inbox.human_email_review;
+    lines.push(`human-recipient review exception: ${h.enabled && h.available ? "enabled" : "off or unavailable"}; exactly one To recipient: ${h.verified_email ?? "unavailable"}; no Cc/Bcc or aliases. Writing rules, intent and send limits still apply. Other recipients keep their usual review policy. Protected signup practice still requires review.`);
+    lines.push(`Human setting (default off): ${h.settings_url}. Ordinary agents cannot enable it. Do not repeatedly prompt the human to change it.`);
+  }
   const metaKeys = inbox.metadata ? Object.keys(inbox.metadata) : [];
   if (metaKeys.length) {
     const pairs = metaKeys.map((k) => `${k}=${String(inbox.metadata[k])}`).join(", ");
@@ -1055,13 +1060,13 @@ const sendEmail = defineTool({
     "Starts a new thread. Use reply_email to respond within an existing thread. Before composing, recover composer=me list_reviews and list_review_events. Select one primary list_categories category by semantic fit; automatically propose_category if none fits, then use it immediately under supervision. Fetch get_rules with that category so category and house rules both apply.\n\n" +
     "ALWAYS pass `intent`. The account's review policy governs EVERY send, and the default policy is " +
     "`require_review`: a send with no `intent` is REFUSED with 422 intent_required, and nothing is sent OR queued. " +
-    "With an intent you get 202 queued_for_review plus a review id (rr_…): the message has NOT gone out yet. Then " +
+    "Normally an intent returns 202 queued_for_review plus a review id (rr_…): the message has NOT gone out yet. For a queued result, " +
     "monitor that review with wait_for_review_event / list_review_events until a `sent` or `send_failed` event " +
     "arrives. After `send_failed`, report failure and acknowledge its event; failed is terminal, so do not cancel it or create a replacement send. " +
-    "Read `effective_review_policy` from get_inbox once at the start to know which path you are on; only an " +
-    "account explicitly set to `allow_direct` delivers immediately.\n\n" +
+    "Read `effective_review_policy` and `human_email_review` from get_inbox. Immediate sending may be allowed by direct policy, category graduation, or the human-recipient exception. " +
+    "That exception is default off: when enabled, exactly one To recipient must match the verified human email, with no Cc/Bcc or aliases. Writing rules, intent and limits still apply; other recipients keep their usual policy. Protected signup practice always requires review. Only the human or explicit Full account control can enable it. Do not repeatedly prompt for it.\n\n" +
     "`mode`/`category_id` refine the routing but never bypass it: the policy resolves the mode, so `mode:\"direct\"` " +
-    "under require_review is still queued. `intent.summary` is the first thing the human reviewer reads.\n\n" +
+    "under require_review cannot grant a bypass; only an independently enabled human-recipient exception may apply. `intent.summary` is the first thing the human reviewer reads.\n\n" +
     "Opt-outs and contact lists are enforced at SUBMIT, before the review is created: if ANY recipient is blocked or " +
     "has unsubscribed, the whole request is rejected (recipient_blocked 403 / recipient_suppressed 422) and no review " +
     "is queued for a human to waste time on. The error names the addresses to drop. Use check_suppression first to " +
@@ -1166,9 +1171,9 @@ const replyEmail = defineTool({
     "send_email. Before writing, recover existing reviews, choose one semantic category with list_categories (propose_category if none fits), and apply get_rules for that category and house style. Select the parent with thread_id (the latest message in that thread) OR message_id (that specific " +
     "message). Recipients, subject, and In-Reply-To/References are derived server-side: you do NOT pass `to`.\n\n" +
     "ALWAYS pass `intent`. Under the default `require_review` policy a reply with no intent is REFUSED with 422 " +
-    "intent_required (nothing sent, nothing queued); with one it returns 202 queued_for_review and a review id " +
+    "intent_required (nothing sent, nothing queued); with one it normally returns 202 queued_for_review and a review id " +
     "(rr_…), and the reply has NOT gone out until a `sent` review event arrives. The envelope is resolved at submit, " +
-    "so the human reviews a message with its real subject and recipients.\n\n" +
+    "so the human reviews a message with its real subject and recipients. get_inbox.human_email_review can expose a separately enabled exception: exactly one derived To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. This starts off and ordinary agents cannot enable it.\n\n" +
     "Opt-outs: a reply to a suppressed recipient is rejected with recipient_suppressed (HTTP 422) at SUBMIT, before a " +
     "review is queued. Replies get ONE narrow exception: a suppressed recipient is allowed when this reply answers an " +
     "inbound message FROM them that arrived AFTER their opt-out (a recipient-re-initiated exchange). Nothing else " +
@@ -1277,14 +1282,14 @@ const forwardEmail = defineTool({
     "ALWAYS pass `intent`. A forward is an outbound message to arbitrary NEW recipients that quotes an entire " +
     "received thread, so the review policy binds it just as hard as a send: otherwise it would be the way around " +
     "review, and a worse one, because it exfiltrates a conversation. Under the default `require_review` policy a " +
-    "forward with no intent is REFUSED with 422 intent_required (nothing sent, nothing queued); with one it returns " +
+    "forward with no intent is REFUSED with 422 intent_required (nothing sent, nothing queued); with one it normally returns " +
     "202 queued_for_review and a review id (rr_…). The subject and quoted body are materialized at SUBMIT, so the " +
     "human reviews the exact bytes that go out and an approved forward delivers the reviewer's edit.\n\n" +
     "Opt-outs: a forward to a suppressed recipient is ALWAYS rejected (recipient_suppressed 422). Forward gets NO " +
     "solicited-response exception: that exception exists only for a reply answering an inbound message from the " +
     "person who opted out.\n\n" +
     "A forward is deliberately NOT threaded to its parent (no In-Reply-To): the new recipients were never part of " +
-    "that conversation.",
+    "that conversation. get_inbox.human_email_review exposes the default-off exception for exactly one To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. Ordinary agents cannot enable it.",
   inputSchema: {
     inbox: inboxRef,
     message_id: z.string().min(1).describe("Opaque id of the message to forward (msg_…)."),

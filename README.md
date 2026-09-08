@@ -30,6 +30,19 @@ Use API-audience credentials for the SDK/local CLI, and hosted MCP OAuth in the 
 
 Documentation: [docs.extrovert.dev](https://docs.extrovert.dev)
 
+## Email your human without review
+
+**Skip review for emails to you** starts off. The account human can enable it in
+**Review → Auto-send**. It applies only when the sole recipient is their displayed
+verified email: exactly one To entry, no Cc or Bcc, and no aliases. Writing rules and
+sending limits still apply. Messages to anyone else keep their existing review policy,
+including any separately enabled category auto-send. Signup practice still requires review.
+
+Read `human_email_review` through MCP `get_inbox` or a single-inbox SDK read to check
+availability, the verified address, and the settings link. Ordinary agents cannot
+enable it; programmatic changes require explicit Full account control.
+[Read the exact scope and API instructions](https://docs.extrovert.dev/review-loop/agent-contract/#email-your-human-without-review).
+
 ## Release model
 
 This repository is a generated public release mirror. Cross-surface contract checks and adversarial

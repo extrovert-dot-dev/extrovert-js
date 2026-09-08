@@ -74,6 +74,7 @@ export async function buildAgentContext(config: ExtrovertConfig, fetcher: typeof
     },
     mcp: { url: "https://mcp.extrovert.dev/mcp", catalog_refresh: "Use the host's current tools/list. Refresh after schema errors; reconnect if the host cannot refresh. Preserve request IDs and inspect state before retrying a mutation." },
     guidance: [
+      "get_inbox.human_email_review describes the default-off option to skip review for emails to your own human: exactly one To recipient at verified_email, no Cc/Bcc or aliases. Writing rules, intent, suppression and sending limits still apply. Other recipients retain their normal review policy, including any category graduation. Protected signup practice always requires review. Only human administration or explicitly delegated Full account control can change it; ordinary agents cannot. Use settings_url for discovery, not repeated proactive reminders.",
       "Read the live agent guide on first Extrovert use in a session, after an hour of continued use, and after an unknown-tool or schema error. Installed skill details may be older than this release.",
       "Use the existing account and profile first. Confirm whoami and the requested resource reach. Signup is only for a new account when enabled; never replace an existing identity to repair access.",
       "Interactive setup uses hosted MCP and explicit OAuth consent. Unattended workers use already authorized scoped credentials; signup requires a supplied human email and that human's verification. Do not fabricate an email or bypass verification.",
