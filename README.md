@@ -25,8 +25,22 @@ uses a dedicated agent with selected inboxes and only the needed actions; see th
 credentials, including administrative credentials, survive independently and need separate revocation.
 
 MCP exposes administrative catalog/read/change tools; the CLI provides `admin actions/describe/read/change`,
-and the SDK provides typed `client.administration.call`. Start with `adminMe`, then inspect exact schemas.
+and the SDK provides typed `client.administration.call`. Start with `whoami`, then inspect exact schemas.
+`adminMe` is only for Full account control; project managers use their fixed project and granted actions.
 Use API-audience credentials for the SDK/local CLI, and hosted MCP OAuth in the host; they are distinct.
+
+For a manager that creates its own team, authorize **Project → Project manager** in
+OAuth, or choose **Credentials → API keys → Create project manager key** in the
+console. The console key requires human organization admin/owner authority and no
+prior OAuth connection. Copy it into `EXTROVERT_API_KEY` for API/SDK/local MCP use;
+hosted MCP uses OAuth. Sending is opt-in and must be included if workers need it.
+
+An authorized connection can create project manager or worker credentials through
+`createConnectionCredential` in the API, MCP administrative tools, or SDK. It can
+delegate only its own reach and permissions; project managers stay inside their
+project. The human-only root-key creation endpoint is separate from delegation.
+Created workers survive ordinary parent expiry/revocation; Connections can revoke
+the entire team. See the [manager walkthrough](https://docs.extrovert.dev/concepts/connections-and-access/#give-a-manager-one-project).
 
 Documentation: [docs.extrovert.dev](https://docs.extrovert.dev)
 

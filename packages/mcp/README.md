@@ -110,8 +110,39 @@ never grants access. Do not automatically substitute credentials after expiry.
 
 For the complete setup-to-worker handoff, identity comparison, expiry recovery, and list/read
 troubleshooting, see [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/).
-Start administrative discovery with `read_administrative_action {action_id: "adminMe"}`, then search
+Start with `whoami` to verify the connection’s project and permissions, then search
 and describe the relevant action before passing its exact `path`, `query`, and `body` inputs.
+`adminMe` requires Full account control and is unnecessary for project managers.
+
+## Give a manager one project
+
+Choose either setup path:
+
+- **OAuth:** connect your MCP host or run `extrovert auth login`. In the browser,
+  choose **Project**, select the project, then choose **Project manager** and review
+  the authorization. For workers that send mail, choose **Custom** and include
+  **Send mail** alongside the manager permissions.
+- **Key handoff:** in the console, select the organization/project and open
+  **Credentials → API keys → Create project manager key**. Name it, choose an expiry,
+  optionally allow sending, and copy the one-time secret into `EXTROVERT_API_KEY`
+  for local MCP, CLI, or SDK use. Hosted MCP uses OAuth. No prior OAuth connection
+  is needed for this human-admin creation path.
+
+An already authorized manager can create another project manager credential through
+`change_administrative_action` with `action_id: "createConnectionCredential"`.
+First inspect `describe_administrative_action` for its exact schema. Use its own
+connection ID, project reach, the same organization/project, and explicit
+`agent:manage` / `credential:delegate` scopes plus the actions the child needs.
+The child can receive only permissions the parent holds. The new human-only
+`manager-keys` endpoint is deliberately excluded from MCP; delegation must retain
+its parent connection and permission ceiling.
+
+Both paths create the same project boundary. Managers can create personas, inboxes,
+and restricted worker credentials. Ordinary persona keys/enrollment keys cannot
+become managers by requesting administrative scopes. Workers survive parent expiry
+or ordinary revocation; **Connections → Also revoke all workers** stops the team.
+See [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/)
+for the complete handoff and revocation walkthrough.
 
 ## Connect with hosted OAuth
 

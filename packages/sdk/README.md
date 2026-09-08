@@ -613,8 +613,28 @@ For choosing access and handing setup over to workers, read
 ## Explicitly delegated administration
 
 Use an API-audience connection token or independently issued `ev_credential_...` credential with
-explicit Full account control. Ordinary `pk_agent_...` keys do not grant administration.
+either explicit project-manager permissions or Full account control. A project manager
+can administer only its selected project within its scopes. Ordinary `pk_agent_...`
+keys do not grant manager administration.
 Hosted MCP OAuth tokens have a different audience; do not copy them into a direct SDK client.
+
+To hand a manager a key without OAuth, select its project in the console, then open
+**Credentials → API keys → Create project manager key**. Choose expiry and whether
+sending is allowed; store the one-time secret in `EXTROVERT_API_KEY`. Alternatively,
+authorize the manager through OAuth with **Project → Project manager**; include
+**Send mail** under Custom if its workers need sending permission.
+
+Start with `client.whoami()` to verify the fixed organization/project and scopes.
+Use `createAgent` and `adminCreateInbox` through `client.administration.call` for its
+team. Use `createConnectionCredential` to hand off a worker or submanager credential:
+inspect `client.administration.describe("createConnectionCredential")`, pass the
+manager’s own connection ID, and request only its project and a subset of its scopes.
+Submanagers need explicit `agent:manage` and `credential:delegate`; ordinary workers
+do not. The human-only root-key endpoint is a console/API action, separate from
+this parent-attributed delegation path. Workers survive ordinary parent revocation;
+use `revokeConnection` with `include_workers: true` to stop the entire team.
+
+The following account-wide project-creation example requires **Full account control**:
 
 ```ts
 const client = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY });
