@@ -81,11 +81,14 @@ Authentication:
   always takes precedence over the stored credential.
 
 Access and administration:
-  Choose selected inboxes for existing mail, project/org reach for future resources,
-  or explicit Full account control for customer administration. Actions are separate.
+  Choose selected inboxes for existing mail or Project manager to create personas,
+  inboxes, and worker credentials inside one project. Actions are separate.
+  Full account control enables account-wide customer administration.
   Full control defaults to 24 hours; refresh never extends that deadline. Until revoked
   is explicit. Created credentials, including admin credentials, survive independently.
-  Start with 'extrovert admin read adminMe', search actions, then describe exact inputs.
+  Start with 'extrovert whoami --json' for your identity and project. Search admin
+  actions and describe their required authority before calling them. adminMe needs
+  Full account control.
   Read state before repeating an ambiguous change. Review and separately revoke created
   access in account > Connections. Do not silently replace an expired credential.
   Guide: https://docs.extrovert.dev/concepts/connections-and-access/
