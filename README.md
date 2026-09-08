@@ -19,7 +19,9 @@ at `https://mcp.extrovert.dev/mcp`; the browser flow avoids putting an Extrovert
 
 Choose [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/) for the
 job: selected inboxes for existing mail, project/organization reach for future resources, or explicit
-Full account control for setup. Full control defaults to 24 hours; refresh never extends it. Created
+Full account control for explicitly requested account administration. Ordinary email setup
+uses a dedicated agent with selected inboxes and only the needed actions; see the
+[installation guide](https://docs.extrovert.dev/quickstart/install/). Full control defaults to 24 hours; refresh never extends it. Created
 credentials, including administrative credentials, survive independently and need separate revocation.
 
 MCP exposes administrative catalog/read/change tools; the CLI provides `admin actions/describe/read/change`,

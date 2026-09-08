@@ -93,7 +93,10 @@ account control. Resource reach and permitted actions are separate. Current huma
 authority remains the upper bound; public connections never gain private operator
 access.
 
-Full account control is intended for interactive setup and administration. It can
+For ordinary email setup, choose Dedicated agent, Selected inboxes, and Read and send.
+Personal assistant can also have limited access. See the [installation guide](https://docs.extrovert.dev/quickstart/install/).
+
+Full account control is intended for explicitly requested account administration. It can
 use other agents' inboxes, change access and policies, create credentials, and
 approve requests—including its own. The default is 24 hours; Until revoked is an
 explicit alternative. Refresh never extends the original deadline. Credentials
