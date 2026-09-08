@@ -533,7 +533,7 @@ export class FixtureStore {
           address: s.address,
           verified: true,
           message:
-            "Verified. The inbox is ready; use read_messages, then get_message with a returned message id.",
+            "Inbox claimed. The signup credential exchange succeeded. Next: call whoami through this connection to verify your agent identity, then recover the prepared practice review.",
           mailbox_quickstart: mailboxQuickstart(s.address),
           onboarding: { human_email: this.pendingActivation?.human_email ?? "human@example.com", display_name: s.displayName ?? "", plan: "free", console_url: "https://app.extrovert.dev" + (this.signupStarter?.review_path ?? ""), starter: this.signupStarter, guidance: this.signupStarter ? "Your inbox is claimed. Recover the practice review in starter; Extrovert prepared the template and you receive its feedback. Do not submit another hello. Show the review link and optional coaching prompt. Learn reusable rules only after authenticated human feedback, read them back, revise the same review, and keep its event loop active." : "Your inbox is ready. Call whoami and recover existing reviews before sending your authorized first message under its review policy." },
         };

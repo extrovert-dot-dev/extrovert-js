@@ -17,7 +17,7 @@ import { withReviewWorkflow } from "./review-workflow.js";
 import { createHash } from "node:crypto";
 import { renderDomain, domainResult } from "./domain-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
-import { formatWhoAmI, formatSignupStarter } from "./identity-presentation.js";
+import { formatWhoAmI } from "./identity-presentation.js";
 
 import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
@@ -723,8 +723,8 @@ const checkActivation = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   handler: async (args, { client }) => {
     const result = await client.activationStatus(args.wait_seconds);
-    const message = result.state === "proven" ? "Your human has approved this inbox. Call verify_signup without an OTP to finish activation."
-      : result.state === "activated" ? "This inbox is activated. Verify your durable connection with whoami."
+    const message = result.state === "proven" ? "Inbox claimed. Human ownership is verified. Next: call verify_signup without an OTP to exchange this limited credential, then whoami."
+      : result.state === "activated" ? "Inbox claimed. Next: verify your durable connection with whoami."
       : result.state === "expired" ? "This reservation expired. Sign in to Extrovert to continue; do not keep waiting for this activation."
       : `Inbox activation: ${result.state}. Send an email from ${result.human_email} to ${result.address}. Reservation expires ${new Date(result.expires_ms).toISOString()}.`;
     return ok(message, result as unknown as Record<string, unknown>);
@@ -761,10 +761,10 @@ const verifySignup = defineTool({
     const quick = res.mailbox_quickstart;
     const persistence = client.credentialPersistenceStatus();
     const text = [
-      `Verified. ${res.message}`,
+      `Inbox claimed. The signup credential exchange succeeded.`,
       `Next call: whoami {}. Call it now with the new credential, even if you called whoami while activation was pending. Explain this verified identity before continuing.`,
       ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, ...(res.onboarding.starter ? [] : [res.onboarding.guidance])] : []),
-      ...(res.onboarding?.starter ? [formatSignupStarter(res.onboarding.starter)] : []),
+      ...(res.onboarding?.starter ? [`Prepared practice review: ${res.onboarding.starter.review_id} (${res.onboarding.starter.status}). Keep this review; do not submit another hello. The whoami response provides its review link and coaching steps after connection verification.`] : []),
       `agent_key (full, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,
       credentialPersistenceMessage(persistence),
@@ -775,7 +775,7 @@ const verifySignup = defineTool({
       `These tools return readable text plus structured message fields; do not download raw responses or invoke jq for ordinary mailbox work.`,
       `For outbound mail, use send_email or reply_email through the review workflow; read get_inbox first to see the effective review policy.`,
     ].join("\n");
-    return ok(text, res as unknown as Record<string, unknown>);
+    return ok(text, { ...res, next_action: { tool: "whoami", arguments: {}, reason: "Verify the new connection before recovering the prepared review." } });
   },
 });
 
@@ -819,7 +819,8 @@ const whoami = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (_args, { client }) => {
     const me: WhoAmI = await client.whoami();
-    return ok(formatWhoAmI(me), me as unknown as Record<string, unknown>);
+    const pending = me.scopes.length === 1 && me.scopes[0] === "signup:verify";
+    return ok((pending ? "" : "Agent connected. ") + formatWhoAmI(me), me as unknown as Record<string, unknown>);
   },
 });
 

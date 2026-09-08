@@ -585,7 +585,7 @@ async function enrollCommand(args: string[], context: CliContext): Promise<numbe
     throw new Error("Enrollment succeeded, but the agent key could not be saved. Fix this profile's credential-directory permissions and retry with the same agent handle and retry id. No secret was printed.");
   }
   const me = await client.whoami();
-  context.stdout.write(`Agent connected. Credential saved privately for this profile.\n${formatWhoAmI(me)}\nStart or reload your MCP session and call whoami.\n`);
+  context.stdout.write(`Local CLI access verified. Credential saved privately for this profile.\n${formatWhoAmI(me)}\nNext: start or reload your MCP session and call whoami there to verify that agent connection.\n`);
   return 0;
 }
 

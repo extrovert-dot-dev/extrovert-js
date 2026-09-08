@@ -9,7 +9,7 @@ export function formatWhoAmI(me: WhoAmI): string {
     "CLI recovery: run extrovert verify in this same saved profile. An interrupted watch preserves the reservation; no browser login, broader permissions, replacement account, or full host restart is needed.",
     ...(me.signup_starter?.review_id ? [`Reserved practice review: ${me.signup_starter.review_id}. Recover it only after credential exchange; do not submit another hello.`] : []),
   ].join("\n");
-  const lines = [me.summary ?? "Your agent is connected to Extrovert.",
+  const lines = ["Connection identity verified. Next: use list_inboxes to verify the intended inbox access.", me.summary ?? "Your agent is connected to Extrovert.",
     `Agent: ${me.agent_name ? `${me.agent_name} (${me.agent_id})` : me.agent_id}`,
     `Organization: ${me.organization_name || me.org_id || "not supplied"}`,
     `Project: ${me.project_name || me.project_id || "not supplied"}`];
@@ -34,6 +34,7 @@ function formatConnection(me: WhoAmI): string {
   const grant = me.connection!;
   const reach = { inboxes: "Selected inboxes", project: "Project (including future inboxes)", organization: "Organization (including future resources)", full_account: "Full account control across organizations the authorizer currently administers" };
   const lines = [
+    "Connection identity verified. Next: use list_inboxes to verify the intended inbox access.",
     `Connection: ${grant.name} (${grant.id})`,
     `Acting identity: ${grant.identity === "personal_assistant" ? `Personal assistant for ${grant.authorizer_id}` : `Dedicated agent ${grant.agent_id}`}`,
     `Resource access: ${reach[grant.reach]}.`,
@@ -56,10 +57,11 @@ export function formatSignupStarter(starter: NonNullable<WhoAmI["signup_starter"
   else if (["sent", "auto_sent", "failed", "cancelled"].includes(starter.status)) lines.push(`Recover get_review {"id":"${starter.review_id}"} and list_review_events before concluding. This practice review is closed; do not create a replacement.`);
   else lines.push(
     `Extrovert prepared this fixed practice draft; you are its composer and receive the human’s feedback. Call get_review {"id":"${starter.review_id}"}, list_reviews {"composer":"me"}, and list_review_events {} now. Do not submit a second hello.`,
-    `Before waiting, tell the human: “Your first practice draft is waiting for review at https://app.extrovert.dev${starter.review_path}. Coach me on revisions to teach me your taste. For example: ${starter.coaching_prompt}” This is optional; the example itself is not permission to save a rule.`,
+    `Before waiting, tell the human: “Draft awaiting review. Open https://app.extrovert.dev${starter.review_path} to approve your first practice draft or coach me on revisions to teach me your taste. For example: ${starter.coaching_prompt}” This is optional; the example itself is not permission to save a rule.`,
     "After authenticated reviewer feedback asks for a reusable rule, load extrovert-writing-rules. Use learn_review_rule with that source_turn_id, target org_house and kind hard for the all-messages no-em-dashes request. Read back the saved rule and confirm its scope. Fetch fresh rules and revise this SAME review. One-message edits are not reusable rules.",
     'Keep one wait_for_review_event {"wait_seconds":55,"limit":100} active across your reviews. Handle feedback, acknowledge after handling, and continue until confirmed sent or another terminal outcome.',
   );
   lines.push("Explain briefly: messages initially wait for review. Agents organize categories and save reusable feedback as Extrovert rules. House rules cover all categories; projects can have their own rules shared by their agents. Later, the owner can choose direct sending or authorize a review agent. Describe only the access returned by whoami, and offer to help the human explore the console and capabilities with separately approved access.");
+  lines.push("Report the observed milestone and its next action: inbox claimed → verify the connection; agent connected → recover the draft; draft awaiting review → show its review link before waiting; message sent → ask the human to check their inbox. Say message sent only after a confirmed sent result. Setup complete is too vague, and sending does not confirm receipt.");
   return lines.join("\n");
 }
