@@ -3395,7 +3395,7 @@ const streamInfo = defineTool({
 const listAdministrativeActions = defineTool({
   name: "list_administrative_actions",
   title: "Find administrative actions",
-  description: "Search the customer administration catalog by task (projects, agents, credentials, billing, review policy, approvals, connections). This reads local API metadata, not account data. Full account control must be explicitly granted before executing actions. Follow next_cursor to see more matches; inspect an action before calling it.",
+  description: "Search the customer administration catalog by task (projects, agents, credentials, billing, review policy, approvals, connections). This reads local API metadata, not account data. Execution requires the authority listed by describe_administrative_action. Project managers can manage their project within granted scopes; account-wide actions require Full account control. Follow next_cursor to see more matches; inspect an action before calling it.",
   inputSchema: { search: z.string().max(200).optional(), mode: z.enum(["read", "change"]).optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().optional() },
   annotations: { readOnlyHint: true, openWorldHint: false },
   async handler(args, { client }) {
