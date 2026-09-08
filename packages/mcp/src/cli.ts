@@ -810,7 +810,10 @@ function resolveAuthentication(context: CliContext): { client: ExtrovertClient; 
     return { client: clientForKey(fromEnvironment, context, context.env.EXTROVERT_API_BASE_URL), source: "EXTROVERT_API_KEY" };
   }
   const stored = context.store.load();
-  if (!stored) return undefined;
+  if (!stored) {
+    if (context.store.loadPendingSignup()) throw new Error("Signup is saved in this profile, but its credential exchange is still pending. Run 'extrovert verify' in this same profile to watch for ownership proof and finish automatically. Then call whoami and recover the existing practice review. No browser sign-in, broader permissions, replacement account, or full host restart is needed.");
+    return undefined;
+  }
   const env = { ...context.env, EXTROVERT_API_KEY: stored.agent_key, EXTROVERT_API_BASE_URL: stored.api_base_url };
   return { client: new ExtrovertClient(loadConfig(env), { credentialProvider: createLocalCredentialProvider(context.store, { apiBaseUrl: stored.api_base_url }) }), source: context.store.paths.credential };
 }

@@ -2,6 +2,13 @@ import type { WhoAmI } from "./types.js";
 
 export function formatWhoAmI(me: WhoAmI): string {
   if (me.connection) return formatConnection(me);
+  if (me.scopes.length === 1 && me.scopes[0] === "signup:verify") return [
+    "Signup credential exchange is still pending. This limited key verifies signup; it cannot read mail or handle reviews yet.",
+    `Agent: ${me.agent_id}. Project: ${me.project_name || me.project_id || "not supplied"}.`,
+    'Next call: check_activation {}. If state is proven, call verify_signup {} without an OTP, then whoami {} through this same connection before recovering the practice review. If pending, keep a bounded check_activation watch running. For a legacy OTP signup, use verify_signup with the human-supplied code instead.',
+    "CLI recovery: run extrovert verify in this same saved profile. An interrupted watch preserves the reservation; no browser login, broader permissions, replacement account, or full host restart is needed.",
+    ...(me.signup_starter?.review_id ? [`Reserved practice review: ${me.signup_starter.review_id}. Recover it only after credential exchange; do not submit another hello.`] : []),
+  ].join("\n");
   const lines = [me.summary ?? "Your agent is connected to Extrovert.",
     `Agent: ${me.agent_name ? `${me.agent_name} (${me.agent_id})` : me.agent_id}`,
     `Organization: ${me.organization_name || me.org_id || "not supplied"}`,
