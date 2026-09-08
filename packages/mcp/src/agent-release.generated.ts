@@ -16,7 +16,7 @@ export const AGENT_RELEASE = {
     },
     "extrovert-connect": {
       "version": "0.1.0-pre.24",
-      "sha256": "82b00ebebcdbb23b93205ce1e98bce76d0bb608d09fe8b37f51f997e49619c7b",
+      "sha256": "dafde30c0ad6e33e84010e0163a7e3cb0f5500e3a73364ec009a68edf01410b0",
       "source": "https://github.com/extrovert-dot-dev/extrovert-skills/tree/main/extrovert-connect"
     },
     "extrovert-manage-inboxes": {
