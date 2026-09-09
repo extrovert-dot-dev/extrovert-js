@@ -534,6 +534,12 @@ a human approves / edits / rejects it, and the loop learns. The stable agent-fac
 are published here as a documented, **versioned open contract**: an SDK + skill contract, **not**
 a wire protocol (there is no `/v1/contract` endpoint).
 
+A human may approve or edit-send a displayed draft during a pending rule/category
+recheck. The approval keeps its revision/version checks and supersedes obsolete
+recheck work. Before revising or restamping, reread the review: an approved review
+awaits its send outcome; a sent or cancelled review must not be modified. Existing
+conflict hints and durable events report the human's action.
+
 ```ts
 import { CONTRACT_VERSION, CONTRACT_MANIFEST } from "@extrovert.dev/sdk";
 

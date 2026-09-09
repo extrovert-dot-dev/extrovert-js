@@ -1583,7 +1583,7 @@ const submitRevision = defineTool({
   title: "Submit a redrafted revision",
   description:
     "Post a NEW draft for a review (rr_…) under a parent_revision CAS: the way to redraft after feedback, a chat " +
-    "answer, or a rule_changed / recheck_category nudge. `parent_revision` MUST equal the draft's current `revision`, " +
+    "answer, or a rule_changed / recheck_category nudge. Humans may approve or edit-send during a recheck, superseding that work. Reread get_review before acting; never revise an approved or terminal review. `parent_revision` MUST equal the draft's current `revision`, " +
     "which get_review prints.\n\n" +
     "LEGAL FROM: needs_review, in_review, chatting, rejected. needs_review IS legal: a reviewer reject, a born-stale " +
     "rule change and a recheck_category nudge all hand the draft back to you sitting in needs_review, and redrafting " +
@@ -1689,13 +1689,13 @@ const restampReview = defineTool({
   title: "Re-stamp a draft's rules-version without redrafting ($0)",
   description:
     "The $0 escape valve when a rule_changed/recheck nudge fires AND the draft genuinely already complies (D19/§8). " +
-    "Use it ONLY for 'I read the new rules and no change is needed'. If the draft DOES need to change, use " +
+    "Reread get_review first: a human can approve or edit-send during a pending recheck, superseding it. Never restamp an approved or terminal review. Use it ONLY for 'I read the new rules and no change is needed'. If the draft DOES need to change, use " +
     "submit_revision: re-stamping a draft that should have been redrafted makes you lie to the born-stale " +
-    "accounting, and the reconciliation sweep will then RELEASE a pre-rule draft to a human as if it were current. " +
+    "accounting. Human approval is a separate explicit decision and does not depend on this compliance stamp. " +
     "Instead of an " +
     "expensive redraft, assert 'I reviewed this against rules vX and no change is needed': the server advances the draft's " +
     "composed_* rules-versions to vX WITHOUT a new draft (no revision bump, no body change, no nudge). A born-stale draft " +
-    "re-stamped to the CURRENT version becomes current-enough and is releasable on the next reconciliation sweep. " +
+    "re-stamped to the CURRENT version records that you checked the unchanged draft against those rules. " +
     "against_version must NOT exceed the category's current rules-version (you can't claim a version that doesn't exist). " +
     "Use submit_revision instead when the draft DOES need to change. $0 LLM: you judged.",
   inputSchema: {
