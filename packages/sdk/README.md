@@ -38,7 +38,7 @@ for a stable release:
 npm install @extrovert.dev/sdk@next
 ```
 
-Pin `@extrovert.dev/sdk@0.1.0-pre.13` when a dogfood test needs a reproducible contract snapshot.
+For reproducible builds, pin the exact published version you have tested instead of a floating dist-tag.
 Requires Node 18+ for global `fetch` and Web Crypto.
 
 ## Build and use from source
