@@ -201,6 +201,8 @@ export type {
   Category,
   ListCategoriesParams,
   ProposeCategoryRequest,
+  MergeCategoriesRequest,
+  MergeCategoriesResult,
   UpdateCategoryRequest,
   // review loop graduation + risk dial (HITL, M6)
   AccountRiskDial,
@@ -295,3 +297,5 @@ export type { AdministrativeActionID, AdministrativeMode, AdministrativeInput, A
 export { ADMINISTRATIVE_FIXTURE_KEY } from "./administration-fixtures.js";
 
 export type { ConnectionResourceSelection, ListWebhooksParams } from "./models.js";
+
+export type { InternalEmailReview, HumanEmailReview } from "./models.js";

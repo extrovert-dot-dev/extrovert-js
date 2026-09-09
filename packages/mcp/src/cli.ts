@@ -2,7 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 
-import { ExtrovertApiError, ExtrovertClient } from "./client.js";
+import { ExtrovertApiError, ExtrovertClient, renderQuotaDetails } from "./client.js";
 import { loadConfig, SERVER_VERSION } from "./config.js";
 import { AGENT_CONTEXT_URL, AGENT_GUIDE_URL, buildAgentContext, fetchAgentContext } from "./agent-context.js";
 import { renderDomain } from "./domain-presentation.js";
@@ -1007,7 +1007,7 @@ function renderError(error: unknown): string {
     const request = error.details && typeof error.details === "object" && "request_id" in error.details
       ? ` request ${(error.details as { request_id?: unknown }).request_id ?? ""}`
       : "";
-    return `Extrovert API error${code}: ${error.message}${request}`;
+    return `Extrovert API error${code}: ${error.message}${request}${renderQuotaDetails(error.details)}`;
   }
   return error instanceof Error ? error.message : String(error);
 }

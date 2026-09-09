@@ -64,3 +64,5 @@ skill evaluations run before each export; this repository then rebuilds and pack
 artifacts. Future publishes use npm trusted publishing through `.github/workflows/publish.yml`.
 
 MIT © Message Science LLC.
+
+Optional project and organization review exceptions let agents email one another when every recipient belongs to the enabled scope. Both start off, grant no inbox access, and preserve writing rules and sending limits. [Scope, settings, and API instructions](https://docs.extrovert.dev/review-loop/agent-contract/#email-between-agents-without-review).

@@ -52,6 +52,8 @@ import type {
   ListReviewEventsParams,
   ListReviewsParams,
   ProposeCategoryRequest,
+  MergeCategoriesRequest,
+  MergeCategoriesResult,
   ProposeGraduationRequest,
   UpdateCategoryRequest,
   GetRulesParams,
@@ -268,6 +270,7 @@ export interface Transport {
   listCategories(params: ListCategoriesParams, signal?: AbortSignal): Promise<Page<Category>>;
   getCategory(categoryId: string, signal?: AbortSignal): Promise<Category>;
   proposeCategory(req: ProposeCategoryRequest, signal?: AbortSignal): Promise<Category>;
+  mergeCategories(categoryId: string, req: MergeCategoriesRequest, signal?: AbortSignal): Promise<MergeCategoriesResult>;
   updateCategory(categoryId: string, req: UpdateCategoryRequest, signal?: AbortSignal): Promise<Category>;
   // Graduation + risk dial (Review Loop, D16/D6/D17): agents READ the effective dial +
   // a category's graduation status, and PROPOSE graduation (records the request; never
@@ -1057,6 +1060,10 @@ export class HttpTransport implements Transport {
     return this.call({ method: "POST", path: "/v1/categories", body: req, signal });
   }
 
+  mergeCategories(categoryId: string, req: MergeCategoriesRequest, signal?: AbortSignal): Promise<MergeCategoriesResult> {
+    return this.call({ method: "POST", path: `/v1/categories/${encodeURIComponent(categoryId)}/merge`, body: req, signal });
+  }
+
   updateCategory(categoryId: string, req: UpdateCategoryRequest, signal?: AbortSignal): Promise<Category> {
     return this.call({
       method: "PUT",
@@ -1545,6 +1552,9 @@ export class MockTransport implements Transport {
   }
   async proposeCategory(req: ProposeCategoryRequest): Promise<Category> {
     return this.backend.proposeCategory(req);
+  }
+  async mergeCategories(categoryId: string, req: MergeCategoriesRequest): Promise<MergeCategoriesResult> {
+    return this.backend.mergeCategories(categoryId, req);
   }
   async updateCategory(categoryId: string, req: UpdateCategoryRequest): Promise<Category> {
     const c = this.backend.updateCategory(categoryId, req);

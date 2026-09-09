@@ -544,3 +544,13 @@ Show the human the review link before waiting for approval. They can approve, ed
 the agent, which saves reusable feedback as writing rules. End setup with a brief explanation
 of the connection's actual `whoami` capabilities and an offer to explore Extrovert together
 through human sign-in and explicit consent for broader access.
+
+### Inbox capacity errors
+
+`inbox_limit_exceeded` identifies the billing account inbox cap shared across its organizations
+and projects. `enrollment_token_mailbox_budget_exhausted` identifies the enrollment key lifetime
+creation allowance shared by its agents. A key showing 5/7 can still hit a full billing account.
+Deleting unused inboxes frees account capacity but does not refund key usage; increasing a key
+allowance does not increase account capacity. These are inbox counts, separate from sending limits.
+Read the error message and quota counts before requesting a plan change. See
+[Rate limits and quotas](https://docs.extrovert.dev/operating/limits/#lifetime-inbox-creation).

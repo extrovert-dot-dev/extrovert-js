@@ -657,3 +657,13 @@ credentials, survive independently and require separate revocation.
 For offline catalog and project-creation demos, pass `transport: "mock"` and the exported
 `ADMINISTRATIVE_FIXTURE_KEY` as `apiKey`. Other administrative execution fixtures fail explicitly;
 use a test HTTP server through the custom `fetch` option to test additional workflows.
+
+### Inbox capacity errors
+
+`inbox_limit_exceeded` identifies the billing account inbox cap shared across its organizations
+and projects. `enrollment_token_mailbox_budget_exhausted` identifies the enrollment key lifetime
+creation allowance shared by its agents. A key showing 5/7 can still hit a full billing account.
+Deleting unused inboxes frees account capacity but does not refund key usage; increasing a key
+allowance does not increase account capacity. These are inbox counts, separate from sending limits.
+Read the error message and quota counts before requesting a plan change. See
+[Rate limits and quotas](https://docs.extrovert.dev/operating/limits/#lifetime-inbox-creation).

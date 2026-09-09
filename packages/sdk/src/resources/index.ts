@@ -42,6 +42,8 @@ import type {
   ReplyRequest,
   Page,
   ProposeCategoryRequest,
+  MergeCategoriesRequest,
+  MergeCategoriesResult,
   ProposeGraduationRequest,
   GetRulesParams,
   GetRuleAuditParams,
@@ -672,8 +674,8 @@ export class ReviewEvents {
  * a new one. Categories are CUSTOMER-scoped and agent-attributed (the deliberate
  * cross-agent-404 exception); identity is opaque cat_ ids: nothing keys on the
  * name, so renames never break a reference. `match` is a pure lexical filter (NO
- * LLM on our side); the agent does the semantic matching. Merging / deleting a
- * category is a human (console) action, not exposed here (D17).
+ * LLM on our side); the agent does the semantic matching. Only eligible new
+ * duplicates may be consolidated by composers; broader curation remains administrative.
  */
 export class Categories {
   constructor(private readonly ctx: ResourceContext) {}
@@ -691,6 +693,11 @@ export class Categories {
   /** Propose a new category; it stands immediately and writes a create audit row. */
   propose(req: ProposeCategoryRequest, signal?: AbortSignal): Promise<Category> {
     return this.ctx.transport.proposeCategory(req, signal);
+  }
+
+  /** Merge semantically duplicate new categories, preserving rules and pending reviews. */
+  merge(categoryId: string, req: MergeCategoriesRequest, signal?: AbortSignal): Promise<MergeCategoriesResult> {
+    return this.ctx.transport.mergeCategories(categoryId, req, signal);
   }
 
   /** Rename / re-describe a category: metadata only (D10). */

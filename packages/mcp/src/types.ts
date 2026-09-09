@@ -137,9 +137,16 @@ export interface Inbox {
    */
   effective_review_policy?: ReviewPolicy;
   human_email_review?: HumanEmailReview;
+  internal_email_review?: InternalEmailReview;
 }
 
 /** Read-only discovery. Changing this requires explicit Full account control. */
+export interface InternalEmailReview {
+  project: { enabled: boolean; effective: boolean; project_id: string; settings_url: string } | null;
+  organization: { enabled: boolean; org_id: string; settings_url: string };
+  all_recipients_required: boolean;
+}
+
 export interface HumanEmailReview {
   enabled: boolean;
   available: boolean;
@@ -369,6 +376,10 @@ export interface ReviewIntent {
 
 /** A review request (rr_…): the pre-send record under the Review Loop. */
 export interface Review {
+  category_name?: string;
+  /** Scheduling is observable; this does not assert that a composer is online. */
+  recheck_status?: "queued";
+  recheck_reason?: string;
   review_path?: string;
   id: string;
   state: ReviewState;
@@ -594,6 +605,8 @@ export interface ReviewEventCursor {
  * agent-attributed: the deliberate cross-agent-404 exception. Opaque ids only.
  */
 export interface Category {
+  /** Active category rules, excluding superseded/retired versions. */
+  active_rule_count?: number;
   /** Logical accepted messages in this authorized project, counted by creation time. */
   message_count_7d?: number;
   message_count_30d?: number;
@@ -1519,3 +1532,14 @@ export interface ListCategoriesParams { match?: string;
 /** Explicitly narrow a broader connection; legacy keys retain their fixed ceiling. */
 export interface ConnectionResourceSelection { org_id?: string; project_id?: string }
 export interface ListWebhooksParams extends ConnectionResourceSelection { limit?: number; cursor?: string }
+
+/** Bounded composer consolidation; broader category curation remains administrative. */
+export interface MergeCategoriesRequest {
+  into_category_id: string;
+  rationale: string;
+}
+export interface MergeCategoriesResult {
+  category: Category;
+  review_requests_repointed: number;
+  writing_rules_repointed: number;
+}

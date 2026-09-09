@@ -325,6 +325,7 @@ export interface Inbox {
   effective_review_policy?: ReviewPolicy;
   /** Default-off sole verified-human recipient exception; all writing rules still apply. */
   human_email_review?: HumanEmailReview;
+  internal_email_review?: InternalEmailReview;
   /** Present only on the create response when `return_credentials` was requested. */
   credentials?: InboxCredentials;
 }
@@ -778,6 +779,12 @@ export type ReviewPolicy = "require_review" | "allow_direct" | "auto_send_gradua
  * Protected signup practice still requires human review. Ordinary agents may
  * inspect this but cannot enable it; Full account control can administer it.
  */
+export interface InternalEmailReview {
+  project: { enabled: boolean; effective: boolean; project_id: string; settings_url: string } | null;
+  organization: { enabled: boolean; org_id: string; settings_url: string };
+  all_recipients_required: boolean;
+}
+
 export interface HumanEmailReview {
   enabled: boolean;
   available: boolean;
@@ -814,6 +821,10 @@ export interface ReviewIntent {
 
 /** A review request (rr_…): the pre-send record under the Review Loop. */
 export interface Review {
+  category_name?: string;
+  /** Scheduling is observable; this does not assert that a composer is online. */
+  recheck_status?: "queued";
+  recheck_reason?: string;
   review_path?: string;
   id: string;
   state: ReviewState;
@@ -1060,6 +1071,8 @@ export interface ListReviewEventsParams {
  * agent-attributed: the deliberate cross-agent-404 exception. Opaque ids only.
  */
 export interface Category {
+  /** Active category rules, excluding superseded/retired versions. */
+  active_rule_count?: number;
   /** Logical accepted messages in this authorized project, counted by creation time. */
   message_count_7d?: number;
   message_count_30d?: number;
@@ -1418,14 +1431,9 @@ export interface SaveRuleRequest {
   supersedes_id?: string;
   /** Set for a per-agent override; empty = all org agents. */
   scope_agent_id?: string;
-  /**
-   * D8 retro-propagation HUMAN OPT-IN (default false). When true, a NEW category rule
-   * that could apply to pending siblings enqueues ONE propagate_general_rule nudge
-   * (siblings + suggested_batch) so the agent redrafts a FEW at a time: never the
-   * whole queue. Set only after the human said "apply to N pending?".
-   */
+  /** Deprecated compatibility hint; affected pending reviews are always scheduled for recheck. */
   propagate_to_pending?: boolean;
-  /** Override the propagate batch (0 = base 3, bounded by rework_batch_max). */
+  /** Deprecated compatibility hint; recheck events recommend batches of three. */
   suggested_batch?: number;
 }
 
@@ -2198,3 +2206,14 @@ export interface LearnedReviewRule {
 /** Explicitly narrow a broader connection; legacy keys retain their fixed ceiling. */
 export interface ConnectionResourceSelection { org_id?: string; project_id?: string }
 export interface ListWebhooksParams extends ConnectionResourceSelection { limit?: number; cursor?: string }
+
+/** Bounded composer consolidation; broader category curation remains administrative. */
+export interface MergeCategoriesRequest {
+  into_category_id: string;
+  rationale: string;
+}
+export interface MergeCategoriesResult {
+  category: Category;
+  review_requests_repointed: number;
+  writing_rules_repointed: number;
+}

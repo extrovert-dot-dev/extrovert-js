@@ -22,7 +22,7 @@ import { formatWhoAmI } from "./identity-presentation.js";
 import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
 
-import { ExtrovertApiError, type ExtrovertClient } from "./client.js";
+import { renderQuotaDetails, ExtrovertApiError, type ExtrovertClient } from "./client.js";
 import type { ExtrovertConfig } from "./config.js";
 import { isTerminalReviewEvent } from "./types.js";
 import type {
@@ -298,6 +298,11 @@ function renderInbox(inbox: Inbox): string {
     const h = inbox.human_email_review;
     lines.push(`human-recipient review exception: ${h.enabled && h.available ? "enabled" : "off or unavailable"}; exactly one To recipient: ${h.verified_email ?? "unavailable"}; no Cc/Bcc or aliases. Writing rules, intent and send limits still apply. Other recipients keep their usual review policy. Protected signup practice still requires review.`);
     lines.push(`Human setting (default off): ${h.settings_url}. Ordinary agents cannot enable it. Do not repeatedly prompt the human to change it.`);
+  }
+  if (inbox.internal_email_review) {
+    const v = inbox.internal_email_review;
+    lines.push(`Internal email review exceptions: project ${v.project?.effective ? "enabled" : "off or unavailable"}; organization ${v.organization.enabled ? "enabled" : "off"}. Every To/Cc/Bcc recipient must resolve to an inbox in the sender's exact enabled project or organization. Shared domains, aliases, other organizations, and mixed external recipients do not qualify. Writing rules, intent, send limits, and protected signup review still apply. This grants no access to other inboxes.`);
+    lines.push(`Settings (ordinary agents and project managers cannot change these): ${v.project?.settings_url ?? v.organization.settings_url}. Explain when relevant; do not repeatedly prompt for enablement. Submit normally and follow the server's sent or queued result.`);
   }
   const metaKeys = inbox.metadata ? Object.keys(inbox.metadata) : [];
   if (metaKeys.length) {
@@ -1063,10 +1068,10 @@ const sendEmail = defineTool({
     "Normally an intent returns 202 queued_for_review plus a review id (rr_…): the message has NOT gone out yet. For a queued result, " +
     "monitor that review with wait_for_review_event / list_review_events until a `sent` or `send_failed` event " +
     "arrives. After `send_failed`, report failure and acknowledge its event; failed is terminal, so do not cancel it or create a replacement send. " +
-    "Read `effective_review_policy` and `human_email_review` from get_inbox. Immediate sending may be allowed by direct policy, category graduation, or the human-recipient exception. " +
+    "Read `effective_review_policy`, `human_email_review`, and `internal_email_review` from get_inbox. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender’s enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review.  Immediate sending may be allowed by direct policy, category graduation, or the human-recipient exception. " +
     "That exception is default off: when enabled, exactly one To recipient must match the verified human email, with no Cc/Bcc or aliases. Writing rules, intent and limits still apply; other recipients keep their usual policy. Protected signup practice always requires review. Only the human or explicit Full account control can enable it. Do not repeatedly prompt for it.\n\n" +
     "`mode`/`category_id` refine the routing but never bypass it: the policy resolves the mode, so `mode:\"direct\"` " +
-    "under require_review cannot grant a bypass; only an independently enabled human-recipient exception may apply. `intent.summary` is the first thing the human reviewer reads.\n\n" +
+    "under require_review cannot grant a bypass; an independently enabled human-recipient or internal-recipient exception may apply. `intent.summary` is the first thing the human reviewer reads.\n\n" +
     "Opt-outs and contact lists are enforced at SUBMIT, before the review is created: if ANY recipient is blocked or " +
     "has unsubscribed, the whole request is rejected (recipient_blocked 403 / recipient_suppressed 422) and no review " +
     "is queued for a human to waste time on. The error names the addresses to drop. Use check_suppression first to " +
@@ -1173,7 +1178,7 @@ const replyEmail = defineTool({
     "ALWAYS pass `intent`. Under the default `require_review` policy a reply with no intent is REFUSED with 422 " +
     "intent_required (nothing sent, nothing queued); with one it normally returns 202 queued_for_review and a review id " +
     "(rr_…), and the reply has NOT gone out until a `sent` review event arrives. The envelope is resolved at submit, " +
-    "so the human reviews a message with its real subject and recipients. get_inbox.human_email_review can expose a separately enabled exception: exactly one derived To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. This starts off and ordinary agents cannot enable it.\n\n" +
+    "so the human reviews a message with its real subject and recipients. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender’s enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review. get_inbox.human_email_review can expose a separately enabled exception: exactly one derived To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. This starts off and ordinary agents cannot enable it.\n\n" +
     "Opt-outs: a reply to a suppressed recipient is rejected with recipient_suppressed (HTTP 422) at SUBMIT, before a " +
     "review is queued. Replies get ONE narrow exception: a suppressed recipient is allowed when this reply answers an " +
     "inbound message FROM them that arrived AFTER their opt-out (a recipient-re-initiated exchange). Nothing else " +
@@ -1289,7 +1294,7 @@ const forwardEmail = defineTool({
     "solicited-response exception: that exception exists only for a reply answering an inbound message from the " +
     "person who opted out.\n\n" +
     "A forward is deliberately NOT threaded to its parent (no In-Reply-To): the new recipients were never part of " +
-    "that conversation. get_inbox.human_email_review exposes the default-off exception for exactly one To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. Ordinary agents cannot enable it.",
+    "that conversation. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender’s enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review. get_inbox.human_email_review exposes the default-off exception for exactly one To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. Ordinary agents cannot enable it.",
   inputSchema: {
     inbox: inboxRef,
     message_id: z.string().min(1).describe("Opaque id of the message to forward (msg_…)."),
@@ -1805,13 +1810,29 @@ const proposeCategory = defineTool({
   },
 });
 
+const mergeCategories = defineTool({
+  name: "merge_categories",
+  title: "Consolidate duplicate new categories",
+  description: "After browsing descriptions and rules, consolidate genuinely identical message purposes created by concurrent agents. Both categories must be agent-authored, shared, supervised, under 24 hours old, with matching policy and exclusive use in your project. Prefer the existing category that already holds the relevant rules. Supply a semantic rationale; names alone do not prove equivalence. The server preserves all rules and reviews and schedules composers to recheck; it never approves or sends. On conflict reread both categories and follow merged_into. Mature, human-curated or differently governed categories need human curation. After merging, get_review and fresh get_rules for the survivor, then revise or honestly restamp the same review.",
+  inputSchema: {
+    id: z.string().min(1).describe("Duplicate category to merge away."),
+    into_category_id: z.string().min(1).describe("Canonical category to retain."),
+    rationale: z.string().min(1).max(2000).describe("Why both descriptions describe the same reusable purpose; maximum 2000 UTF-8 bytes."),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  handler: async ({ id, ...input }, { client }) => {
+    const result = await client.mergeCategories(id, input);
+    return ok(`Categories consolidated. Pending composers will recheck their drafts.\n${renderCategory(result.category)}`, result as unknown as Record<string, unknown>);
+  },
+});
+
 const updateCategory = defineTool({
   name: "update_category",
   title: "Rename / re-describe a category",
   description:
     "Update a category's name and/or description: metadata ONLY (D10). Renaming never breaks a reference because " +
     "nothing keys on the name. Any agent in the account may edit; a rename/redescribe entry is written to the audit log. " +
-    "Merging or deleting a category is a human (console) action, never a tool.",
+    "Use merge_categories only for eligible new duplicates; broader merges and deletion are console actions.",
   inputSchema: {
     id: z.string().min(1).describe("Category id (cat_…)."),
     name: z.string().optional().describe("New display name."),
@@ -2041,15 +2062,13 @@ const saveRule = defineTool({
       .boolean()
       .optional()
       .describe(
-        "D8 retro-propagation HUMAN OPT-IN (default false). Set ONLY when the human said 'apply to N pending?'. " +
-          "Enqueues a propagate_general_rule nudge to pending siblings of a NEW category rule so you redraft a FEW " +
-          "at a time: never the whole queue.",
+        "Deprecated compatibility hint. Affected pending reviews are always scheduled for recheck; false does not disable it.",
       ),
     suggested_batch: z
       .number()
       .int()
       .optional()
-      .describe("Override the propagate batch (0 = base 3, bounded by rework_batch_max). Never fans one nudge to the whole queue."),
+      .describe("Deprecated compatibility hint; recheck events recommend batches of three."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2191,7 +2210,7 @@ const listReviewEvents = defineTool({
     "review somebody already finished.\n\n" +
     "Non-terminal reasons: `redraft_requested` and `rejected` (redraft via submit_revision), `feedback_added` (a " +
     "HUMAN commented: answer or redraft), `rule_changed` and `propagate_general_rule` (re-read get_rules, then " +
-    "redraft or restamp_review), `recheck_category` (re-check the category assignment). `staleness` and `approved` " +
+    "redraft or restamp_review), `recheck_category` (browse current category descriptions and rules, consolidate eligible semantic duplicates with merge_categories, then fetch fresh get_rules and revise or restamp). `staleness` and `approved` " +
     "are RESERVED and never emitted. Handle any unknown reason by acking and ignoring it: the set grows additively.\n\n" +
     "Each event's `payload` carries the actionable detail (the delivered message_id, the scrubbed send error, the " +
     "current revision) and is printed with the event.",
@@ -3479,6 +3498,7 @@ const ALL_TOOLS = [
   listCategories,
   getCategory,
   proposeCategory,
+  mergeCategories,
   updateCategory,
   getRiskDial,
   getGraduationStatus,
@@ -3544,7 +3564,7 @@ export const TOOL_NAMES: string[] = ALL_TOOLS.map((t) => t.name);
 
 // The CLI uses the same schemas, handlers, and workflow guidance while a native
 // host is loading its MCP catalog. This is an in-process call, not a transport.
-const CLI_REVIEW_TOOLS = new Set(["whoami", "get_inbox", "list_inboxes", "list_reviews", "get_review", "get_review_turns", "get_review_feedback", "list_review_events", "wait_for_review_event", "ack_review_event", "post_review_chat", "submit_revision", "restamp_review", "list_categories", "get_rules", "learn_review_rule"]);
+const CLI_REVIEW_TOOLS = new Set(["whoami", "get_inbox", "list_inboxes", "list_reviews", "get_review", "get_review_turns", "get_review_feedback", "list_review_events", "wait_for_review_event", "ack_review_event", "post_review_chat", "submit_revision", "restamp_review", "list_categories", "get_category", "propose_category", "merge_categories", "get_rules", "learn_review_rule"]);
 export function cliReviewTool(name: string): RegisterableTool {
   const tool = ALL_TOOLS.find(item => item.name === name);
   if (!tool || !CLI_REVIEW_TOOLS.has(name)) throw new Error("This tool is not available through the CLI review bridge. Use its native CLI command or MCP tool.");
@@ -3616,7 +3636,7 @@ function toErrorResult(err: unknown): ToolResult {
     const detail = err.status ? ` (HTTP ${err.status}${err.code ? `, ${err.code}` : ""})` : "";
     return {
       content: [
-        { type: "text", text: `Extrovert error${detail}: ${err.message}${renderProblemFields(err.problemErrors)}` },
+        { type: "text", text: `Extrovert error${detail}: ${err.message}${renderQuotaDetails(err.details)}${renderProblemFields(err.problemErrors)}` },
       ],
       isError: true,
     };

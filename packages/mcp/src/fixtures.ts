@@ -1,3 +1,4 @@
+import type { MergeCategoriesRequest, MergeCategoriesResult } from "./types.js";
 import type { InboxActivation } from "./types.js";
 import type { ListWebhooksParams } from "./types.js";
 import { AdministrativeFixtures } from "./administration-fixtures.js";
@@ -1588,7 +1589,7 @@ export class FixtureStore {
     const now = Date.now();
     const rows = [...this.reviews.values()].filter(r => r.category_id === category.id && Date.parse(r.created_at) <= now);
     const count = (days: number) => rows.filter(r => Date.parse(r.created_at) >= now - days * 86_400_000).length;
-    return { ...category, message_count_7d: count(7), message_count_30d: count(30), message_count_90d: count(90),
+    return { ...category, active_rule_count: [...this.rules.values()].filter(r => r.category_id === category.id && r.status === "active").length, message_count_7d: count(7), message_count_30d: count(30), message_count_90d: count(90),
       last_used_at: rows.map(r => r.created_at).sort().at(-1),
       pending_review_count: rows.filter(r => ["needs_review","in_review","chatting","rejected","stale","approved"].includes(r.state)).length };
   }
@@ -1642,6 +1643,35 @@ export class FixtureStore {
     };
     this.categories.set(cat.id, cat);
     return cat;
+  }
+
+  /** Offline consolidation fixture; production additionally enforces project and policy boundaries. */
+  mergeCategories(id: string, req: MergeCategoriesRequest): MergeCategoriesResult {
+    const loser = this.categories.get(id), survivor = this.categories.get(req.into_category_id);
+    if (!loser || !survivor) { throw new NotFoundError("Category not found"); }
+    if (id === survivor.id || !req.rationale.trim() || Buffer.byteLength(req.rationale) > 2000 ||
+        [loser, survivor].some(c => c.merged_into || c.author_kind !== "agent" || c.scope !== "org_shared" || c.state !== "supervised" || Date.now() - Date.parse(c.created_at) > 86400000)) { throw new ExtrovertApiError("Only eligible new supervised duplicates can be merged.", 409, "conflict"); }
+    const ts = new Date().toISOString();
+    loser.merged_into = survivor.id;
+    loser.updated_at = ts;
+    survivor.rules_version = Math.max(loser.rules_version, survivor.rules_version) + 1;
+    survivor.rule_high_water = Math.max(loser.rule_high_water, survivor.rule_high_water) + 1;
+    survivor.updated_at = ts;
+    let review_requests_repointed = 0, writing_rules_repointed = 0;
+    for (const rule of this.rules.values()) {
+      if (rule.category_id === loser.id) { rule.category_id = survivor.id; writing_rules_repointed++; }
+    }
+    for (const review of this.reviews.values()) {
+      if (review.category_id === loser.id) { review.category_id = survivor.id; review_requests_repointed++; }
+      if (review.category_id === survivor.id && ["needs_review", "in_review", "chatting", "rejected", "stale"].includes(review.state)) {
+        review.version++;
+        review.category_name = survivor.name;
+        review.recheck_status = "queued";
+        review.recheck_reason = "category_changed";
+        this.enqueueReviewEvent(review.id, "recheck_category", { category_id: survivor.id, reason: "category_merged", rationale: req.rationale });
+      }
+    }
+    return { category: this.categoryUsage(survivor), review_requests_repointed, writing_rules_repointed };
   }
 
   /** Rename / re-describe a category (mock) - metadata only (D10). */

@@ -17,7 +17,7 @@ import { parseProblem, type Problem } from "./problem.js";
 import { API_VERSION_HEADER, CURRENT_API_VERSION } from "./version.js";
 
 /** The library version, surfaced in the User-Agent. Kept in sync with package.json by build. */
-export const SDK_VERSION = "0.1.0-pre.30";
+export const SDK_VERSION = "0.1.0-pre.31";
 
 export interface RetryOptions {
   /** Max retry attempts for idempotent requests on 429/5xx/network errors. Default 2. */
@@ -389,7 +389,7 @@ async function toApiError(response: Response): Promise<ApiError> {
         code = parsedProblem.rawCode || code;
         message = parsedProblem.problem.detail || parsedProblem.problem.title || message;
         // Mirror onto the legacy body shape so `.body.error.code` still resolves.
-        body = { error: { code, message }, request_id: parsedProblem.problem.request_id };
+        body = { ...(parsed as Record<string, unknown>), error: { code, message }, request_id: parsedProblem.problem.request_id };
       } else if (parsed && typeof parsed === "object") {
         // LEGACY envelope. Two shapes are in the wild and BOTH must parse, or the
         // caller gets `http_409` and no server message - which is exactly what
@@ -420,6 +420,7 @@ async function toApiError(response: Response): Promise<ApiError> {
           // Normalize onto the nested ApiErrorBody shape so `.body.error.code`
           // resolves for both wire spellings.
           body = {
+            ...legacy,
             error: {
               code,
               message,

@@ -1,3 +1,4 @@
+import type { MergeCategoriesRequest, MergeCategoriesResult } from "./types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ListWebhooksParams, ConnectionResourceSelection } from "./types.js";
 import { Administration, type AdministrativeInput, type AdministrativeMode } from "./administration.js";
@@ -79,6 +80,17 @@ import type {
   WebhookEvent,
   WhoAmI,
 } from "./types.js";
+
+/** Preserve quota diagnostics in text as well as the raw response for MCP and CLI callers. */
+export function renderQuotaDetails(details: unknown): string {
+  if (!details || typeof details !== "object") return "";
+  const body = details as Record<string, unknown>;
+  if (body.error !== "quota_exceeded" && body.error !== "enrollment_token_mailbox_budget_exhausted") return "";
+  const fields = ["reason", "used", "delta", "limit", "remaining", "upgrade_required"]
+    .filter((key) => typeof body[key] === "string" || typeof body[key] === "number" || typeof body[key] === "boolean")
+    .map((key) => `${key}=${JSON.stringify(body[key])}`);
+  return fields.length ? `\nQuota details: ${fields.join(", ")}` : "";
+}
 
 /** Normalized error surfaced from any client call. */
 export class ExtrovertApiError extends Error {
@@ -492,9 +504,9 @@ export interface SaveRuleInput {
   supersedes_id?: string;
   /** Set for a per-agent override; empty = all org agents. */
   scope_agent_id?: string;
-  /** D8 retro-propagation HUMAN OPT-IN (default false): propagate a NEW category rule to pending siblings. */
+  /** Deprecated compatibility hint; affected pending reviews are always scheduled for recheck. */
   propagate_to_pending?: boolean;
-  /** Override the propagate batch (0 = base 3, bounded by rework_batch_max). */
+  /** Deprecated compatibility hint; recheck events recommend batches of three. */
   suggested_batch?: number;
 }
 
@@ -1300,6 +1312,11 @@ export class ExtrovertClient {
    * (D10). Renaming never breaks a reference; a rename/redescribe undo row is
    * written. Any agent in the customer may edit (the shared-registry exception).
    */
+  async mergeCategories(id: string, input: MergeCategoriesRequest): Promise<MergeCategoriesResult> {
+    if (this.store) return this.store.mergeCategories(id, input);
+    return this.post<MergeCategoriesResult>(`/v1/categories/${encodeURIComponent(id)}/merge`, input);
+  }
+
   async updateCategory(input: UpdateCategoryInput): Promise<Category> {
     if (this.store) return this.store.updateCategory(input);
     const body: Record<string, unknown> = {};

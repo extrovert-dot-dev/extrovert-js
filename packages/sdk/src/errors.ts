@@ -12,6 +12,15 @@ import type { Problem, ProblemCode } from "./problem.js";
 
 /** The machine-readable error envelope the Extrovert API returns on failures. */
 export interface ApiErrorBody {
+  /** Quota reason distinguishes billing account inbox capacity (`inbox_limit_exceeded`)
+   * from an enrollment key lifetime allowance (`enrollment_token_mailbox_budget_exhausted`). */
+  reason?: string;
+  used?: number;
+  delta?: number;
+  limit?: number;
+  remaining?: number;
+  upgrade_required?: boolean;
+
   error: {
     /** Stable, machine-readable code, e.g. `enrollment_token_exhausted`, `not_found`. */
     code: string;
