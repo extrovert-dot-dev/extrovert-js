@@ -1365,6 +1365,9 @@ export class MockBackend {
    * the server does before it writes the review row.
    */
   private deriveReplyEnvelope(address: string, req: ReplyRequest): ReplyEnvelope {
+    if (req.to !== undefined && req.to.length === 0) {
+      throw new ValidationError({ status: 400, code: "invalid", message: "to must be nonempty" });
+    }
     if (Boolean(req.thread_id) === Boolean(req.message_id)) {
       throw new ValidationError({
         status: 400,
@@ -1406,7 +1409,7 @@ export class MockBackend {
       if (req.reply_all) for (const a of parent.to) if (a.email !== address) to.push(a.email);
     }
     return {
-      to: to.length ? to : ["reply@example.com"],
+      to: req.to !== undefined ? req.to : to.length ? to : ["reply@example.com"],
       subject: parent ? reSubject(parent.subject) : "Re:",
       threadId: threadId ?? rid("thr"),
     };
@@ -2535,8 +2538,8 @@ export class MockBackend {
       }
     }
     events.sort((a, b) => (a.review_id ?? "").localeCompare(b.review_id ?? "") || a.seq - b.seq);
-    const limited = params.limit && params.limit > 0 ? events.slice(0, params.limit) : events;
-    const cursors = [...touched].map((reviewId) => ({
+    const limited = events.slice(0, Math.min(100, Math.max(1, params.limit ?? 100)));
+    const cursors = [...new Set(limited.map(ev => ev.review_id).filter((id): id is string => !!id))].map((reviewId) => ({
       review_id: reviewId,
       last_acked_seq: this.state.reviewEventCursors.get(reviewId) ?? 0,
     }));
@@ -2559,7 +2562,8 @@ export class MockBackend {
       const reviewId = a.review_id?.trim();
       if (!reviewId) continue;
       const prev = this.state.reviewEventCursors.get(reviewId) ?? 0;
-      const next = Math.max(prev, a.through_seq); // monotonic (exactly-once effect)
+      const highest = Math.max(0, ...(this.state.reviewEvents.get(reviewId) ?? []).map(ev => ev.seq));
+      const next = Math.max(prev, Math.min(highest, a.through_seq));
       this.state.reviewEventCursors.set(reviewId, next);
       cursors.push({ review_id: reviewId, last_acked_seq: next });
     }

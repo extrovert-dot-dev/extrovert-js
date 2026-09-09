@@ -71,6 +71,7 @@ import type {
 interface ToolContext {
   client: ExtrovertClient;
   config: ExtrovertConfig;
+  signal?: AbortSignal;
 }
 
 type ZodRawShape = Record<string, z.ZodType>;
@@ -118,7 +119,7 @@ function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): Registera
     invoke,
     register(server, ctx) {
       server.registerTool(spec.name, { title: spec.title, description: spec.description, inputSchema, annotations: spec.annotations },
-        async (args: z.output<z.ZodObject<Shape>>) => invoke(args, ctx));
+        async (args: z.output<z.ZodObject<Shape>>, extra) => invoke(args, { ...ctx, signal: extra.mcpReq.signal }));
     },
   };
 }
@@ -1174,7 +1175,7 @@ const replyEmail = defineTool({
   description:
     "Compose a reply within an existing thread and submit it for HUMAN REVIEW: the default path, exactly like " +
     "send_email. Before writing, recover existing reviews, choose one semantic category with list_categories (propose_category if none fits), and apply get_rules for that category and house style. Select the parent with thread_id (the latest message in that thread) OR message_id (that specific " +
-    "message). Recipients, subject, and In-Reply-To/References are derived server-side: you do NOT pass `to`.\n\n" +
+    "message). Read get_thread before composing; use get_message for full bodies when previews are insufficient. Recipients default from the parent; optional to replaces that list. Subject and In-Reply-To/References remain derived server-side.\n\n" +
     "ALWAYS pass `intent`. Under the default `require_review` policy a reply with no intent is REFUSED with 422 " +
     "intent_required (nothing sent, nothing queued); with one it normally returns 202 queued_for_review and a review id " +
     "(rr_…), and the reply has NOT gone out until a `sent` review event arrives. The envelope is resolved at submit, " +
@@ -1192,6 +1193,7 @@ const replyEmail = defineTool({
       .min(1)
       .optional()
       .describe("Optional last_message_id from get_thread. Returns 409 if the thread advanced; this is stale-context detection, not an atomic send lock."),
+    to: z.array(emailAddress).min(1).max(50).optional().describe("Explicit To override; replaces derived recipients including reply_all. Omit to retain defaults."),
     text: z.string().optional().describe("Plain-text reply body."),
     html: z.string().optional().describe("Optional HTML reply body."),
     cc: z.array(emailAddress).max(50).optional().describe("Optional Cc recipients."),
@@ -1241,6 +1243,7 @@ const replyEmail = defineTool({
         thread_id: args.thread_id,
         message_id: args.message_id,
         expected_last_message_id: args.expected_last_message_id,
+        to: args.to,
         text: args.text ?? "",
         html: args.html,
         cc: args.cc,
@@ -1263,6 +1266,7 @@ const replyEmail = defineTool({
       thread_id: args.thread_id,
       message_id: args.message_id,
       expected_last_message_id: args.expected_last_message_id,
+      to: args.to,
       text: args.text,
       html: args.html,
       cc: args.cc,
@@ -2236,19 +2240,19 @@ const waitForReviewEvent = defineTool({
   description:
     "Long-poll (~25–55s) for the next review nudge: blocks until one is available OR the deadline, then returns like " +
     "list_review_events (empty on timeout: re-call to keep watching). Use this for an always-on agent that wants to " +
-    "react the instant a human approves/edits/rejects; use list_review_events for recovery. This is the immediate next action after every queued send and every revision, including interactive Hermes sessions. Omit review_id to watch all your reviews with one wait. An empty timeout means call again, not finish the task.",
+    "react to human feedback, delivery outcomes, writing-rule changes and category reconsideration; use list_review_events for recovery. This is the immediate next action after every queued send and every revision, including interactive Hermes sessions. Omit review_id to watch all reviews this caller may access with one durable attention wait. Unlike wait_for_email, this includes reviewer feedback and rule/category updates. No events are acknowledged by waiting; reconnect with the same identity to replay unhandled work, and acknowledge only after successful handling. Cancellation stops the wait, never the reviews. An empty timeout means call again, not finish the task.",
   inputSchema: {
     review_id: z.string().optional().describe("Restrict the wait to one review's events (rr_…)."),
     wait_seconds: z.number().int().min(1).max(55).optional().describe("Long-poll budget in seconds (default ~30)."),
     limit: z.number().int().min(1).max(100).optional().describe("Max events to return."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
+  handler: async (args, { client, signal }) => {
     const res = await client.waitForReviewEvent({
       review_id: args.review_id,
       wait_seconds: args.wait_seconds ?? 55,
       limit: args.limit,
-    });
+    }, signal);
     // Hosts may mistake identical successful long-poll heartbeats for a stuck
     // tool loop. The observed completion time identifies each finished wait.
     const completedAt = new Date().toISOString();
@@ -2637,7 +2641,7 @@ const waitForEmail = defineTool({
     "Block until the next matching message arrives in an inbox, then return it with any OTP code / verification link " +
     "already extracted. This is the killer primitive for sign-in and verification flows: trigger the email elsewhere, then " +
     "call this and act on otp_code / verification_link in the same turn. Narrow the wait with from / subject / regex. " +
-    "Returns matched=false if nothing arrives before timeout: retry or lengthen the timeout if expected.",
+    "Returns matched=false if nothing arrives before timeout: retry or lengthen the timeout if expected. This waits for inbox mail only. For pending-review attention, reviewer feedback, or writing-rule/category changes use wait_for_review_event with no review_id.",
   inputSchema: {
     inbox: inboxRef,
     from: z

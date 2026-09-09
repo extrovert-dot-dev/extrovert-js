@@ -430,6 +430,8 @@ export interface Message extends SubmissionTracking {
   from: EmailAddress;
   to: EmailAddress[];
   cc?: EmailAddress[];
+  /** Explicit Bcc retained on the sender's Sent copy only; absent on older copies. */
+  bcc?: EmailAddress[];
   /** Reply-To addresses parsed from the source message. */
   reply_to?: EmailAddress[];
   subject: string;
@@ -591,6 +593,8 @@ export interface SendRequest {
  * encoded message, including attachments, must fit within 1,800,000 bytes.
  */
 export interface ReplyRequest {
+  /** Replace derived To recipients; omission preserves reply defaults. Must be nonempty. */
+  to?: string[];
   /** Reply to the latest message in this thread. One of thread_id / message_id. */
   thread_id?: string;
   /** Reply to this specific message. One of thread_id / message_id. */
@@ -846,6 +850,10 @@ export interface Review {
   proposed_to: string[];
   proposed_cc?: string[];
   proposed_bcc?: string[];
+  /** Mail conversation context; distinct from reviewer feedback. */
+  thread_ref?: string;
+  /** Opaque parent message for replies; raw Message-ID for plain sends. */
+  in_reply_to_message_id?: string;
   sent_subject?: string;
   sent_body_text?: string;
   diff_unified?: string;
@@ -1501,6 +1509,8 @@ export type SubmitForReviewResult = QueuedForReviewResult | SentResult;
  * calls. `participants` are display address strings (`Name <email>` or bare).
  */
 export interface Thread {
+  /** Direction of the actual latest message relative to this inbox. */
+  last_message_direction?: "inbound" | "outbound";
   id: string;
   /** Owning inbox address. */
   inbox_id: string;

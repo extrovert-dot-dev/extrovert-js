@@ -2,6 +2,14 @@
 
 # @extrovert.dev/sdk
 
+For pending review attention, use one `client.reviews.events.wait({ wait_seconds: 55,
+limit: 100 }, signal)` across accessible reviews. It includes human feedback and
+rule/category changes; `waitForEmail` watches incoming mail only. Reconnect with the
+same identity to replay unhandled events, and acknowledge only after handling them.
+Cancellation ends the wait without cancelling reviews. Reply requests may supply an
+explicit nonempty `to` array; omission keeps the parent-derived recipients. Read the
+thread first and pass its `last_message_id` as `expected_last_message_id` when needed.
+
 **A real inbox for your agent, in one call.**
 
 The TypeScript SDK for [Extrovert](https://extrovert.dev): Message Science's agent-email

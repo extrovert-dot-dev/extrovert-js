@@ -816,6 +816,7 @@ export class FixtureStore {
    */
   replyEmail(opts: {
     inbox: string;
+    to?: string[];
     threadId?: string;
     messageId?: string;
     expectedLastMessageId?: string;
@@ -835,6 +836,7 @@ export class FixtureStore {
   /** The mock reply delivery, shared by the direct path and approval dispatch. */
   private deliverReply(opts: {
     inbox: string;
+    to?: string[];
     threadId?: string;
     messageId?: string;
     expectedLastMessageId?: string;
@@ -878,11 +880,12 @@ export class FixtureStore {
       }
       if (opts.replyAll) for (const a of parent.to) if (a.email !== inbox.address) to.push(a.email);
     }
+    if (opts.to !== undefined && opts.to.length === 0) throw new ExtrovertApiError("to must be nonempty", 400, "bad_request");
     const msg = this.appendMessage(inbox.id, {
       direction: "outbound",
       fromName: inbox.display_name,
       fromEmail: inbox.address,
-      to: to.length ? to : ["reply@example.com"],
+      to: opts.to !== undefined ? opts.to : to.length ? to : ["reply@example.com"],
       cc: opts.cc,
       subject: parent ? reSubject(parent.subject) : "Re:",
       text: opts.text ?? "",
@@ -1005,6 +1008,7 @@ export class FixtureStore {
 
   /** Submit an in-thread reply for review (mock). Same routing as submitForReview. */
   submitReplyForReview(input: SubmitReplyForReviewInput): SubmitForReviewResult {
+    if (input.to !== undefined && input.to.length === 0) throw new ExtrovertApiError("to must be nonempty", 400, "bad_request");
     const inbox = this.requireInbox(input.inbox);
     const asserted = input.mode === "direct" ? "direct" : "review";
     const isReview = this.resolvedModeIsReview(asserted);
@@ -1013,6 +1017,7 @@ export class FixtureStore {
     }
     if (!isReview) {
       const res = this.deliverReply({
+        to: input.to,
         inbox: input.inbox,
         threadId: input.thread_id,
         messageId: input.message_id,
@@ -1050,8 +1055,9 @@ export class FixtureStore {
       subject: parent ? reSubject(parent.subject) : "Re:",
       text: input.text,
       html: input.html,
-      to,
+      to: input.to ?? to,
       cc: input.cc,
+      bcc: input.bcc,
       intent: input.intent,
       categoryId: input.category_id,
       replyThreadId: parent?.thread_id ?? input.thread_id,
@@ -2097,8 +2103,8 @@ export class FixtureStore {
     }
     // Stable FIFO order: by review id, then seq (best-effort across reviews).
     events.sort((a, b) => (a.review_id ?? "").localeCompare(b.review_id ?? "") || a.seq - b.seq);
-    const limited = input.limit && input.limit > 0 ? events.slice(0, input.limit) : events;
-    for (const reviewId of touched) {
+    const limited = events.slice(0, Math.min(100, Math.max(1, input.limit ?? 100)));
+    for (const reviewId of new Set(limited.map(ev => ev.review_id).filter((id): id is string => !!id))) {
       cursors.push({ review_id: reviewId, last_acked_seq: this.reviewEventCursors.get(reviewId) ?? 0 });
     }
     return { events: limited, cursors };
@@ -2120,7 +2126,8 @@ export class FixtureStore {
       const reviewId = a.review_id?.trim();
       if (!reviewId) continue;
       const prev = this.reviewEventCursors.get(reviewId) ?? 0;
-      const next = Math.max(prev, a.through_seq); // monotonic (exactly-once effect)
+      const highest = Math.max(0, ...(this.reviewEvents.get(reviewId) ?? []).map(ev => ev.seq));
+      const next = Math.max(prev, Math.min(highest, a.through_seq));
       this.reviewEventCursors.set(reviewId, next);
       cursors.push({ review_id: reviewId, last_acked_seq: next });
     }
@@ -2171,6 +2178,8 @@ export class FixtureStore {
       proposed_to: opts.to,
       proposed_cc: opts.cc,
       proposed_bcc: opts.bcc,
+      thread_ref: opts.replyThreadId,
+      in_reply_to_message_id: opts.replyParentId,
       created_at: now,
       updated_at: now,
     };

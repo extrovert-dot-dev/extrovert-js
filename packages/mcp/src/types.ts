@@ -221,6 +221,8 @@ export interface Message extends SubmissionTracking {
   from: Address;
   to: Address[];
   cc?: Address[];
+  /** Explicit Bcc retained on the sender's Sent copy only. */
+  bcc?: Address[];
   /** Reply-To addresses parsed from the source message. */
   reply_to?: Address[];
   subject: string;
@@ -253,6 +255,7 @@ export interface Message extends SubmissionTracking {
  * is a preview of the latest message.
  */
 export interface Thread {
+  last_message_direction?: "inbound" | "outbound";
   id: string;
   /** Owning inbox address. */
   inbox_id: string;
@@ -401,6 +404,10 @@ export interface Review {
   proposed_to: string[];
   proposed_cc?: string[];
   proposed_bcc?: string[];
+  /** Mail conversation context; distinct from reviewer feedback. */
+  thread_ref?: string;
+  /** Opaque parent message for replies; raw Message-ID for plain sends. */
+  in_reply_to_message_id?: string;
   sent_subject?: string;
   sent_body_text?: string;
   diff_unified?: string;

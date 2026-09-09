@@ -219,6 +219,7 @@ export interface SendEmailInput {
 }
 
 export interface ReplyEmailInput {
+  to?: string[];
   inbox: string;
   /** Exactly one of thread_id / message_id selects the parent. */
   thread_id?: string;
@@ -322,6 +323,7 @@ export interface SubmitForReviewInput {
 
 /** Submit an in-thread reply for human review (Review Loop). */
 export interface SubmitReplyForReviewInput {
+  to?: string[];
   inbox: string;
   thread_id?: string;
   message_id?: string;
@@ -989,6 +991,7 @@ export class ExtrovertClient {
         bcc: input.bcc,
         replyTo: input.reply_to,
         replyAll: input.reply_all,
+        to: input.to,
         attachments: input.attachments,
       });
     }
@@ -1250,7 +1253,8 @@ export class ExtrovertClient {
    * until a nudge is available OR the deadline, then returns like
    * {@link listReviewEvents} (empty on timeout).
    */
-  async waitForReviewEvent(input: WaitForReviewEventInput = {}): Promise<ReviewEventsResult> {
+  async waitForReviewEvent(input: WaitForReviewEventInput = {}, signal?: AbortSignal): Promise<ReviewEventsResult> {
+    signal?.throwIfAborted();
     if (this.store) return this.store.waitForReviewEvent(input);
     const query: Record<string, unknown> = {};
     if (input.review_id !== undefined) query.review_id = input.review_id;
@@ -1258,7 +1262,7 @@ export class ExtrovertClient {
     if (input.wait_seconds !== undefined) query.wait_seconds = input.wait_seconds;
     const waitSeconds = Math.min(55, Math.max(1, input.wait_seconds ?? 55));
     query.wait_seconds = waitSeconds;
-    return this.request<ReviewEventsResult>("GET", "/v1/reviews/events/wait", undefined, query, (waitSeconds + 10) * 1000);
+    return this.request<ReviewEventsResult>("GET", "/v1/reviews/events/wait", undefined, query, (waitSeconds + 10) * 1000, undefined, signal);
   }
 
   /**
