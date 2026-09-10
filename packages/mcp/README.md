@@ -114,6 +114,14 @@ Start with `whoami` to verify the connection’s project and permissions, then s
 and describe the relevant action before passing its exact `path`, `query`, and `body` inputs.
 `adminMe` requires Full account control and is unnecessary for project managers.
 
+The packaged CLI supports `extrovert admin actions`, `admin describe <action-id>`,
+`admin read <action-id> --input '<json>'`, and `admin change <action-id> --input-stdin`.
+The advertised `admin` command failed at executable dispatch before 0.1.0-pre.35;
+update an affected installation before troubleshooting authentication.
+Project-wide inbox visibility is expected for managers. Before issuing a dedicated
+worker key, inspect `listAgentKeys` for the existing persona and verify its installed
+credential. Listed secrets cannot be recovered; issue a replacement only when needed.
+
 ## Give a manager one project
 
 Choose either setup path:

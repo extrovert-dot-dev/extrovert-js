@@ -30,6 +30,7 @@ const CLI_COMMANDS = new Set([
   "signup",
   "verify",
   "whoami",
+  "admin",
   "tool",
   "inbox",
   "message",
