@@ -65,7 +65,7 @@ recipient address and check Spam/Junk. See [agent updates](https://docs.extrover
 | `read_messages` | List messages in an inbox (optionally unread-only). |
 | `list_threads` | List conversation threads with cursor pagination. |
 | `search_threads` | Search conversation summaries by subject, participant, or snippet. |
-| `get_thread` | Read the complete oldest-first conversation plus extracted-first context. |
+| `get_thread` | Read oldest-first source bodies, explicit incomplete-body IDs, and the composition context version. |
 | `delete_thread` | Move every message in a thread to Trash, or permanently expunge it. |
 | `search` | Full-text search across one or all inboxes. |
 | **`wait_for_email`** | **Wait for a matching message; return it with any extracted `otp_code` / `verification_link`.** |

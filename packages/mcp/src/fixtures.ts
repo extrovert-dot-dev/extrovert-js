@@ -5,6 +5,13 @@ import { AdministrativeFixtures } from "./administration-fixtures.js";
 import type { AdministrativeRequest } from "./administration.js";
 import type { ListCategoriesParams } from "./types.js";
 import type { LearnReviewRuleRequest, LearnedReviewRule } from "./types.js";
+/** Deterministic offline-only fingerprint; live context versions are server-issued. */
+function fixtureContextVersion(messages: Message[]): string {
+  let hash = 2166136261;
+  for (const c of JSON.stringify(messages.map(m => [m.id, m.text, m.html]))) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
+  return `ctx_fixture_${(hash >>> 0).toString(16)}`;
+}
+
 /**
  * Offline fixture store.
  *
@@ -820,6 +827,7 @@ export class FixtureStore {
     threadId?: string;
     messageId?: string;
     expectedLastMessageId?: string;
+    expectedContextVersion?: string;
     text?: string;
     html?: string;
     cc?: string[];
@@ -840,6 +848,7 @@ export class FixtureStore {
     threadId?: string;
     messageId?: string;
     expectedLastMessageId?: string;
+    expectedContextVersion?: string;
     text?: string;
     html?: string;
     cc?: string[];
@@ -863,6 +872,12 @@ export class FixtureStore {
       parent = all.filter((m) => m.thread_id === opts.threadId).at(-1);
     } else {
       throw new NotFoundError("reply requires thread_id or message_id");
+    }
+    if (opts.expectedContextVersion && threadId) {
+      const current = this.getThread(inbox.id, threadId);
+      if (current.context_version !== opts.expectedContextVersion || parent?.id !== current.last_message_id) {
+        throw new ExtrovertApiError("conversation changed; reread and reconsider the draft", 409, "reply_context_changed");
+      }
     }
     if (opts.threadId && opts.expectedLastMessageId && parent?.id !== opts.expectedLastMessageId) {
       throw new ExtrovertApiError(
@@ -1022,6 +1037,7 @@ export class FixtureStore {
         threadId: input.thread_id,
         messageId: input.message_id,
         expectedLastMessageId: input.expected_last_message_id,
+        expectedContextVersion: input.expected_context_version,
         text: input.text,
         html: input.html,
         cc: input.cc,
@@ -1036,6 +1052,12 @@ export class FixtureStore {
     // derived here, not at approval - so the human reviews a message that actually
     // has a subject line and recipients. A queued reply used to store neither.
     const parent = this.resolveReplyParent(inbox.id, input.thread_id, input.message_id);
+    if (input.expected_context_version && parent) {
+      const current = this.getThread(inbox.id, parent.thread_id);
+      if (current.context_version !== input.expected_context_version || parent.id !== current.last_message_id) {
+        throw new ExtrovertApiError("conversation changed; reread and reconsider the draft", 409, "reply_context_changed");
+      }
+    }
     if (input.thread_id && input.expected_last_message_id && parent?.id !== input.expected_last_message_id) {
       throw new ExtrovertApiError(
         `thread advanced; latest message is ${parent?.id ?? "unknown"}`,
@@ -1244,6 +1266,7 @@ export class FixtureStore {
       items = items.filter((r) => states.includes(r.state));
     }
     if (input.category_id) items = items.filter((r) => r.category_id === input.category_id);
+    if (input.thread_id) items = items.filter((r) => r.thread_ref === input.thread_id);
     if (input.inbox) {
       const inbox = input.inbox.toLowerCase();
       items = items.filter((r) => r.from_address.toLowerCase() === inbox);
@@ -2308,7 +2331,7 @@ export class FixtureStore {
       .filter((m) => m.thread_id === threadId)
       .sort((a, b) => a.date.localeCompare(b.date));
     if (msgs.length === 0) throw new NotFoundError(`Thread not found: ${threadId}`);
-    return { ...this.toThread(inbox.address, threadId, msgs), messages: msgs };
+    return { ...this.toThread(inbox.address, threadId, msgs), messages: msgs, context_version: fixtureContextVersion(msgs) };
   }
 
   private trackSubmission(message: Message): SubmissionTracking {

@@ -931,6 +931,7 @@ export class HttpTransport implements Transport {
       category_id: params.category_id,
       inbox: params.inbox,
       composer: params.composer,
+      thread_id: params.thread_id,
       limit: params.limit,
       page: params.page,
     };

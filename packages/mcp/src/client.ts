@@ -226,6 +226,7 @@ export interface ReplyEmailInput {
   message_id?: string;
   /** Optimistic stale-context guard; a mismatch returns 409, but is not an atomic send lock. */
   expected_last_message_id?: string;
+  expected_context_version?: string;
   text?: string;
   html?: string;
   cc?: string[];
@@ -329,6 +330,7 @@ export interface SubmitReplyForReviewInput {
   message_id?: string;
   /** Optimistic stale-context guard; a mismatch returns 409, but is not an atomic send lock. */
   expected_last_message_id?: string;
+  expected_context_version?: string;
   text: string;
   html?: string;
   cc?: string[];
@@ -351,6 +353,7 @@ export interface SubmitReplyForReviewInput {
 
 /** Filters for listing review requests (Review Loop, spec §5.2). */
 export interface ListReviewsInput {
+  thread_id?: string;
   composer?: "me";
   state?: ReviewState | ReviewState[];
   category_id?: string;
@@ -371,6 +374,7 @@ export interface PostReviewChatInput {
 
 /** Post a new agent draft under a parent_revision CAS (Review Loop M5, spec §5.2). */
 export interface SubmitRevisionInput {
+  expected_context_version?: string;
   /** Replace a recipient group; omit to preserve, [] to clear. Quota adjusts atomically. */
   to?: string[];
   cc?: string[];
@@ -985,6 +989,7 @@ export class ExtrovertClient {
         threadId: input.thread_id,
         messageId: input.message_id,
         expectedLastMessageId: input.expected_last_message_id,
+        expectedContextVersion: input.expected_context_version,
         text: input.text,
         html: input.html,
         cc: input.cc,
@@ -1094,6 +1099,7 @@ export class ExtrovertClient {
     if ("composer" in input && input.composer) query.composer = input.composer;
     if (input.category_id !== undefined) query.category_id = input.category_id;
     if (input.inbox !== undefined) query.inbox = input.inbox;
+    if (input.thread_id !== undefined) query.thread_id = input.thread_id;
     if (input.limit !== undefined) query.limit = input.limit;
     if (input.page !== undefined) query.page = input.page;
     return this.get<Page<Review>>("/v1/reviews", query);
@@ -1161,6 +1167,7 @@ export class ExtrovertClient {
     if (input.built_at !== undefined) body.built_at = input.built_at;
     if (input.rules_version_seen !== undefined) body.rules_version_seen = input.rules_version_seen;
     body.composition_token = input.composition_token;
+    body.expected_context_version = input.expected_context_version;
     return this.post<Review>(
       `/v1/reviews/${encodeURIComponent(input.id)}/revision`,
       body,

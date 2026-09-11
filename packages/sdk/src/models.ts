@@ -605,6 +605,8 @@ export interface ReplyRequest {
    * This detects stale context at submission, but is not an atomic send lock.
    */
   expected_last_message_id?: string;
+  /** Required snapshot returned by threads.get before composing. Changed context returns 409. */
+  expected_context_version: string;
   /** At least one of `text` / `html` is required. */
   text?: string;
   html?: string;
@@ -852,6 +854,10 @@ export interface Review {
   proposed_bcc?: string[];
   /** Mail conversation context; distinct from reviewer feedback. */
   thread_ref?: string;
+  /** Conversation snapshot this draft was composed against; absent for legacy drafts. */
+  context_version?: string;
+  context_last_message_id?: string;
+  context_message_ids?: string[];
   /** Opaque parent message for replies; raw Message-ID for plain sends. */
   in_reply_to_message_id?: string;
   sent_subject?: string;
@@ -908,6 +914,8 @@ export interface ReviewTurn {
 
 /** Filters for listing review requests (spec §5.2). */
 export interface ListReviewsParams {
+  /** Conversation collision check: omit composer to include other accessible composers. */
+  thread_id?: string;
   composer?: "me";
   state?: ReviewState | ReviewState[];
   category_id?: string;
@@ -952,6 +960,8 @@ export interface PostReviewChatRequest {
  * revision, else 409 STALE with NO mutation. version is OPTIONAL belt-and-suspenders.
  */
 export interface SubmitRevisionRequest {
+  /** Required for reply revisions: read the whole conversation before redrafting. */
+  expected_context_version?: string;
   /** Replace a recipient group; omit to preserve, [] to clear. Quota adjusts atomically. */
   to?: string[];
   cc?: string[];
@@ -1531,6 +1541,8 @@ export interface Thread {
 
 /** A thread plus its messages (oldest-first): `GET /v1/inboxes/{addr}/threads/{id}`. */
 export interface ThreadDetail extends Thread {
+  /** Opaque snapshot of all source messages; retain before composing a reply. */
+  context_version: string;
   messages: Message[];
 }
 

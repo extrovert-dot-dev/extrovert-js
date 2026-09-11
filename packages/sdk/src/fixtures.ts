@@ -2,6 +2,13 @@ import type { InboxActivation } from "./models.js";
 import type { ListWebhooksParams } from "./models.js";
 import { AdministrativeFixtures } from "./administration-fixtures.js";
 import type { AdministrativeRequest } from "./administration.js";
+/** Deterministic offline-only fingerprint; live context versions are server-issued. */
+function fixtureContextVersion(messages: Message[]): string {
+  let hash = 2166136261;
+  for (const c of JSON.stringify(messages.map(m => [m.id, m.text, m.html]))) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
+  return `ctx_fixture_${(hash >>> 0).toString(16)}`;
+}
+
 /**
  * Offline fixtures for the Extrovert SDK.
  *
@@ -1392,6 +1399,12 @@ export class MockBackend {
         message: "thread_id or message_id is required",
       });
     }
+    if (req.expected_context_version && threadId) {
+      const current = this.getThread(address, threadId);
+      if (current.context_version !== req.expected_context_version || parent?.id !== current.last_message_id) {
+        throw new ConflictError({ status: 409, code: "reply_context_changed", message: "conversation changed; reread and reconsider the draft" });
+      }
+    }
     if (req.thread_id && req.expected_last_message_id && parent?.id !== req.expected_last_message_id) {
       throw new ConflictError({
         status: 409,
@@ -1425,6 +1438,7 @@ export class MockBackend {
       items = items.filter((r) => states.includes(r.state));
     }
     if (params.category_id) items = items.filter((r) => r.category_id === params.category_id);
+    if (params.thread_id) items = items.filter((r) => r.thread_ref === params.thread_id);
     if (params.inbox) {
       const inbox = params.inbox.toLowerCase();
       items = items.filter((r) => r.from_address.toLowerCase() === inbox);
@@ -2845,7 +2859,7 @@ export class MockBackend {
       .filter((m) => m.thread_id === threadId)
       .sort((a, b) => a.date.localeCompare(b.date));
     if (messages.length === 0) throw new Error(`thread not found: ${threadId}`);
-    return { ...this.buildThread(address, threadId, messages), messages };
+    return { ...this.buildThread(address, threadId, messages), messages, context_version: fixtureContextVersion(messages) };
   }
 
   getSubmission(address: string, submissionId: string): Submission | undefined {

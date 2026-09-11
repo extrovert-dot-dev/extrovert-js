@@ -8,7 +8,7 @@ rule/category changes; `waitForEmail` watches incoming mail only. Reconnect with
 same identity to replay unhandled events, and acknowledge only after handling them.
 Cancellation ends the wait without cancelling reviews. Reply requests may supply an
 explicit nonempty `to` array; omission keeps the parent-derived recipients. Read the
-thread first and pass its `last_message_id` as `expected_last_message_id` when needed.
+thread and writing rules before drafting; pass its `context_version` as `expected_context_version` and the rules read’s `composition_token`.
 
 **A real inbox for your agent, in one call.**
 
@@ -317,14 +317,17 @@ const nextPage = firstPage.next_cursor
 const summary = firstPage.items[0];
 if (summary) {
   const thread = await extrovert.threads.get(inbox.address, summary.id);
-  const authoredText = thread.messages.map((message) =>
-    message.extracted_text ?? message.text
-  );
+  const sourceBodies = thread.messages.map((message) => message.text ?? message.html);
+  const rules = await extrovert.rules.get(); // Read and apply before writing.
+  const pending = await extrovert.reviews.list({ inbox: inbox.address, thread_id: thread.id });
+  // Coordinate pending responses before composing; do not duplicate another composer’s work.
 
   // Recipients, subject, In-Reply-To, and References are derived server-side.
   await extrovert.threads.reply(inbox.address, {
     thread_id: thread.id,
+    expected_context_version: thread.context_version,
     expected_last_message_id: thread.last_message_id,
+    composition_token: rules.composition_token,
     text: "On it — thanks.",
     intent: { summary: "Acknowledge the deployment request." },
     idempotency_key: "deployment-ack-v1",
@@ -332,7 +335,7 @@ if (summary) {
 }
 ```
 
-If the thread advances first, `expected_last_message_id` returns a 409: fetch the thread again and
+If conversation context changes, `expected_context_version` returns a 409: fetch the entire thread again and
 reconsider the draft. It is an optimistic check at submission, not an atomic lock through delivery.
 
 For an inbox-bound style, use `inbox.threads(...)`, `inbox.searchThreads(...)`,

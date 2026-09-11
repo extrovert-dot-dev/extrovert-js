@@ -39,6 +39,10 @@ export type ProblemCode =
   // retried all three, including the one that can never succeed. Each member
   // below exists because the agent must take a DIFFERENT action on it; see
   // {@link REVIEW_PROBLEM_RETRYABLE} for which are worth retrying at all.
+  | "reply_context_required"
+  | "reply_context_changed"
+  | "reply_workflow_required"
+  | "reply_already_pending"
   | "intent_required"
   | "wrong_state"
   | "terminal"
@@ -67,6 +71,10 @@ export const PROBLEM_CODES: readonly ProblemCode[] = [
   "not_configured",
   "domain_unavailable",
   "internal",
+  "reply_context_required",
+  "reply_context_changed",
+  "reply_workflow_required",
+  "reply_already_pending",
   "intent_required",
   "wrong_state",
   "terminal",
@@ -98,6 +106,10 @@ export const PROBLEM_CODES: readonly ProblemCode[] = [
  * that amended retry is safe.
  */
 export const REVIEW_PROBLEM_RETRYABLE: Readonly<Record<string, boolean>> = {
+  reply_context_changed: true, // Reread and recompose; never retry the same bytes.
+  reply_context_required: false,
+  reply_workflow_required: false,
+  reply_already_pending: false, // Recover/coordinate the existing draft instead.
   stale: true,
   born_stale: true,
   wrong_state: false,

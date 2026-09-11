@@ -278,6 +278,8 @@ export interface Thread {
 
 /** A thread plus its messages (oldest-first): `GET /v1/inboxes/{inbox_id}/threads/{id}`. */
 export interface ThreadDetail extends Thread {
+  /** Opaque snapshot of all source messages; retain before composing a reply. */
+  context_version?: string;
   messages: Message[];
 }
 
@@ -406,6 +408,10 @@ export interface Review {
   proposed_bcc?: string[];
   /** Mail conversation context; distinct from reviewer feedback. */
   thread_ref?: string;
+  /** Conversation snapshot this draft was composed against; absent for legacy drafts. */
+  context_version?: string;
+  context_last_message_id?: string;
+  context_message_ids?: string[];
   /** Opaque parent message for replies; raw Message-ID for plain sends. */
   in_reply_to_message_id?: string;
   sent_subject?: string;
