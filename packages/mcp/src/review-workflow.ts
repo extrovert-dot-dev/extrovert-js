@@ -53,6 +53,13 @@ export function withReviewWorkflow(name: string, args: Record<string, unknown>, 
   } else if (data.pending_reviews === 0) {
     next = { tool: "list_reviews", arguments: { composer: "me" }, reason: "No pending composer reviews remain. Reconcile your tracked review outcomes; do not claim sent without a confirmed sent state or message ID." };
   }
-  const guidance = `\n\nSending task: ${workflow.goal_complete ? "sent" : "not complete"}.\nNext: ${next.tool} ${JSON.stringify(next.arguments)}. ${next.reason}`;
+  const newlyQueued = ["send_email", "reply_email", "reply_to_email", "forward_email", "submit_for_review"].includes(name)
+    && data.kind === "queued_for_review" && !sent && workflow.status === "awaiting_review";
+  const handoff = newlyQueued
+    ? "First tell the human this draft has not been sent and share the returned review link so they can approve, edit, or coach it. Then immediately begin the review wait."
+    : "";
+  const toolReason = next.reason;
+  if (handoff) next = { ...next, reason: `${handoff} ${next.reason}` };
+  const guidance = `\n\nSending task: ${workflow.goal_complete ? "sent" : "not complete"}.\n${handoff ? `${handoff}\nNext tool after that human handoff` : "Next"}: ${next.tool} ${JSON.stringify(next.arguments)}. ${toolReason}`;
   return { ...result, structuredContent: { ...data, workflow, next_action: next }, content: [...result.content, { type: "text", text: guidance }] };
 }
