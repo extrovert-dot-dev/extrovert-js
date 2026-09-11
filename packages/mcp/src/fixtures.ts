@@ -2144,6 +2144,11 @@ export class FixtureStore {
 
   /** Ack review events (mock): advance per-review cursors monotonically. */
   ackReviewEvent(input: AckReviewEventInput): { cursors: ReviewEventsResult["cursors"] } {
+    for (const id of input.broadcast_ids ?? []) {
+      if ([...this.reviewEvents.values()].some(events => events.some(event => event.id === id))) {
+        throw new Error("Review events require acks with review_id and through_seq; broadcast_ids is only for events without review_id.");
+      }
+    }
     const cursors: { review_id: string; last_acked_seq: number }[] = [];
     for (const a of input.acks ?? []) {
       const reviewId = a.review_id?.trim();

@@ -794,10 +794,11 @@ async function sendCommand(args: string[], context: CliContext): Promise<number>
     mode: "review",
     intent: { summary },
     client_id: clientId,
+    composition_token: rules.composition_token,
   });
   writeResult(context, result, hasFlag(args, "--json"), (value) =>
     value.kind === "queued_for_review"
-      ? `Queued for review: NOT sent.\n${formatReviewHandoff(value.review)}\nCheck status: extrovert review status ${value.review.id}`
+      ? `Queued for review: NOT sent.\n${formatReviewHandoff(value.review)}\nCheck status: extrovert review status ${value.review.id}\nAfter sharing this link, keep the send task active. Use extrovert tool call wait_for_review_event --input-stdin with {"wait_seconds":55}, without review_id, and repeat after empty timeouts. Handle reviewer feedback and revise the same review; acknowledge handled events using their printed acknowledgement arguments. Continue until each tracked review has a confirmed terminal outcome.`
       : JSON.stringify(value, null, 2));
   return 0;
 }

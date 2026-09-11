@@ -89,6 +89,7 @@ interface ToolSpec<Shape extends ZodRawShape> {
   description: string;
   inputSchema: Shape;
   annotations: ToolAnnotations;
+  strictInput?: boolean;
   handler: (args: z.output<z.ZodObject<Shape>>, ctx: ToolContext) => Promise<ToolResult>;
 }
 
@@ -106,7 +107,7 @@ interface RegisterableTool {
  * object carries a `register` closure the server calls during setup.
  */
 function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): RegisterableTool {
-  const inputSchema = z.object(spec.inputSchema);
+  const inputSchema = spec.strictInput ? z.strictObject(spec.inputSchema) : z.object(spec.inputSchema);
   const invoke = (input: unknown, ctx: ToolContext): Promise<ToolResult> => ctx.client.withStorageWarnings(async () => {
     try {
       const args = inputSchema.parse(input);
@@ -2189,6 +2190,10 @@ function renderReviewEvent(e: ReviewEvent): string {
   const scope = e.review_id ? ` · review: ${e.review_id}` : " · broadcast";
   const terminal = isTerminalReviewEvent(e.reason) ? "  [TERMINAL: this review is done]" : "";
   const lines = [`• seq ${e.seq} · ${e.reason}${scope} · ${e.id}${terminal}`];
+  const acknowledgement = e.review_id
+    ? { acks: [{ review_id: e.review_id, through_seq: e.seq }] }
+    : { broadcast_ids: [e.id] };
+  lines.push(`   After handling this event, call ack_review_event ${JSON.stringify(acknowledgement)}. Never acknowledge past unhandled events.`);
   const payload = e.payload ?? {};
   const keys = Object.keys(payload);
   if (keys.length) {
@@ -2273,7 +2278,10 @@ const waitForReviewEvent = defineTool({
 const ackReviewEvent = defineTool({
   name: "ack_review_event",
   title: "Ack review events",
+  strictInput: true,
   description:
+    "For an event with review_id, use {acks:[{review_id: event.review_id, through_seq: event.seq}]}. " +
+    "Use broadcast_ids ONLY for events without review_id; never pass a review nudge ID there. Empty or unknown arguments are errors. " +
     "Advance the agent's per-review cursor(s) to the supplied through_seq and/or mark broadcast nudges done. Idempotent " +
     "and monotonic: re-acking an older seq is a no-op (exactly-once effect). Call this AFTER you have acted on the " +
     "events from list_review_events / wait_for_review_event so the queue does not keep re-surfacing them. " +
@@ -2283,17 +2291,21 @@ const ackReviewEvent = defineTool({
   inputSchema: {
     acks: z
       .array(
-        z.object({
-          review_id: z.string().describe("The review (rr_…) whose cursor to advance."),
-          through_seq: z.number().int().min(0).describe("Advance the cursor through this seq (inclusive)."),
+        z.strictObject({
+          review_id: z.string().trim().min(1).describe("The review (rr_…) whose cursor to advance."),
+          through_seq: z.number().int().min(1).describe("Advance the cursor through this observed event seq (inclusive)."),
         }),
       )
+      .max(100)
       .optional()
-      .describe("Per-review cursor advances."),
-    broadcast_ids: z.array(z.string()).optional().describe("Broadcast nudge ids (ndg_…) to mark done."),
+      .describe("Per-review cursor advances; use the event’s review_id and seq, not its nudge id."),
+    broadcast_ids: z.array(z.string().trim().min(1)).max(100).optional().describe("Only nudge ids for events WITHOUT review_id. Review events require acks instead."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
+    if (!args.acks?.length && !args.broadcast_ids?.length) {
+      throw new Error("Nothing acknowledged. For a review event call ack_review_event with {acks:[{review_id: event.review_id, through_seq: event.seq}]}; broadcast_ids is only for events without review_id. Handle feedback before acknowledging.");
+    }
     const res = await client.ackReviewEvent({ acks: args.acks, broadcast_ids: args.broadcast_ids });
     const cursors = res.cursors ?? [];
     const text = cursors.length
