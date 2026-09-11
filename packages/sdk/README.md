@@ -56,6 +56,10 @@ REST API and served OpenAPI document remain the underlying contract.
 
 ---
 
+Every send, reply, forward, and revision requires an explicit `composition_token` from a fresh
+`extrovert.rules.get()` call. Read and apply those rules before composing; reread them before
+each redraft. Filtered rule reads may omit the token, so require it before submitting.
+
 ## Quickstart: inbox in one call
 
 Use the scoped key issued for this agent on your existing account. Do not sign up for another
@@ -74,7 +78,10 @@ console.log(inbox.address); // agent7@extrovertmail.com
 // Queue a message for a human. `intent.summary` is what the reviewer reads
 // first, and it is REQUIRED: under the default `require_review` policy a send
 // without one is refused 422 `intent_required` (nothing sent, nothing queued).
+const rules = await extrovert.rules.get(); // Read and apply before composing.
+if (!rules.composition_token) throw new Error("Full writing rules must return a composition token");
 const outcome = await inbox.send({
+  composition_token: rules.composition_token,
   to: "ops@acme.test",
   subject: "agent online",
   text: "Reporting in.",
@@ -151,7 +158,9 @@ const { project_id } = await x.whoami();          // the key's fixed project
 
 // Create / send / list in a project: keyed by the opaque inbox_id.
 const inbox = await x.projects.inboxes.create(project_id!, { username: "ada" });
-await x.projects.inboxes.send(project_id!, inbox.id, { to: "ops@acme.test", subject: "hi", text: "…",
+const rules = await x.rules.get(); // Read and apply before composing.
+if (!rules.composition_token) throw new Error("Full writing rules must return a composition token");
+await x.projects.inboxes.send(project_id!, inbox.id, { composition_token: rules.composition_token, to: "ops@acme.test", subject: "hi", text: "…",
   intent: { summary: "…one sentence for the human reviewer…" } });   // queues for review
 
 // One list envelope: { object: "list", data, has_more, next_cursor }. The ListPage
@@ -319,6 +328,7 @@ if (summary) {
   const thread = await extrovert.threads.get(inbox.address, summary.id);
   const sourceBodies = thread.messages.map((message) => message.text ?? message.html);
   const rules = await extrovert.rules.get(); // Read and apply before writing.
+  if (!rules.composition_token) throw new Error("Full writing rules must return a composition token");
   const pending = await extrovert.reviews.list({ inbox: inbox.address, thread_id: thread.id });
   // Coordinate pending responses before composing; do not duplicate another composer’s work.
 

@@ -579,8 +579,8 @@ export interface SendRequest {
    * routes to needs_review with gate_outcome `held:low_confidence`.
    */
   category_confidence?: number;
-  /** Opaque token from the fresh getRules call used for this composition. */
-  composition_token?: string;
+  /** Required token from the fresh rules.get call read before composing. */
+  composition_token: string;
 }
 
 /**
@@ -629,7 +629,8 @@ export interface ReplyRequest {
   category_id?: string;
   /** Agent-supplied confidence (0..1); see {@link SendRequest.category_confidence}. */
   category_confidence?: number;
-  composition_token?: string;
+  /** Required token from the fresh rules.get call read before composing. */
+  composition_token: string;
 }
 
 /**
@@ -665,7 +666,8 @@ export interface ForwardRequest {
   category_id?: string;
   /** Agent-supplied confidence (0..1); see {@link SendRequest.category_confidence}. */
   category_confidence?: number;
-  composition_token?: string;
+  /** Required token from the fresh rules.get call read before composing. */
+  composition_token: string;
   /** See {@link SendRequest.idempotency_key}: sent as a header, never in the body. */
   idempotency_key?: string;
 }
@@ -985,8 +987,8 @@ export interface SubmitRevisionRequest {
   html?: string;
   built_at?: IsoTimestamp;
   rules_version_seen?: number;
-  /** Opaque token from the fresh getRules call used for this redraft. */
-  composition_token?: string;
+  /** Required token from a fresh rules.get call read before this redraft. */
+  composition_token: string;
   /**
    * REPLACES the draft's attachments. Omit the field to leave them untouched;
    * send an empty array to clear them.

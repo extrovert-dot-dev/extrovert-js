@@ -25,14 +25,21 @@ async function main() {
   console.log(`key tier: ${x.keyTier}; api version pinned: ${x.apiVersion}`);
 
   // Create an inbox in the project. The opaque inbox_id is the canonical key.
-  const inbox = await x.projects.inboxes.create(projectId, { username: "ada", display_name: "Ada" });
+  const inbox = await x.projects.inboxes.create(projectId, { username: "ada-agent", display_name: "Ada" });
   console.log(`inbox ${inbox.id} @ ${inbox.address} in project ${inbox.project_id}`);
+
+  // Read and apply the current writing rules before composing.
+  const rules = await x.rules.get();
+  if (!rules.composition_token) throw new Error("Full writing rules did not return a composition token");
+  console.log("writing rules:", rules.items);
 
   // Send from it via the chain.
   await x.projects.inboxes.send(projectId, inbox.id, {
+    composition_token: rules.composition_token,
     to: "ops@acme.test",
     subject: "online",
     text: "Reporting in.",
+    intent: { summary: "Tell ops the agent is online and available for email." },
   });
 
   // List with the ONE envelope + opaque cursor; the ListPage auto-paginates.

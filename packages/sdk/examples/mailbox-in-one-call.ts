@@ -31,9 +31,15 @@ async function main() {
   const policy = (await extrovert.inboxes.get(inbox.address)).record?.effective_review_policy;
   console.log(`review policy: ${policy}`);
 
+  // Read and apply the current writing rules before composing.
+  const rules = await extrovert.rules.get();
+  if (!rules.composition_token) throw new Error("Full writing rules did not return a composition token");
+  console.log("writing rules:", rules.items);
+
   // `intent.summary` is what the human reviewer reads first, so it carries the
   // why - not a restatement of the subject. It is REQUIRED once review resolves.
   const outcome = await inbox.send({
+    composition_token: rules.composition_token,
     to: "ops@acme.test",
     subject: "agent online",
     text: "Reporting in. Reply here and I'll thread it.",
