@@ -15,6 +15,7 @@
 
 import type {
   QueuedForReviewResult,
+  QueuedSendResult,
   SendOutcome,
   SendResult,
   SentResult,
@@ -30,11 +31,13 @@ export function isQueuedForReview(res: SendOutcome): res is QueuedForReviewResul
 }
 
 /**
- * True when the message was delivered immediately - either the review-loop
- * `{kind:"sent"}` body or the legacy body a bare send gets under `allow_direct`.
+ * True only when transport evidence confirms provider acceptance for all
+ * recipients. Legacy HTTP success and a saved Sent copy are insufficient.
  */
 export function isSentImmediately(res: SendOutcome): res is SendResult | SentResult {
-  return !isQueuedForReview(res);
+  if (isQueuedForReview(res) || isQueuedForDelivery(res)) return false;
+  const counts = res.transport;
+  return !!counts && (counts.accepted ?? 0) > 0 && Object.entries(counts).every(([state, count]) => state === "accepted" || count === 0);
 }
 
 /**
@@ -45,7 +48,7 @@ export function isSentImmediately(res: SendOutcome): res is SendResult | SentRes
  * outcome.
  */
 export function sentMessageIdOf(res: SendOutcome): string | undefined {
-  if (isQueuedForReview(res)) return undefined;
+  if (isQueuedForReview(res) || isQueuedForDelivery(res)) return undefined;
   const candidate = res.sent_message_id !== undefined ? res.sent_message_id : res.kind === "sent" ? res.message.id : res.message_id;
   return candidate?.startsWith("msg_") ? candidate : undefined;
 }
@@ -58,7 +61,7 @@ export function sentMessageIdOf(res: SendOutcome): string | undefined {
  * yet). Reply and forward do return it.
  */
 export function threadIdOf(res: SendOutcome): string | undefined {
-  if (isQueuedForReview(res)) return undefined;
+  if (isQueuedForReview(res) || isQueuedForDelivery(res)) return undefined;
   return res.kind === "sent" ? res.message.thread_id : res.thread_id;
 }
 
@@ -73,4 +76,10 @@ export function threadIdOf(res: SendOutcome): string | undefined {
 export function reviewIdOf(res: SendOutcome): string | undefined {
   if (isQueuedForReview(res)) return res.review.id;
   return res.kind === "sent" ? res.review?.id : res.review_id;
+}
+
+
+/** True after durable admission, before provider acceptance. Poll status_url. */
+export function isQueuedForDelivery(res: SendOutcome): res is QueuedSendResult {
+  return "sent" in res && res.sent === false && "status" in res && res.status === "queued";
 }

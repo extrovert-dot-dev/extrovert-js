@@ -1,0 +1,513 @@
+{
+  "schema_version": 1,
+  "profile": "assistant",
+  "resource_path": "/assistant/mcp",
+  "authentication": "oauth-only",
+  "tools": [
+    {
+      "name": "whoami",
+      "client_methods": [
+        "whoami"
+      ]
+    },
+    {
+      "name": "agent_context",
+      "client_methods": []
+    },
+    {
+      "name": "create_inbox",
+      "excluded_fields": [
+        "inbound_webhook_url"
+      ],
+      "constraint": "existing entitlement only; project reach required",
+      "client_methods": [
+        "createInbox"
+      ]
+    },
+    {
+      "name": "list_inboxes",
+      "excluded_fields": [
+        "wildcard"
+      ],
+      "client_methods": [
+        "listInboxes"
+      ]
+    },
+    {
+      "name": "get_inbox",
+      "client_methods": [
+        "getInbox"
+      ]
+    },
+    {
+      "name": "update_inbox",
+      "excluded_fields": [
+        "inbound_webhook_url",
+        "daily_send_limit"
+      ],
+      "client_methods": [
+        "updateInbox"
+      ]
+    },
+    {
+      "name": "delete_inbox",
+      "client_methods": [
+        "deleteInbox"
+      ]
+    },
+    {
+      "name": "send_email",
+      "client_methods": [
+        "submitForReview",
+        "sendEmail"
+      ]
+    },
+    {
+      "name": "reply_email",
+      "client_methods": [
+        "submitReplyForReview",
+        "replyEmail"
+      ]
+    },
+    {
+      "name": "forward_email",
+      "client_methods": [
+        "submitForwardForReview",
+        "forwardEmail"
+      ]
+    },
+    {
+      "name": "get_submission",
+      "client_methods": [
+        "getSubmission"
+      ]
+    },
+    {
+      "name": "list_outbox",
+      "client_methods": [
+        "listOutbox"
+      ]
+    },
+    {
+      "name": "list_reviews",
+      "client_methods": [
+        "listReviews"
+      ]
+    },
+    {
+      "name": "get_review",
+      "client_methods": [
+        "getReview"
+      ]
+    },
+    {
+      "name": "get_review_turns",
+      "client_methods": [
+        "getReviewTurns"
+      ]
+    },
+    {
+      "name": "get_review_decision_context",
+      "client_methods": [
+        "getReviewDecisionContext"
+      ]
+    },
+    {
+      "name": "reviewer_decide",
+      "client_methods": [
+        "reviewerDecide"
+      ]
+    },
+    {
+      "name": "post_review_chat",
+      "client_methods": [
+        "postReviewChat"
+      ]
+    },
+    {
+      "name": "submit_revision",
+      "client_methods": [
+        "submitRevision"
+      ]
+    },
+    {
+      "name": "cancel_review",
+      "client_methods": [
+        "cancelReview"
+      ]
+    },
+    {
+      "name": "restamp_review",
+      "client_methods": [
+        "restampReview"
+      ]
+    },
+    {
+      "name": "get_review_feedback",
+      "client_methods": [
+        "getReviewFeedback"
+      ]
+    },
+    {
+      "name": "list_review_events",
+      "client_methods": [
+        "listReviewEvents"
+      ]
+    },
+    {
+      "name": "wait_for_review_event",
+      "client_methods": [
+        "waitForReviewEvent"
+      ]
+    },
+    {
+      "name": "ack_review_event",
+      "client_methods": [
+        "ackReviewEvent"
+      ]
+    },
+    {
+      "name": "list_categories",
+      "client_methods": [
+        "listCategories"
+      ]
+    },
+    {
+      "name": "get_category",
+      "client_methods": [
+        "getCategory"
+      ]
+    },
+    {
+      "name": "propose_category",
+      "client_methods": [
+        "proposeCategory"
+      ]
+    },
+    {
+      "name": "merge_categories",
+      "client_methods": [
+        "mergeCategories"
+      ]
+    },
+    {
+      "name": "update_category",
+      "client_methods": [
+        "updateCategory"
+      ]
+    },
+    {
+      "name": "get_risk_dial",
+      "client_methods": [
+        "getRiskDial"
+      ]
+    },
+    {
+      "name": "get_graduation_status",
+      "client_methods": [
+        "getGraduationStatus"
+      ]
+    },
+    {
+      "name": "get_backlog_status",
+      "client_methods": [
+        "getBacklogStatus"
+      ]
+    },
+    {
+      "name": "get_pacing_state",
+      "client_methods": [
+        "getPacingState"
+      ]
+    },
+    {
+      "name": "propose_graduation",
+      "client_methods": [
+        "proposeGraduation"
+      ]
+    },
+    {
+      "name": "get_rules",
+      "client_methods": [
+        "getRules"
+      ]
+    },
+    {
+      "name": "learn_review_rule",
+      "client_methods": [
+        "learnReviewRule"
+      ]
+    },
+    {
+      "name": "save_rule",
+      "client_methods": [
+        "saveRule"
+      ]
+    },
+    {
+      "name": "promote_rule",
+      "client_methods": [
+        "promoteRule"
+      ]
+    },
+    {
+      "name": "retire_rule",
+      "client_methods": [
+        "retireRule"
+      ]
+    },
+    {
+      "name": "get_rule_audit",
+      "client_methods": [
+        "getRuleAudit"
+      ]
+    },
+    {
+      "name": "undo_rule_change",
+      "client_methods": [
+        "undoRuleChange"
+      ]
+    },
+    {
+      "name": "read_messages",
+      "client_methods": [
+        "listMessages"
+      ]
+    },
+    {
+      "name": "get_message",
+      "client_methods": [
+        "getMessage"
+      ]
+    },
+    {
+      "name": "list_attachments",
+      "client_methods": [
+        "listAttachments"
+      ]
+    },
+    {
+      "name": "get_attachment",
+      "client_methods": [
+        "getAttachment"
+      ]
+    },
+    {
+      "name": "mark_read",
+      "client_methods": [
+        "markRead"
+      ]
+    },
+    {
+      "name": "list_threads",
+      "client_methods": [
+        "listThreads"
+      ]
+    },
+    {
+      "name": "search_threads",
+      "client_methods": [
+        "searchThreads"
+      ]
+    },
+    {
+      "name": "get_thread",
+      "client_methods": [
+        "getThread"
+      ]
+    },
+    {
+      "name": "delete_message",
+      "client_methods": [
+        "deleteMessage"
+      ]
+    },
+    {
+      "name": "delete_thread",
+      "client_methods": [
+        "deleteThread"
+      ]
+    },
+    {
+      "name": "batch_update_messages",
+      "client_methods": [
+        "batchUpdateMessages"
+      ]
+    },
+    {
+      "name": "search",
+      "client_methods": [
+        "search"
+      ]
+    },
+    {
+      "name": "wait_for_email",
+      "constraint": "timeout_ms 1000..50000, default 45000; no unbounded host wait",
+      "client_methods": [
+        "waitForEmail"
+      ]
+    },
+    {
+      "name": "add_contact_list_entry",
+      "client_methods": [
+        "addContactListEntry"
+      ]
+    },
+    {
+      "name": "list_contact_lists",
+      "client_methods": [
+        "listContactListEntries"
+      ]
+    },
+    {
+      "name": "delete_contact_list_entry",
+      "client_methods": [
+        "deleteContactListEntry"
+      ]
+    },
+    {
+      "name": "check_suppression",
+      "client_methods": [
+        "precheckSuppression"
+      ]
+    },
+    {
+      "name": "list_suppressions",
+      "client_methods": [
+        "listSuppressions"
+      ]
+    },
+    {
+      "name": "revoke_suppression",
+      "client_methods": [
+        "revokeSuppression"
+      ]
+    },
+    {
+      "name": "get_deliverability_status",
+      "client_methods": [
+        "getReputation"
+      ]
+    },
+    {
+      "name": "list_deliverability_findings",
+      "client_methods": [
+        "listDeliverabilityFindings"
+      ]
+    },
+    {
+      "name": "list_domains",
+      "excluded_fields": [
+        "diagnostics"
+      ],
+      "client_methods": [
+        "listDomains"
+      ]
+    },
+    {
+      "name": "get_domain",
+      "excluded_fields": [
+        "diagnostics"
+      ],
+      "client_methods": [
+        "getDomain"
+      ]
+    },
+    {
+      "name": "list_domain_events",
+      "client_methods": [
+        "listDomainEvents"
+      ]
+    },
+    {
+      "name": "wait_for_domain",
+      "client_methods": [
+        "getDomain"
+      ]
+    },
+    {
+      "name": "onboard_domain",
+      "constraint": "ns_delegated only; explicit project reach; no registration or purchase",
+      "client_methods": [
+        "onboardDomain"
+      ]
+    },
+    {
+      "name": "verify_domain",
+      "constraint": "ns_delegated only; never resume purchased-domain jobs",
+      "client_methods": [
+        "getDomain",
+        "verifyDomain"
+      ]
+    }
+  ],
+  "api_routes": [
+    "DELETE /v1/inboxes/{inbox_id}",
+    "DELETE /v1/inboxes/{inbox_id}/lists/{id}",
+    "DELETE /v1/inboxes/{inbox_id}/messages/{id}",
+    "DELETE /v1/inboxes/{inbox_id}/threads/{id}",
+    "GET /v1/auth/me",
+    "GET /v1/categories",
+    "GET /v1/categories/{id}",
+    "GET /v1/categories/{id}/backlog-status",
+    "GET /v1/categories/{id}/graduation-status",
+    "GET /v1/categories/{id}/pacing-state",
+    "GET /v1/domains",
+    "GET /v1/domains/{domain}",
+    "GET /v1/domains/{domain}/events",
+    "GET /v1/inboxes",
+    "GET /v1/inboxes/{inbox_id}",
+    "GET /v1/inboxes/{inbox_id}/lists",
+    "GET /v1/inboxes/{inbox_id}/messages",
+    "GET /v1/inboxes/{inbox_id}/messages/search",
+    "GET /v1/inboxes/{inbox_id}/messages/{id}/attachments",
+    "GET /v1/inboxes/{inbox_id}/messages/{id}/attachments/{attId}",
+    "GET /v1/inboxes/{inbox_id}/outbox",
+    "GET /v1/inboxes/{inbox_id}/submissions/{submission_id}",
+    "GET /v1/inboxes/{inbox_id}/threads",
+    "GET /v1/inboxes/{inbox_id}/threads/search",
+    "GET /v1/inboxes/{inbox_id}/threads/{id}",
+    "GET /v1/messages/{id}",
+    "GET /v1/reputation",
+    "GET /v1/reputation/findings",
+    "GET /v1/reviews",
+    "GET /v1/reviews/events",
+    "GET /v1/reviews/events/wait",
+    "GET /v1/reviews/{id}",
+    "GET /v1/reviews/{id}/decision-context",
+    "GET /v1/reviews/{id}/feedback",
+    "GET /v1/reviews/{id}/turns",
+    "GET /v1/risk-dial",
+    "GET /v1/rules",
+    "GET /v1/rules/audit",
+    "GET /v1/suppressions",
+    "PATCH /v1/inboxes/{inbox_id}",
+    "PATCH /v1/inboxes/{inbox_id}/messages/batch",
+    "PATCH /v1/inboxes/{inbox_id}/messages/{id}",
+    "POST /v1/categories",
+    "POST /v1/categories/{id}/graduation-request",
+    "POST /v1/categories/{id}/merge",
+    "POST /v1/domains",
+    "POST /v1/domains/{domain}/verify",
+    "POST /v1/inboxes",
+    "POST /v1/inboxes/{inbox_id}/lists",
+    "POST /v1/inboxes/{inbox_id}/messages/{id}/forward",
+    "POST /v1/inboxes/{inbox_id}/reply",
+    "POST /v1/inboxes/{inbox_id}/send",
+    "POST /v1/inboxes/{inbox_id}/wait",
+    "POST /v1/reviews/events/ack",
+    "POST /v1/reviews/{id}/cancel",
+    "POST /v1/reviews/{id}/chat",
+    "POST /v1/reviews/{id}/decision",
+    "POST /v1/reviews/{id}/learned-rules",
+    "POST /v1/reviews/{id}/restamp",
+    "POST /v1/reviews/{id}/revision",
+    "POST /v1/rules/audit/{udo_id}/undo",
+    "POST /v1/rules/{id}/promote",
+    "POST /v1/rules/{id}/retire",
+    "POST /v1/suppressions/{id}/revoke",
+    "POST /v1/wait",
+    "PUT /v1/categories/{id}",
+    "PUT /v1/rules"
+  ]
+}

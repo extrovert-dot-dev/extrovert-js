@@ -2355,6 +2355,10 @@ export class FixtureStore {
       created_at: message.date, updated_at: message.date };
   }
 
+  listOutbox(_inbox: string, _before?: string, _limit?: number): { items: import("./types.js").OutboxItem[]; next_before?: string } {
+    return { items: [] };
+  }
+
   /**
    * Delete a message by id (mirrors DELETE .../messages/{id}). The mock moves the
    * message to a Trash folder (soft delete) or removes it outright when expunge is

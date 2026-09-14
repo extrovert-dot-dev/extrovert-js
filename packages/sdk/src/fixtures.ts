@@ -2871,6 +2871,10 @@ export class MockBackend {
       created_at: message.date, updated_at: message.date };
   }
 
+  listInboxOutbox(_address: string, _params: { before?: string; limit?: number } = {}): { items: import("./models.js").OutboxItem[]; next_before?: string } {
+    return { items: [] };
+  }
+
   /**
    * Delete a message by id: move it to Trash (soft) or remove it (expunge / it
    * already lives in Trash). Returns undefined when the inbox/message is unknown

@@ -691,6 +691,20 @@ export type SubmissionRecipientState = "queued" | "waiting_for_parent" | "transm
 export type TransportCounts = Partial<Record<SubmissionRecipientState, number>>;
 
 /** Additive transport metadata; absent when talking to an older server. */
+export type OutboundStatus = "queued" | "sending" | "delayed" | "checking_status" | "needs_reconfirmation" | "sent" | "partially_sent" | "failed" | "cancelling" | "cancelled";
+
+/** Durable authorization acknowledged; provider acceptance is still pending. */
+export interface QueuedSendResult {
+  kind?: undefined;
+  status: "queued";
+  sent: false;
+  submission_id: string;
+  review_id?: string;
+  accepted_at: string;
+  reconfirm_at: string;
+  status_url: string;
+}
+
 export interface SubmissionTracking {
   submission_id?: string;
   /** A resolvable msg_ selector, or null until the Sent copy is available. */
@@ -701,6 +715,12 @@ export interface SubmissionTracking {
 }
 
 export interface Submission {
+  status?: OutboundStatus;
+  sent?: boolean;
+  workflow?: string;
+  accepted_at?: string;
+  reconfirm_at?: string;
+  status_url?: string;
   submission_id: string;
   inbox: string;
   sent_message_id: string | null;
@@ -709,6 +729,17 @@ export interface Submission {
   recipients: { recipient: string; state: SubmissionRecipientState }[];
   created_at: IsoTimestamp;
   updated_at: IsoTimestamp;
+}
+
+/** Bounded durable transport view for an inbox; sent means provider acceptance. */
+export interface OutboxItem {
+  submission_id: string;
+  status: OutboundStatus;
+  sent: boolean;
+  sender: string;
+  created_at: IsoTimestamp;
+  updated_at: IsoTimestamp;
+  reconfirm_at: IsoTimestamp;
 }
 
 export interface SendResult extends SubmissionTracking {
@@ -756,7 +787,7 @@ export interface SendResult extends SubmissionTracking {
  * or queued. Use {@link isQueuedForReview} / {@link sentMessageIdOf} from
  * `send-result.js` rather than reaching for a field that may not be there.
  */
-export type SendOutcome = SendResult | SentResult | QueuedForReviewResult;
+export type SendOutcome = SendResult | SentResult | QueuedForReviewResult | QueuedSendResult;
 
 // ---------------------------------------------------------------------------
 // Review Loop (HITL): supervised-autonomy submit + agent-plane reads (spec §5).
@@ -1513,7 +1544,7 @@ export interface SentResult extends SubmissionTracking {
 }
 
 /** The discriminated outcome of a review-mode submit (queued OR sent). */
-export type SubmitForReviewResult = QueuedForReviewResult | SentResult;
+export type SubmitForReviewResult = QueuedForReviewResult | SentResult | QueuedSendResult;
 
 /**
  * A conversation thread (read shape). Grouped server-side by RFC 5322

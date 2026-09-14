@@ -10,6 +10,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { ExtrovertClient } from "./client.js";
 import { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from "./config.js";
 import { registerTools } from "./tools.js";
+import { ASSISTANT_INSTRUCTIONS, type CapabilityProfile } from "./profiles.js";
+import { ASSISTANT_RELEASE } from "./assistant-release.generated.js";
 
 const INSTRUCTIONS = [
   "Extrovert gives your agent a persistent email inbox with reviewed sending.",
@@ -71,6 +73,7 @@ const INSTRUCTIONS = [
 export interface CreateExtrovertServerOptions {
   config?: ExtrovertConfig;
   client?: ExtrovertClient;
+  profile?: CapabilityProfile;
 }
 
 /** Create a configured Extrovert MCP server (and its client). */
@@ -83,7 +86,7 @@ export function createExtrovertServer(options: CreateExtrovertServerOptions = {}
   const client = options.client ?? new ExtrovertClient(config);
 
   const server = new McpServer(
-    { name: SERVER_NAME, version: SERVER_VERSION },
+    { name: SERVER_NAME, version: options.profile === "assistant" ? ASSISTANT_RELEASE.release_version : SERVER_VERSION },
     {
       // Catalogs are fixed for each build; the stateless HTTP deployment has no
       // cross-node catalog notification publisher. Do not promise push updates.
@@ -94,11 +97,11 @@ export function createExtrovertServer(options: CreateExtrovertServerOptions = {}
         "server/discover": { ttlMs: 60_000, cacheScope: "private" },
         "tools/list": { ttlMs: 60_000, cacheScope: "private" },
       },
-      instructions: INSTRUCTIONS,
+      instructions: options.profile === "assistant" ? ASSISTANT_INSTRUCTIONS : INSTRUCTIONS,
     },
   );
 
-  registerTools(server, { client, config });
+  registerTools(server, { client, config, profile: options.profile ?? "full" });
 
   return { server, client, config };
 }

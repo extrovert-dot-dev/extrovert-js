@@ -1,3 +1,4 @@
+import { ensureSendIdempotencyKey } from "./send-idempotency.js";
 import type { ListWebhooksParams, ConnectionResourceSelection } from "./models.js";
 import type { AdministrativeRequest } from "./administration.js";
 import { normalizeInboxPage } from "./inbox-page.js";
@@ -95,6 +96,7 @@ import type {
   Thread,
   ThreadDetail,
   Submission,
+  OutboxItem,
   UpdateInboxRequest,
   UpdateWebhookRequest,
   VerifyRequest,
@@ -189,6 +191,7 @@ export interface Transport {
   searchThreads(address: string, params: SearchMessagesParams, signal?: AbortSignal): Promise<Page<Thread>>;
   getThread(address: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail>;
   getSubmission(address: string, submissionId: string, signal?: AbortSignal): Promise<Submission>;
+  listInboxOutbox(address: string, params?: { before?: string; limit?: number }, signal?: AbortSignal): Promise<{ items: OutboxItem[]; next_before?: string }>;
   getSubmissionInProject(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission>;
   deleteThread(address: string, threadId: string, expunge?: boolean, signal?: AbortSignal): Promise<DeleteResult>;
   waitForEmail(
@@ -534,7 +537,7 @@ export class HttpTransport implements Transport {
       method: "POST",
       path: `/v1/inboxes/${this.encodeAddress(address)}/send`,
       body: sendBody(req),
-      idempotencyKey: req.idempotency_key,
+      idempotencyKey: ensureSendIdempotencyKey(req),
       signal,
     });
   }
@@ -544,7 +547,7 @@ export class HttpTransport implements Transport {
       method: "POST",
       path: `/v1/inboxes/${this.encodeAddress(address)}/reply`,
       body: replyBody(req),
-      idempotencyKey: req.idempotency_key,
+      idempotencyKey: ensureSendIdempotencyKey(req),
       signal,
     });
   }
@@ -554,7 +557,7 @@ export class HttpTransport implements Transport {
       method: "POST",
       path: `/v1/inboxes/${this.encodeAddress(address)}/messages/${encodeURIComponent(messageId)}/forward`,
       body: forwardBody(req),
-      idempotencyKey: req.idempotency_key,
+      idempotencyKey: ensureSendIdempotencyKey(req),
       signal,
     });
   }
@@ -681,6 +684,10 @@ export class HttpTransport implements Transport {
 
   getSubmission(address: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
     return this.call({ method: "GET", path: `/v1/inboxes/${this.encodeAddress(address)}/submissions/${encodeURIComponent(submissionId)}`, signal });
+  }
+
+  listInboxOutbox(address: string, params: { before?: string; limit?: number } = {}, signal?: AbortSignal): Promise<{ items: OutboxItem[]; next_before?: string }> {
+    return this.call({ method: "GET", path: `/v1/inboxes/${this.encodeAddress(address)}/outbox`, query: params, signal });
   }
   getSubmissionInProject(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
     return this.call({ method: "GET", path: `/v1/projects/${encodeURIComponent(projectId)}/inboxes/${encodeURIComponent(inboxId)}/submissions/${encodeURIComponent(submissionId)}`, signal });
@@ -906,7 +913,7 @@ export class HttpTransport implements Transport {
       method: "POST",
       path: `/v1/inboxes/${this.encodeAddress(address)}/send`,
       body: sendBody(req),
-      idempotencyKey: req.idempotency_key,
+      idempotencyKey: ensureSendIdempotencyKey(req),
       signal,
     });
   }
@@ -920,7 +927,7 @@ export class HttpTransport implements Transport {
       method: "POST",
       path: `/v1/inboxes/${this.encodeAddress(address)}/reply`,
       body: replyBody(req),
-      idempotencyKey: req.idempotency_key,
+      idempotencyKey: ensureSendIdempotencyKey(req),
       signal,
     });
   }
@@ -1354,6 +1361,10 @@ export class MockTransport implements Transport {
     const result = this.backend.getSubmission(address, submissionId);
     if (!result) throw notFound("submission", submissionId);
     return result;
+  }
+
+  async listInboxOutbox(address: string, params: { before?: string; limit?: number } = {}): Promise<{ items: OutboxItem[]; next_before?: string }> {
+    return this.backend.listInboxOutbox(address, params);
   }
   async getSubmissionInProject(projectId: string, inboxId: string, submissionId: string): Promise<Submission> {
     const inbox = await this.getInboxInProject(projectId, inboxId);

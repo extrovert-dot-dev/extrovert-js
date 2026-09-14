@@ -296,6 +296,20 @@ export interface ThreadDetail extends Thread {
 export type SentCopyStatus = "pending" | "stored" | "unavailable";
 export type SubmissionRecipientState = "queued" | "waiting_for_parent" | "transmitting" | "accepted" | "failed" | "dependency_failed" | "unknown";
 export type TransportCounts = Partial<Record<SubmissionRecipientState, number>>;
+export type OutboundStatus = "queued" | "sending" | "delayed" | "checking_status" | "needs_reconfirmation" | "sent" | "partially_sent" | "failed" | "cancelling" | "cancelled";
+
+/** Durable authorization acknowledged; provider acceptance is still pending. */
+export interface QueuedSendResult {
+  kind?: undefined;
+  status: "queued";
+  sent: false;
+  submission_id: string;
+  review_id?: string;
+  accepted_at: string;
+  reconfirm_at: string;
+  status_url: string;
+}
+
 export interface SubmissionTracking {
   submission_id?: string;
   sent_message_id?: string | null;
@@ -303,6 +317,12 @@ export interface SubmissionTracking {
   transport?: TransportCounts;
 }
 export interface Submission {
+  status?: OutboundStatus;
+  sent?: boolean;
+  workflow?: string;
+  accepted_at?: string;
+  reconfirm_at?: string;
+  status_url?: string;
   submission_id: string;
   inbox: string;
   sent_message_id: string | null;
@@ -311,6 +331,16 @@ export interface Submission {
   recipients: { recipient: string; state: SubmissionRecipientState }[];
   created_at: string;
   updated_at: string;
+}
+
+export interface OutboxItem {
+  submission_id: string;
+  status: OutboundStatus;
+  sent: boolean;
+  sender: string;
+  created_at: string;
+  updated_at: string;
+  reconfirm_at: string;
 }
 
 export interface SendResult extends SubmissionTracking {
@@ -339,13 +369,13 @@ export interface DirectSendResult extends SubmissionTracking {
  * direct path, or parked in the human queue. Narrow on `"kind" in result`: the
  * queued arm is the discriminated §5.1 envelope, the sent arm is the legacy body.
  */
-export type SendEmailResult = DirectSendResult | QueuedForReviewResult;
+export type SendEmailResult = DirectSendResult | QueuedForReviewResult | QueuedSendResult;
 
 /**
  * The outcome of a bare reply or forward: `{message_id, thread_id, review_id}` on
  * the direct path, or parked in the human queue. Narrow on `"kind" in result`.
  */
-export type ReplyEmailResult = SendResult | QueuedForReviewResult;
+export type ReplyEmailResult = SendResult | QueuedForReviewResult | QueuedSendResult;
 
 // ---------------------------------------------------------------------------
 // Review Loop (HITL): agent-plane reads + submit overload (spec §5.1–5.2).
@@ -845,7 +875,7 @@ export interface SentResult extends SubmissionTracking {
 }
 
 /** The discriminated outcome of a review-mode submit (queued OR sent). */
-export type SubmitForReviewResult = QueuedForReviewResult | SentResult;
+export type SubmitForReviewResult = QueuedForReviewResult | SentResult | QueuedSendResult;
 
 /**
  * Outcome of a message or thread delete (DELETE .../messages/{id} or

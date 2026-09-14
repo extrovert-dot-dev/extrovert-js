@@ -75,6 +75,7 @@ export type { Problem, ProblemCode, ProblemField } from "./problem.js";
 // Narrowing helpers for the three-way send outcome (queued | sent | legacy sent).
 export {
   isQueuedForReview,
+  isQueuedForDelivery,
   isSentImmediately,
   sentMessageIdOf,
   threadIdOf,
@@ -158,6 +159,8 @@ export type {
   Submission,
   SubmissionRecipientState,
   SubmissionTracking,
+  QueuedSendResult,
+  OutboundStatus,
   TransportCounts,
   SendOutcome,
   // review loop (HITL)
@@ -299,3 +302,5 @@ export { ADMINISTRATIVE_FIXTURE_KEY } from "./administration-fixtures.js";
 export type { ConnectionResourceSelection, ListWebhooksParams } from "./models.js";
 
 export type { InternalEmailReview, HumanEmailReview } from "./models.js";
+
+export { ensureSendIdempotencyKey } from "./send-idempotency.js";

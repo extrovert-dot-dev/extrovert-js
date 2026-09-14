@@ -35,6 +35,8 @@ import { ExtrovertClient } from "./client.js";
 import { loadConfig, SERVER_NAME, SERVER_VERSION, type ExtrovertConfig } from "./config.js";
 import { buildAgentContext } from "./agent-context.js";
 import { createExtrovertServer } from "./server.js";
+import { ASSISTANT_INSTRUCTIONS, ASSISTANT_PROFILE, ASSISTANT_TOOL_NAMES, type CapabilityProfile } from "./profiles.js";
+import { ASSISTANT_RELEASE } from "./assistant-release.generated.js";
 
 export interface HttpServerOptions {
   port?: number;
@@ -44,6 +46,7 @@ export interface HttpServerOptions {
 
 export interface CreateHttpAppOptions extends HttpServerOptions {
   verifier?: OAuthTokenVerifier;
+  assistantVerifier?: OAuthTokenVerifier;
   oauthMetadata?: OAuthMetadata;
   authConfig?: HostedAuthConfig;
   baseConfig?: ExtrovertConfig;
@@ -91,7 +94,7 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
     const requestId = randomUUID();
     res.setHeader("X-Request-Id", requestId);
     res.once("finish", () => {
-      if (req.path === "/mcp" && res.statusCode >= 400) {
+      if (["/mcp", ASSISTANT_PROFILE.resource_path].includes(req.path) && res.statusCode >= 400) {
         // Never log headers, callback URLs, bearer tokens or request bodies.
         process.stderr.write(`${JSON.stringify({ event: "mcp_connection_failed", request_id: requestId, status: res.statusCode, method: req.method })}\n`);
       }
@@ -99,20 +102,40 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
     next();
   });
 
-  const handler = createMcpHandler(
+  const makeHandler = (profile: CapabilityProfile) => createMcpHandler(
     ({ authInfo }) => {
       const apiToken = authInfo?.extra?.apiToken;
       const config = configForRequest(baseConfig, typeof apiToken === "string" ? apiToken : authInfo?.token);
       const client = new ExtrovertClient(config);
-      return createExtrovertServer({ config, client }).server;
+      return createExtrovertServer({ config, client, profile }).server;
     },
     {
       legacy: "stateless",
-      onerror: (error) => process.stderr.write(`extrovert-mcp: protocol error: ${error.message}\n`),
+      onerror: (error) => process.stderr.write(profile === "assistant" ? "extrovert-mcp: assistant protocol error\n" : `extrovert-mcp: protocol error: ${error.message}\n`),
     },
   );
+  const handler = makeHandler("full");
+  const assistantHandler = makeHandler("assistant");
   const nodeHandler = toNodeHandler(handler, {
     onerror: (error) => process.stderr.write(`extrovert-mcp: HTTP adapter error: ${error.message}\n`),
+  });
+  const assistantNodeHandler = toNodeHandler(assistantHandler, {
+    onerror: () => process.stderr.write("extrovert-mcp: assistant HTTP adapter error\n"),
+  });
+
+  const challenge = env.EXTROVERT_OPENAI_APPS_CHALLENGE;
+  if (challenge !== undefined && challenge !== "" && (challenge.length > 4096 || /\s/.test(challenge))) {
+    throw new Error("EXTROVERT_OPENAI_APPS_CHALLENGE must contain one non-whitespace token (at most 4096 characters)");
+  }
+  app.get("/.well-known/openai-apps-challenge", (_req, res) => {
+    if (!challenge) { res.sendStatus(404); return; }
+    res.setHeader("Cache-Control", "no-store");
+    res.type("text/plain").send(challenge);
+  });
+
+  app.get("/.well-known/assistant-agent-contract.json", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ...ASSISTANT_RELEASE, capability_profile: "assistant", tools: ASSISTANT_TOOL_NAMES, guidance: ASSISTANT_INSTRUCTIONS.split("\n") });
   });
 
   // Public, bounded discovery. Never include caller identity or credentials.
@@ -136,6 +159,9 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
   });
 
   if (authEnabled && authConfig && verifier && oauthMetadata) {
+    const assistantResource = new URL(ASSISTANT_PROFILE.resource_path, authConfig.resourceUrl);
+    const assistantAuthConfig = { ...authConfig, resourceUrl: assistantResource, scopesSupported: ["extrovert:connect"] };
+    const assistantVerifier = options.assistantVerifier ?? createHostedTokenVerifier(assistantAuthConfig, baseConfig.apiBaseUrl, false);
     app.use(
       mcpAuthMetadataRouter({
         oauthMetadata,
@@ -144,6 +170,21 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
         scopesSupported: authConfig.scopesSupported,
         resourceName: "Extrovert MCP",
       }),
+    );
+    app.use(mcpAuthMetadataRouter({
+      oauthMetadata,
+      resourceServerUrl: assistantResource,
+      serviceDocumentationUrl: authConfig.serviceDocumentationUrl,
+      scopesSupported: assistantAuthConfig.scopesSupported,
+      resourceName: "Extrovert Assistant",
+    }));
+    app.all(
+      ASSISTANT_PROFILE.resource_path,
+      requireBearerAuth({
+        verifier: assistantVerifier,
+        resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(assistantResource),
+      }),
+      (req: Request, res: Response) => { void assistantNodeHandler(req, res, req.body); },
     );
     app.all(
       "/mcp",
@@ -161,7 +202,7 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
     });
   }
 
-  return { app, handler, authEnabled, close: () => handler.close() };
+  return { app, handler, authEnabled, close: async () => { await Promise.all([handler.close(), assistantHandler.close()]); } };
 }
 
 export async function runHttp(options: HttpServerOptions = {}): Promise<void> {

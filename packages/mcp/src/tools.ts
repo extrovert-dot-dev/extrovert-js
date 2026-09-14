@@ -1,3 +1,4 @@
+import type { QueuedSendResult } from "./types.js";
 /**
  * Extrovert MCP tool definitions (spec §8).
  *
@@ -16,8 +17,12 @@
 import { withReviewWorkflow } from "./review-workflow.js";
 import { createHash } from "node:crypto";
 import { renderDomain, domainResult } from "./domain-presentation.js";
+import { renderAttachmentContent } from "./attachment-presentation.js";
 import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
+import { ASSISTANT_INSTRUCTIONS, ASSISTANT_TOOL_NAMES, excludedProfileFields, profileAllowsTool, profileDescription, type CapabilityProfile } from "./profiles.js";
+import { assistantIdentity, assistantInbox, assistantDomain, assistantDomainEvents } from "./assistant-results.js";
+import { ASSISTANT_RELEASE } from "./assistant-release.generated.js";
 
 import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
@@ -72,6 +77,7 @@ interface ToolContext {
   client: ExtrovertClient;
   config: ExtrovertConfig;
   signal?: AbortSignal;
+  profile?: CapabilityProfile;
 }
 
 type ZodRawShape = Record<string, z.ZodType>;
@@ -97,7 +103,7 @@ interface ToolSpec<Shape extends ZodRawShape> {
 interface RegisterableTool {
   name: string;
   register: (server: McpServer, ctx: ToolContext) => void;
-  describe: () => Record<string, unknown>;
+  describe: (profile?: CapabilityProfile) => Record<string, unknown>;
   invoke: (args: unknown, ctx: ToolContext) => Promise<ToolResult>;
 }
 
@@ -108,18 +114,35 @@ interface RegisterableTool {
  */
 function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): RegisterableTool {
   const inputSchema = spec.strictInput ? z.strictObject(spec.inputSchema) : z.object(spec.inputSchema);
+  const assistantShape = Object.fromEntries(Object.entries(spec.inputSchema).filter(([field]) => !excludedProfileFields("assistant", spec.name).includes(field))) as Shape;
+  if (spec.name === "wait_for_email") {
+    Object.assign(assistantShape, { timeout_ms: z.number().int().min(1000).max(50_000).default(45_000).describe("Bounded wait budget in milliseconds (default 45s, maximum 50s). A timeout is not proof no message will arrive; resume when needed.") });
+  }
+  if (spec.name === "list_inboxes") {
+    Object.assign(assistantShape, { project: z.string().optional().describe("Optional explicit project selector; must stay within this connection's granted reach. Omit to use the consented resources.") });
+  }
+  const assistantSchema = z.strictObject(assistantShape);
+  // HTTP is an implementation detail: bounded private reads are closed-world.
+  // A send or approval can be irreversible even when another policy queues it.
+  const irreversible = ["send_email", "reply_email", "forward_email", "reviewer_decide"];
+  const annotations = { ...spec.annotations,
+    ...(spec.annotations.readOnlyHint ? { openWorldHint: false } : {}),
+    ...(irreversible.includes(spec.name) ? { destructiveHint: true } : {}),
+  };
+  const schemaFor = (profile: CapabilityProfile = "full") => profile === "assistant" ? assistantSchema : inputSchema;
   const invoke = (input: unknown, ctx: ToolContext): Promise<ToolResult> => ctx.client.withStorageWarnings(async () => {
     try {
-      const args = inputSchema.parse(input);
+      if (!profileAllowsTool(ctx.profile ?? "full", spec.name)) throw new Error("Tool unavailable in this connection.");
+      const args = schemaFor(ctx.profile).parse(input);
       return withReviewWorkflow(spec.name, args as Record<string, unknown>, await spec.handler(args, ctx));
-    } catch (err) { return toErrorResult(err); }
-  });
+    } catch (err) { return toErrorResult(err, ctx.profile); }
+  }, ctx.profile);
   return {
     name: spec.name,
-    describe: () => ({ name: spec.name, description: spec.description, inputSchema: z.toJSONSchema(inputSchema), annotations: spec.annotations }),
+    describe: (profile = "full") => ({ name: spec.name, title: spec.title, description: profileDescription(profile, spec.name, spec.description), inputSchema: z.toJSONSchema(schemaFor(profile), { io: "input" }), annotations }),
     invoke,
     register(server, ctx) {
-      server.registerTool(spec.name, { title: spec.title, description: spec.description, inputSchema, annotations: spec.annotations },
+      server.registerTool(spec.name, { title: spec.title, description: profileDescription(ctx.profile ?? "full", spec.name, spec.description), inputSchema: schemaFor(ctx.profile), annotations },
         async (args: z.output<z.ZodObject<Shape>>, extra) => invoke(args, { ...ctx, signal: extra.mcpReq.signal }));
     },
   };
@@ -271,7 +294,7 @@ function renderHimalayaConfig(c: MailboxCredentials, accountName?: string): stri
   ].join("\n");
 }
 
-function renderInbox(inbox: Inbox): string {
+function renderInbox(inbox: Inbox, profile: CapabilityProfile = "full"): string {
   const sender = inbox.sender_verified === true ? "sender verified"
     : inbox.sender_verified === false ? "sender not verified" : "sender status unavailable";
   const domain = inbox.domain || inbox.address.split("@")[1] || "unavailable";
@@ -299,12 +322,12 @@ function renderInbox(inbox: Inbox): string {
   if (inbox.human_email_review) {
     const h = inbox.human_email_review;
     lines.push(`human-recipient review exception: ${h.enabled && h.available ? "enabled" : "off or unavailable"}; exactly one To recipient: ${h.verified_email ?? "unavailable"}; no Cc/Bcc or aliases. Writing rules, intent and send limits still apply. Other recipients keep their usual review policy. Protected signup practice still requires review.`);
-    lines.push(`Human setting (default off): ${h.settings_url}. Ordinary agents cannot enable it. Do not repeatedly prompt the human to change it.`);
+    if (profile === "full") lines.push(`Human setting (default off): ${h.settings_url}. Ordinary agents cannot enable it. Do not repeatedly prompt the human to change it.`);
   }
   if (inbox.internal_email_review) {
     const v = inbox.internal_email_review;
     lines.push(`Internal email review exceptions: project ${v.project?.effective ? "enabled" : "off or unavailable"}; organization ${v.organization.enabled ? "enabled" : "off"}. Every To/Cc/Bcc recipient must resolve to an inbox in the sender's exact enabled project or organization. Shared domains, aliases, other organizations, and mixed external recipients do not qualify. Writing rules, intent, send limits, and protected signup review still apply. This grants no access to other inboxes.`);
-    lines.push(`Settings (ordinary agents and project managers cannot change these): ${v.project?.settings_url ?? v.organization.settings_url}. Explain when relevant; do not repeatedly prompt for enablement. Submit normally and follow the server's sent or queued result.`);
+    if (profile === "full") lines.push(`Settings (ordinary agents and project managers cannot change these): ${v.project?.settings_url ?? v.organization.settings_url}. Explain when relevant; do not repeatedly prompt for enablement. Submit normally and follow the server's sent or queued result.`);
   }
   const metaKeys = inbox.metadata ? Object.keys(inbox.metadata) : [];
   if (metaKeys.length) {
@@ -429,7 +452,8 @@ function reviewHandoff(review: { review_path?: string }): string {
 }
 
 function renderSendOutcome(verb: string, result: SendEmailResult | ReplyEmailResult): string {
-  if ("kind" in result) {
+  if (isQueuedSend(result)) return renderQueuedSend(result);
+  if ("kind" in result && result.kind === "queued_for_review") {
     return [
       `Queued for human review: NOT sent.`,
       reviewHandoff(result.review),
@@ -439,18 +463,20 @@ function renderSendOutcome(verb: string, result: SendEmailResult | ReplyEmailRes
       `Next: monitor it with wait_for_review_event / list_review_events until a \`sent\` or \`send_failed\` event arrives.`,
     ].join("\n");
   }
+  const outcome = providerAccepted(result) ? verb : "Submission recorded; provider acceptance is not yet confirmed";
   const review = result.review_id ? `\nreview: ${result.review_id}` : "";
   if ("status" in result) {
-    return `${verb} (policy allows direct send).\nmessage_id: ${result.message_id}${review}${result.submission_id ? `\nsubmission_id: ${result.submission_id} (get_submission to check transport status)` : ""}`;
+    return `${outcome}.\nmessage_id: ${result.message_id}${review}${result.submission_id ? `\nsubmission_id: ${result.submission_id} (get_submission to check transport status)` : ""}`;
   }
-  return `${verb} (policy allows direct send).\n${renderSendResult(result)}`;
+  return `${outcome}.\n${renderSendResult(result)}`;
 }
 
 /** Render the discriminated outcome of a Review Loop submit (queued OR sent). */
 function renderSubmitResult(r: SubmitForReviewResult): string {
+  if (isQueuedSend(r)) return renderQueuedSend(r);
   if (r.kind === "sent") {
     const review = r.review?.id ? `\nreview: ${r.review.id}` : "";
-    return `Sent.\nmessage_id: ${r.message.id}${
+    return `${providerAccepted(r) ? "Provider accepted." : "Submission recorded; check provider acceptance with get_submission."}\nmessage_id: ${r.message.id}${
       r.message.thread_id ? ` · thread: ${r.message.thread_id}` : ""
     }${review}`;
   }
@@ -808,7 +834,8 @@ const agentContext = defineTool({
   description: "Read-only freshness check on first Extrovert use each session, after an hour, and after tool/schema errors. Returns the live hosted release, skill digests, signup availability and current guides. Does not update files, authenticate, or widen permissions. Read the returned live guide before relying on installed workflow details.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (_args, { client }) => {
+  handler: async (_args, { client, profile }) => {
+    if (profile === "assistant") return ok(ASSISTANT_INSTRUCTIONS, { ...ASSISTANT_RELEASE, capability_profile: "assistant", tools: ASSISTANT_TOOL_NAMES, guidance: ASSISTANT_INSTRUCTIONS.split("\n") });
     const context = await client.agentContext();
     return ok([
       `Extrovert ${context.release_version} (${context.channel}). Signup: ${context.signup.status}.`,
@@ -829,8 +856,12 @@ const whoami = defineTool({
     "Ordinary mail permissions do not grant policy changes; explicit Full account control enables customer administration through the administrative action tools.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (_args, { client }) => {
+  handler: async (_args, { client, profile }) => {
     const me: WhoAmI = await client.whoami();
+    if (profile === "assistant") {
+      const identity = assistantIdentity(me);
+      return ok(`Connection identity verified. Use list_inboxes to check the intended inbox access. Resource reach and actions are independent; refresh does not extend the grant deadline.\n${JSON.stringify(identity, null, 2)}`, identity);
+    }
     const pending = me.scopes.length === 1 && me.scopes[0] === "signup:verify";
     return ok((pending ? "" : "Agent connected. ") + formatWhoAmI(me), me as unknown as Record<string, unknown>);
   },
@@ -874,8 +905,8 @@ const createInbox = defineTool({
       ),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const inbox = await client.createInbox({
+  handler: async (args, { client, profile }) => {
+    let inbox = await client.createInbox({
       username: args.username,
       domain: args.domain,
       display_name: args.display_name,
@@ -884,7 +915,8 @@ const createInbox = defineTool({
       project_id: args.project_id,
       client_id: args.client_id,
     });
-    return ok(`Inbox created.\n${renderInbox(inbox)}`, inbox as unknown as Record<string, unknown>);
+    if (profile === "assistant") inbox = assistantInbox(inbox);
+    return ok(`Inbox created.\n${renderInbox(inbox, profile)}`, inbox as unknown as Record<string, unknown>);
   },
 });
 
@@ -918,7 +950,7 @@ const listInboxes = defineTool({
       ),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
+  handler: async (args, { client, profile }) => {
     const page: Page<Inbox> = await client.listInboxes({
       limit: args.limit,
       cursor: args.cursor,
@@ -926,8 +958,9 @@ const listInboxes = defineTool({
       project: args.project,
       wildcard: args.wildcard,
     });
+    if (profile === "assistant") page.items = page.items.map(assistantInbox);
     const text = page.items.length
-      ? page.items.map(renderInbox).join("\n\n")
+      ? page.items.map(inbox => renderInbox(inbox, profile)).join("\n\n")
       : "No inboxes matched this connection’s scope and filters. This does not establish that the account has no inboxes. Use whoami to inspect this connection.";
     const continuation = page.next_cursor ? `\n\nMore inboxes are available. Call list_inboxes with the same filters and cursor=${JSON.stringify(page.next_cursor)}.` : "";
     return ok(`${page.items.length} inbox(es) on this page.\n\n${text}${continuation}`, {
@@ -945,9 +978,10 @@ const getInbox = defineTool({
   description: "Fetch one inbox by id or address (includes its metadata).",
   inputSchema: { inbox: inboxRef },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const inbox = await client.getInbox(args.inbox);
-    return ok(renderInbox(inbox), inbox as unknown as Record<string, unknown>);
+  handler: async (args, { client, profile }) => {
+    const result = await client.getInbox(args.inbox);
+    const inbox = profile === "assistant" ? assistantInbox(result) : result;
+    return ok(renderInbox(inbox, profile), inbox as unknown as Record<string, unknown>);
   },
 });
 
@@ -985,15 +1019,16 @@ const updateInbox = defineTool({
     project_id: projectAssertion,
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const inbox = await client.updateInbox(args.inbox, {
+  handler: async (args, { client, profile }) => {
+    let inbox = await client.updateInbox(args.inbox, {
       display_name: args.display_name,
       inbound_webhook_url: args.inbound_webhook_url,
       daily_send_limit: args.daily_send_limit,
       metadata: args.metadata,
       project_id: args.project_id,
     });
-    return ok(`Inbox updated.\n${renderInbox(inbox)}`, inbox as unknown as Record<string, unknown>);
+    if (profile === "assistant") inbox = assistantInbox(inbox);
+    return ok(`Inbox updated.\n${renderInbox(inbox, profile)}`, inbox as unknown as Record<string, unknown>);
   },
 });
 
@@ -2428,10 +2463,7 @@ const getAttachment = defineTool({
       message_id: args.message_id,
       attachment_id: args.attachment_id,
     });
-    const text = [
-      `Downloaded ${att.filename || "attachment"} (${att.content_type}).`,
-      `Bytes are base64 in structuredContent.content_base64.`,
-    ].join("\n");
+    const text = renderAttachmentContent(att);
     return ok(text, att as unknown as Record<string, unknown>);
   },
 });
@@ -2557,6 +2589,18 @@ const getSubmission = defineTool({
     const result = await client.getSubmission(args);
     const counts = Object.entries(result.transport).filter(([, count]) => count > 0).map(([state, count]) => `${count} ${state}`).join(", ");
     return ok(`Submission ${result.submission_id}: ${counts || "status pending"}. Sent copy: ${result.sent_copy_status}. This status check does not send mail.`, result as unknown as Record<string, unknown>);
+  },
+});
+
+const listOutbox = defineTool({
+  name: "list_outbox",
+  title: "List durable outbound work",
+  description: "List bounded outbound work accepted for an inbox. `sent` is true only after provider acceptance; checking_status is fenced and must not be resent.",
+  inputSchema: { inbox: inboxRef, before: z.string().optional(), limit: z.number().int().min(1).max(100).optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  handler: async (args, { client }) => {
+    const result = await client.listOutbox(args);
+    return ok(result.items.length ? result.items.map((i) => `${i.submission_id}: ${i.status}${i.sent ? " (provider accepted)" : ""}`).join("\n") : "No durable outbound work.", result as unknown as Record<string, unknown>);
   },
 });
 
@@ -3111,8 +3155,9 @@ const listDomains = defineTool({
     diagnostics: z.boolean().optional().describe("Include low-level DNS and verification details for troubleshooting only."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
+  handler: async (args, { client, profile }) => {
     const page: Page<Domain> = await client.listDomains({ page: args.page, limit: args.limit });
+    if (profile === "assistant") page.items = page.items.map(assistantDomain);
     const text = page.items.length ? page.items.map((d) => renderDomain(d, args.diagnostics)).join("\n\n") : "No domains onboarded.";
     return ok(`${page.items.length} domain(s).\n\n${text}`, { items: page.items.map((d) => domainResult(d, args.diagnostics)), total: page.total, next_cursor: page.next_cursor });
   },
@@ -3131,8 +3176,9 @@ const getDomain = defineTool({
     diagnostics: z.boolean().optional().describe("Include low-level DNS and verification details for troubleshooting only."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const domain = await client.getDomain(args.domain);
+  handler: async (args, { client, profile }) => {
+    const result = await client.getDomain(args.domain);
+    const domain = profile === "assistant" ? assistantDomain(result) : result;
     return ok(renderDomain(domain, args.diagnostics), domainResult(domain, args.diagnostics));
   },
 });
@@ -3149,8 +3195,9 @@ const listDomainEvents = defineTool({
     limit: z.number().int().min(1).max(100).optional(),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const page = await client.listDomainEvents(args.domain, { after: args.after, limit: args.limit });
+  handler: async (args, { client, profile }) => {
+    const result = await client.listDomainEvents(args.domain, { after: args.after, limit: args.limit });
+    const page = profile === "assistant" ? assistantDomainEvents(result) : result;
     const text = page.items.length ? page.items.map((e) => `${e.created_at}: ${e.domain} — ${e.summary}`).join("\n\n") : "No new domain updates. Use get_domain for the current readiness result.";
     return ok(text, page as unknown as Record<string, unknown>);
   },
@@ -3166,8 +3213,9 @@ const waitForDomainTool = defineTool({
     timeout_seconds: z.number().int().min(0).max(50).optional().describe("Default 45. Zero performs one status check."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
+  handler: async (args, { client, profile }) => {
     const result = await waitForDomain((signal) => client.getDomain(args.domain, signal), { timeout_seconds: args.timeout_seconds });
+    if (profile === "assistant") result.domain = assistantDomain(result.domain);
     return ok(renderDomain(result.domain), { ...result, domain: domainResult(result.domain) });
   },
 });
@@ -3191,13 +3239,14 @@ const onboardDomain = defineTool({
     project_id: projectAssertion,
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const domain = await client.onboardDomain({
+  handler: async (args, { client, profile }) => {
+    let domain = await client.onboardDomain({
       domain: args.domain,
       mode: "ns_delegated",
       scope: args.scope,
       project_id: args.project_id,
     });
+    if (profile === "assistant") domain = assistantDomain(domain);
     return ok(renderDomain(domain), domainResult(domain));
   },
 });
@@ -3214,8 +3263,12 @@ const verifyDomain = defineTool({
     domain: z.string().min(1).describe("The domain to (re)verify."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const domain = await client.verifyDomain(args.domain);
+  handler: async (args, { client, profile }) => {
+    if (profile === "assistant" && (await client.getDomain(args.domain)).mode !== "ns_delegated") {
+      throw new ExtrovertApiError("This connection can verify delegated domains only. Use get_domain for current readiness.", 403, "forbidden_scope");
+    }
+    let domain = await client.verifyDomain(args.domain);
+    if (profile === "assistant") domain = assistantDomain(domain);
     return ok(renderDomain(domain), domainResult(domain));
   },
 });
@@ -3561,6 +3614,7 @@ const ALL_TOOLS = [
   searchThreads,
   getThread,
   getSubmission,
+  listOutbox,
   deleteMessage,
   deleteThread,
   batchUpdateMessages,
@@ -3599,6 +3653,11 @@ const ALL_TOOLS = [
 /** The set of tool names this server exposes (handy for tests/docs). */
 export const TOOL_NAMES: string[] = ALL_TOOLS.map((t) => t.name);
 
+/** Same profile-specific metadata and schemas used by runtime tools/list. */
+export function exportToolCatalog(profile: CapabilityProfile = "full"): Record<string, unknown>[] {
+  return ALL_TOOLS.filter(tool => profileAllowsTool(profile, tool.name)).map(tool => tool.describe(profile));
+}
+
 // The CLI uses the same schemas, handlers, and workflow guidance while a native
 // host is loading its MCP catalog. This is an in-process call, not a transport.
 const CLI_REVIEW_TOOLS = new Set(["whoami", "get_inbox", "list_inboxes", "list_reviews", "get_review", "get_review_turns", "get_review_feedback", "list_review_events", "wait_for_review_event", "ack_review_event", "post_review_chat", "submit_revision", "restamp_review", "list_categories", "get_category", "propose_category", "merge_categories", "get_rules", "learn_review_rule"]);
@@ -3611,7 +3670,7 @@ export function cliReviewTool(name: string): RegisterableTool {
 /** Register every Extrovert tool onto an MCP server instance. */
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   for (const tool of ALL_TOOLS) {
-    tool.register(server, ctx);
+    if (profileAllowsTool(ctx.profile ?? "full", tool.name)) tool.register(server, ctx);
   }
 }
 
@@ -3668,9 +3727,18 @@ function renderProblemFields(fields: ProblemField[] | undefined): string {
   return `\nDetails:\n${lines.join("\n")}`;
 }
 
-function toErrorResult(err: unknown): ToolResult {
+function toErrorResult(err: unknown, profile: CapabilityProfile = "full"): ToolResult {
   if (err instanceof ExtrovertApiError) {
     const detail = err.status ? ` (HTTP ${err.status}${err.code ? `, ${err.code}` : ""})` : "";
+    if (profile === "assistant") {
+      // API-authored diagnostics are a different trust boundary from emails.
+      // Never relay payment/checkout action links, including nested quota hints.
+      const serviceMessage = `${err.message}${renderProblemFields(err.problemErrors)}`;
+      const message = /checkout|purchas|upgrad|billing|payment|top.?up|\/admin\//i.test(serviceMessage)
+        ? "This action is unavailable with this connection or its existing entitlement. Inspect existing state before retrying an ambiguous result."
+        : serviceMessage.replace(/https?:\/\/[^\s)]+/g, "[service link omitted]");
+      return { content: [{ type: "text", text: `Extrovert error${detail}: ${message}` }], isError: true };
+    }
     return {
       content: [
         { type: "text", text: `Extrovert error${detail}: ${err.message}${renderQuotaDetails(err.details)}${renderProblemFields(err.problemErrors)}` },
@@ -3693,4 +3761,18 @@ function toErrorResult(err: unknown): ToolResult {
   }
   const message = err instanceof Error ? err.message : String(err);
   return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+}
+
+
+function renderQueuedSend(result: QueuedSendResult): string {
+  return `Queued for sending. Provider acceptance is pending.\nsubmission_id: ${result.submission_id}\nstatus_url: ${result.status_url}\nreconfirm_at: ${result.reconfirm_at}\nUse get_submission to follow this message. Do not create a replacement while its outcome is unresolved.`;
+}
+
+function isQueuedSend(result: object): result is QueuedSendResult {
+ return "sent" in result && result.sent === false && "status" in result && result.status === "queued";
+}
+
+function providerAccepted(result: { transport?: Partial<Record<string, number>> }): boolean {
+ const counts=result.transport;
+ return !!counts && (counts.accepted ?? 0)>0 && Object.entries(counts).every(([state,count])=>state==="accepted" || count===0);
 }

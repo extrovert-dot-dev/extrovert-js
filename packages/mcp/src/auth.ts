@@ -24,6 +24,7 @@ export interface ExtrovertTokenVerifierOptions {
   resourceUrl: URL;
   apiBaseUrl: string;
   fetch?: typeof fetch;
+  allowAgentKeys?: boolean;
 }
 
 /** Verify explicit connection grants and existing scoped Extrovert agent keys. */
@@ -32,16 +33,18 @@ export class ExtrovertTokenVerifier implements OAuthTokenVerifier {
   private readonly resourceUrl: URL;
   private readonly apiBaseUrl: string;
   private readonly doFetch: typeof fetch;
+  private readonly allowAgentKeys: boolean;
 
   constructor(options: ExtrovertTokenVerifierOptions) {
     this.exchangeSecret = options.exchangeSecret;
     this.resourceUrl = options.resourceUrl;
     this.apiBaseUrl = options.apiBaseUrl.replace(/\/+$/, "");
     this.doFetch = options.fetch ?? fetch;
+    this.allowAgentKeys = options.allowAgentKeys ?? true;
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    if (token.startsWith("pk_agent_")) return this.verifyAgentKey(token);
+    if (token.startsWith("pk_agent_") && this.allowAgentKeys) return this.verifyAgentKey(token);
     if (!token.startsWith("ev_access_")) {
       throw invalidToken("Reconnect through your MCP host to choose explicit access. Legacy sign-ins and API-only credentials cannot authenticate this resource.");
     }
@@ -59,6 +62,7 @@ export class ExtrovertTokenVerifier implements OAuthTokenVerifier {
           grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
           subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
           subject_token: token,
+          source_resource: this.resourceUrl.toString(),
           resource: this.apiBaseUrl,
         }).toString(),
         signal: controller.signal,
@@ -157,11 +161,13 @@ export function loadHostedAuthConfig(env: NodeJS.ProcessEnv = process.env): Host
 export function createHostedTokenVerifier(
   config: HostedAuthConfig,
   apiBaseUrl: string,
+  allowAgentKeys = true,
 ): ExtrovertTokenVerifier {
   return new ExtrovertTokenVerifier({
     exchangeSecret: config.exchangeSecret,
     resourceUrl: config.resourceUrl,
     apiBaseUrl,
+    allowAgentKeys,
   });
 }
 

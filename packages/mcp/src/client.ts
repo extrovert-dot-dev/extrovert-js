@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { MergeCategoriesRequest, MergeCategoriesResult } from "./types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ListWebhooksParams, ConnectionResourceSelection } from "./types.js";
@@ -17,6 +18,7 @@ import type { ListCategoriesParams } from "./types.js";
  */
 
 import type { ExtrovertConfig } from "./config.js";
+import type { CapabilityProfile } from "./profiles.js";
 import { buildAgentContext, fetchAgentContext, type AgentContext } from "./agent-context.js";
 import { FixtureStore, NotFoundError } from "./fixtures.js";
 import { keyTierFromRawKey } from "./types.js";
@@ -74,6 +76,7 @@ import type {
   Thread,
   ThreadDetail,
   Submission,
+  OutboxItem,
   VerifyResult,
   WaitForEmailResult,
   Webhook,
@@ -641,22 +644,26 @@ export class ExtrovertClient {
   private readonly storageWarnings = new AsyncLocalStorage<{ warning?: { threshold: number; used_bytes: number; limit_bytes: number; cleanup_url?: string; billing_url?: string }; key?: string }>();
   private readonly storageNotified = new Map<string, number>();
 
-  async withStorageWarnings<T extends { content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown> }>(run: () => Promise<T>): Promise<T> {
+  async withStorageWarnings<T extends { content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown> }>(run: () => Promise<T>, profile: CapabilityProfile = "full"): Promise<T> {
     return this.storageWarnings.run({}, async () => {
       const result = await run();
       const observation = this.storageWarnings.getStore();
       const warning = observation?.warning;
       if (!warning) return result;
-      const key = observation.key ?? "";
+      const key = `${profile}:${observation.key ?? ""}`;
       const previous = this.storageNotified.get(key) ?? 0;
-      const text = warning.threshold === 100
+      const text = profile === "assistant"
+        ? (warning.threshold === 100 ? "Inbox storage is full. Delete messages you no longer need; new mail is temporarily deferred." : `Inbox storage is ${warning.threshold}% full. Delete messages you no longer need.`)
+        : warning.threshold === 100
         ? "Inbox storage is full. Delete messages or ask your human to increase storage; new mail is temporarily deferred."
         : `Inbox storage is ${warning.threshold}% full. Delete messages you no longer need, or ask your human about more storage.`;
       if (warning.threshold > previous) {
         this.storageNotified.set(key, warning.threshold);
-        result.content.push({ type: "text", text: text + (warning.cleanup_url ? ` Review messages: ${warning.cleanup_url}` : "") + (warning.billing_url ? ` Storage options: ${warning.billing_url}` : "") });
+        result.content.push({ type: "text", text: text + (profile === "full" && warning.cleanup_url ? ` Review messages: ${warning.cleanup_url}` : "") + (profile === "full" && warning.billing_url ? ` Storage options: ${warning.billing_url}` : "") });
       }
-      result.structuredContent = { ...result.structuredContent, storage_warning: { ...warning, actions: ["delete_messages", "ask_human_to_increase_storage"] } };
+      result.structuredContent = { ...result.structuredContent, storage_warning: profile === "assistant"
+        ? { threshold: warning.threshold, used_bytes: warning.used_bytes, limit_bytes: warning.limit_bytes, actions: ["delete_messages"] }
+        : { ...warning, actions: ["delete_messages", "ask_human_to_increase_storage"] } };
       return result;
     });
   }
@@ -665,7 +672,7 @@ export class ExtrovertClient {
     const state = this.storageWarnings.getStore();
     if (!state || response.headers.get("x-extrovert-storage-status") !== "available") return;
     const threshold = Number(response.headers.get("x-extrovert-storage-threshold"));
-    if (threshold < 50) this.storageNotified.delete(key);
+    if (threshold < 50) { this.storageNotified.delete(`full:${key}`); this.storageNotified.delete(`assistant:${key}`); }
     if (threshold < 90) { state.warning = undefined; return; }
     if (!response.headers.has("x-extrovert-storage-used-bytes") || !response.headers.has("x-extrovert-storage-limit-bytes")) return;
     const used = Number(response.headers.get("x-extrovert-storage-used-bytes"));
@@ -959,6 +966,7 @@ export class ExtrovertClient {
    * refused with 422 `intent_required` and NOTHING is sent or queued.
    */
   async sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
+    input = retainOutboundKey(input);
     if (this.store) return this.store.sendEmail(input);
     const { inbox, client_id, ...body } = input;
     // `body` carries to/subject/text/html/cc/bcc/reply_to/headers and (when
@@ -983,6 +991,7 @@ export class ExtrovertClient {
    * bare reply with no intent is refused 422 `intent_required`.
    */
   async replyEmail(input: ReplyEmailInput): Promise<ReplyEmailResult> {
+    input = retainOutboundKey(input);
     if (this.store) {
       return this.store.replyEmail({
         inbox: input.inbox,
@@ -1019,6 +1028,7 @@ export class ExtrovertClient {
    * QUEUED, and one with no intent is refused 422 `intent_required`.
    */
   async forwardEmail(input: ForwardEmailInput): Promise<ReplyEmailResult> {
+    input = retainOutboundKey(input);
     if (this.store) {
       return this.store.forwardEmail({
         inbox: input.inbox,
@@ -1045,6 +1055,7 @@ export class ExtrovertClient {
    * Returns the discriminated §5.1 envelope (queued OR sent).
    */
   async submitForwardForReview(input: SubmitForwardForReviewInput): Promise<SubmitForReviewResult> {
+    input = retainOutboundKey(input);
     if (this.store) return this.store.submitForwardForReview(input);
     const { inbox, message_id, client_id, ...body } = input;
     return this.post<SubmitForReviewResult>(
@@ -1064,6 +1075,7 @@ export class ExtrovertClient {
    * `{kind:"sent"}` (200, policy-permitted direct/graduated path).
    */
   async submitForReview(input: SubmitForReviewInput): Promise<SubmitForReviewResult> {
+    input = retainOutboundKey(input);
     if (this.store) return this.store.submitForReview(input);
     const { inbox, client_id, ...body } = input;
     return this.post<SubmitForReviewResult>(
@@ -1079,6 +1091,7 @@ export class ExtrovertClient {
    * with mode/intent/category_id). Same routing/return contract as submitForReview.
    */
   async submitReplyForReview(input: SubmitReplyForReviewInput): Promise<SubmitForReviewResult> {
+    input = retainOutboundKey(input);
     if (this.store) return this.store.submitReplyForReview(input);
     const { inbox, client_id, ...body } = input;
     return this.post<SubmitForReviewResult>(
@@ -1595,6 +1608,11 @@ export class ExtrovertClient {
   async getSubmission(input: { inbox: string; submission_id: string }): Promise<Submission> {
     if (this.store) return this.store.getSubmission(input.inbox, input.submission_id);
     return this.get<Submission>(`/v1/inboxes/${encodeURIComponent(input.inbox)}/submissions/${encodeURIComponent(input.submission_id)}`);
+  }
+
+  async listOutbox(input: { inbox: string; before?: string; limit?: number }): Promise<{ items: OutboxItem[]; next_before?: string }> {
+    if (this.store) return this.store.listOutbox(input.inbox, input.before, input.limit);
+    return this.get<{ items: OutboxItem[]; next_before?: string }>(`/v1/inboxes/${encodeURIComponent(input.inbox)}/outbox`, { before: input.before, limit: input.limit });
   }
 
   /**
@@ -2135,6 +2153,8 @@ export class ExtrovertClient {
       }
     }
 
+    const outboundKey = method === "POST" && /\/(send|reply|forward)$/.test(path) ? headers["Idempotency-Key"] : undefined;
+    const retryIdentity = outboundKey ? ` Submission client_id: ${outboundKey}. Reuse only with the identical request.` : "";
     const storageKey = this.apiKey ?? "";
     let res: Response;
     let raw: string;
@@ -2150,7 +2170,7 @@ export class ExtrovertClient {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new ExtrovertApiError(
-        `Request to ${method} ${path} failed: ${reason}`,
+        `Request to ${method} ${path} failed: ${reason}${retryIdentity}`,
         0,
         "network_error",
       );
@@ -2162,7 +2182,9 @@ export class ExtrovertClient {
     const parsed = raw ? safeJsonParse(raw) : undefined;
 
     if (!res.ok) {
-      throw errorFromBody(res.status, res.statusText, parsed);
+      const error = errorFromBody(res.status, res.statusText, parsed);
+      if (outboundKey) error.message += retryIdentity;
+      throw error;
     }
 
     return parsed as T;
@@ -2304,4 +2326,13 @@ export { NotFoundError };
 
 function assertWebhookFixtureSelection(selection: ConnectionResourceSelection): void {
   if (selection.org_id || selection.project_id) throw new Error("Offline webhook fixtures do not simulate organization/project selection; use live credentials for scoped checks.");
+}
+
+
+const outboundKeys = new WeakMap<object, string>();
+function retainOutboundKey<T extends { client_id?: string }>(input: T): T {
+ const key=input.client_id || outboundKeys.get(input) || randomUUID();
+ outboundKeys.set(input,key);
+ if(Object.isExtensible(input) && !input.client_id) input.client_id=key;
+ return {...input,client_id:key};
 }

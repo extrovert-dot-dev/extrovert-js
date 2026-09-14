@@ -34,6 +34,7 @@ import type {
   Thread,
   ThreadDetail,
   Submission,
+  OutboxItem,
   UpdateInboxRequest,
   WaitForEmailRequest,
   WaitForEmailResult,
@@ -251,6 +252,11 @@ export class InboxHandle {
   /** Check an accepted submission without sending it again. */
   getSubmission(submissionId: string, signal?: AbortSignal): Promise<Submission> {
     return this.transport.getSubmission(this.ref, submissionId, signal);
+  }
+
+  /** List durably accepted outbound work; local custody is not provider acceptance. */
+  outbox(params: { before?: string; limit?: number } = {}, signal?: AbortSignal): Promise<{ items: OutboxItem[]; next_before?: string }> {
+    return this.transport.listInboxOutbox(this.ref, params, signal);
   }
 
   /**

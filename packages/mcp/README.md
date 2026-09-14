@@ -87,6 +87,15 @@ annotations (`readOnlyHint`, `destructiveHint`, …) so hosts can present and ga
 
 ## Access and delegation
 
+This source supports two hosted profiles sharing the same implementation. `/mcp`
+and local stdio retain the complete toolset. `/assistant/mcp` is the OAuth-only
+directory candidate: 69 email, review, writing-rule, inbox, and owned-domain tools,
+with selected-inbox/project consent and existing entitlements. It cannot purchase,
+upgrade plans, export credentials, configure webhooks, or perform broad account
+administration. The profile is enforced by the API grant as well as tool discovery.
+Availability in a public directory is a separate release/review step, not implied
+by this source package. Skills installation does not complete host-owned OAuth.
+
 Hosted OAuth uses an explicit connection grant. Choose Personal assistant or a
 Dedicated agent, then choose selected inboxes, a project, an organization, or Full
 account control. Resource reach and permitted actions are separate. Current human
