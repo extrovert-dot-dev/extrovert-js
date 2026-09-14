@@ -1,4 +1,6 @@
 import type { ListWebhooksParams, ConnectionResourceSelection } from "../models.js";
+import { observeUntil, type ObserverWaitOptions } from "../observer-wait.js";
+import { readThreadByMessage } from "../thread-workflow.js";
 /**
  * Resource namespaces: `extrovert.inboxes`, `extrovert.messages`, `extrovert.threads`,
  * `extrovert.webhooks`, `extrovert.contactLists`, `extrovert.domains`. Each is a thin,
@@ -273,6 +275,15 @@ export class Threads {
   /** Fetch one thread (+ its messages, oldest-first) by id under its owning inbox address. */
   get(inbox: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail> {
     return this.ctx.transport.getThread(inbox, threadId, signal);
+  }
+
+  /** Resolve a message's complete conversation without copying its opaque thread ID. */
+  getByMessage(inbox: string, messageId: string, signal?: AbortSignal): Promise<ThreadDetail> {
+    return readThreadByMessage({
+      inbox: s => this.ctx.transport.getInbox(inbox, s),
+      message: (id, s) => this.ctx.transport.getMessage(id, s),
+      thread: (id, s) => this.ctx.transport.getThread(inbox, id, s),
+    }, messageId, signal);
   }
 
   /** Reply in a thread; recipients and RFC reply headers are derived server-side. */
@@ -660,6 +671,16 @@ export class ReviewEvents {
   /** Long-poll for the next review event (empty on timeout). */
   wait(params: WaitForReviewEventParams = {}, signal?: AbortSignal): Promise<ReviewEventsResult> {
     return this.ctx.transport.waitForReviewEvent(params, signal);
+  }
+
+  /** Watch across empty heartbeats. Returns feedback or an outcome, never handles or acknowledges it. */
+  async watch(params: ListReviewEventsParams = {}, options: ObserverWaitOptions = {}): Promise<ReviewEventsResult & { observer_status: "attention_available" | "no_pending_reviews" | "deadline_reached" }> {
+    const result = await observeUntil(
+      (seconds, signal) => seconds === 0 ? this.list(params, signal) : this.wait({ ...params, wait_seconds: seconds }, signal),
+      value => value.events.length > 0 || value.pending_reviews === 0,
+      options,
+    );
+    return { ...result, observer_status: result.events.length ? "attention_available" : result.pending_reviews === 0 ? "no_pending_reviews" : "deadline_reached" };
   }
 
   /** Advance the per-review cursor(s) and/or mark broadcast nudges done. */

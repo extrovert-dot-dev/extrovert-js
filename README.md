@@ -2,8 +2,8 @@
 
 Public prerelease source for Extrovert's JavaScript integration surfaces:
 
-- [`@extrovert.dev/sdk`](./packages/sdk) — typed TypeScript client for the Extrovert REST API.
-- [`@extrovert.dev/mcp`](./packages/mcp) — MCP SDK v2 server with stdio and stateless Streamable HTTP transports.
+- [`@extrovert.dev/sdk`](./packages/sdk) - typed TypeScript client for the Extrovert REST API.
+- [`@extrovert.dev/mcp`](./packages/mcp) - MCP SDK v2 server with stdio and stateless Streamable HTTP transports.
 
 Both packages share one provisional contract version. Install the dogfood releases through the
 explicit `next` tag:
@@ -17,6 +17,18 @@ The MCP package installs `extrovert-mcp` for MCP transports and the `extrovert` 
 authentication, inbox reads, review status, and reviewed sends. OAuth-capable clients can connect directly to the production protected resource
 at `https://mcp.extrovert.dev/mcp`; the browser flow avoids putting an Extrovert key in client config.
 
+Remote MCP requires no local SDK or compiler. Use the published CLI when Node >=20
+is already available; no TypeScript compiler, pnpm, Git, or Docker is needed at runtime.
+For an agent with secure HTTP execution only, use the
+[HTTPS recipes](https://docs.extrovert.dev/quickstart/https/).
+
+`extrovert review watch --wait-seconds 86400 --json` waits quietly across short
+requests. The SDK equivalents are `client.reviews.events.watch()` and
+`client.waitForActivation()`; `client.tasks` exposes durable observer handles.
+Observer completion is not approval, credential exchange, or a sent message.
+[Waiting and resumption](https://docs.extrovert.dev/mcp/waiting/) explains the
+optional MCP Tasks extension and fallback behavior.
+
 Choose [Connections and access](https://docs.extrovert.dev/concepts/connections-and-access/) for the
 job: selected inboxes for existing mail, project/organization reach for future resources, or explicit
 Full account control for explicitly requested account administration. Ordinary email setup
@@ -29,8 +41,8 @@ and the SDK provides typed `client.administration.call`. Start with `whoami`, th
 `adminMe` is only for Full account control; project managers use their fixed project and granted actions.
 Use API-audience credentials for the SDK/local CLI, and hosted MCP OAuth in the host; they are distinct.
 
-For a manager that creates its own team, authorize **Project → Project manager** in
-OAuth, or choose **Credentials → API keys → Create project manager key** in the
+For a manager that creates its own team, authorize **Project -> Project manager** in
+OAuth, or choose **Credentials -> API keys -> Create project manager key** in the
 console. The console key requires human organization admin/owner authority and no
 prior OAuth connection. Copy it into `EXTROVERT_API_KEY` for API/SDK/local MCP use;
 hosted MCP uses OAuth. Sending is opt-in and must be included if workers need it.
@@ -47,7 +59,7 @@ Documentation: [docs.extrovert.dev](https://docs.extrovert.dev)
 ## Email your human without review
 
 **Skip review for emails to you** starts off. The account human can enable it in
-**Review → Auto-send**. It applies only when the sole recipient is their displayed
+**Review -> Auto-send**. It applies only when the sole recipient is their displayed
 verified email: exactly one To entry, no Cc or Bcc, and no aliases. Writing rules and
 sending limits still apply. Messages to anyone else keep their existing review policy,
 including any separately enabled category auto-send. Signup practice still requires review.
@@ -63,6 +75,6 @@ This repository is a generated public release mirror. Cross-surface contract che
 skill evaluations run before each export; this repository then rebuilds and packs both public npm
 artifacts. Future publishes use npm trusted publishing through `.github/workflows/publish.yml`.
 
-MIT © Message Science LLC.
+MIT (c) Message Science LLC.
 
 Optional project and organization review exceptions let agents email one another when every recipient belongs to the enabled scope. Both start off, grant no inbox access, and preserve writing rules and sending limits. [Scope, settings, and API instructions](https://docs.extrovert.dev/review-loop/agent-contract/#email-between-agents-without-review).

@@ -5,13 +5,14 @@
  * to stderr only; stdout is reserved for the JSON-RPC stream.
  */
 
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { ExtrovertClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { createCredentialStore } from "./credentials.js";
 import { createLocalCredentialProvider } from "./local-oauth.js";
 import { createExtrovertServer } from "./server.js";
+import { taskAwareTransport } from "./agent-tasks.js";
 
 export async function runStdio(): Promise<void> {
   const credentialStore = createCredentialStore();
@@ -49,17 +50,17 @@ export async function runStdio(): Promise<void> {
           return { location: credentialStore.paths.credential };
         },
   });
-  const { server } = createExtrovertServer({ config, client });
-
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const runtime = serveStdio(({ era }) => createExtrovertServer({
+    config, client, tasksEnabled: era === "modern" && !config.mock,
+  }).server, { transport: config.mock ? transport : taskAwareTransport(transport, { client, profile: "full" }) });
 
   const auth = config.apiKey ? "credential loaded; call whoami to verify access" : "ready for enrollment or an existing agent key";
   const mode = config.mock ? "offline fixtures" : `live API ${config.apiBaseUrl} · ${auth}`;
   process.stderr.write(`extrovert-mcp: stdio transport ready - ${mode}\n`);
 
   const shutdown = async (): Promise<void> => {
-    await server.close().catch(() => {});
+    await runtime.close().catch(() => {});
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());

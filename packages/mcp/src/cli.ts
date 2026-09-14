@@ -6,7 +6,8 @@ import { ExtrovertApiError, ExtrovertClient, renderQuotaDetails } from "./client
 import { loadConfig, SERVER_VERSION } from "./config.js";
 import { AGENT_CONTEXT_URL, AGENT_GUIDE_URL, buildAgentContext, fetchAgentContext } from "./agent-context.js";
 import { renderDomain } from "./domain-presentation.js";
-import { cliReviewTool } from "./tools.js";
+import { cliReviewTool, formatReviewEventsResult } from "./tools.js";
+import { observeUntil } from "./observer-wait.js";
 import { waitForActivation } from "./activation-wait.js";
 import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
@@ -45,7 +46,7 @@ Usage:
   extrovert domain recheck <domain> [--json]
   extrovert domain connect <domain> [--scope project] [--json]
   extrovert signup --human-email <email> [--username <name>] [--display-name <name>]
-  extrovert verify [--otp <code>] [--wait-seconds <0-300>]
+  extrovert verify [--otp <code>] [--wait-seconds <0..86400>]
   extrovert whoami [--json]
   extrovert auth whoami [--json]
   extrovert admin actions [--search <text>] [--mode read|change] [--limit <n>] [--cursor <cursor>]
@@ -58,6 +59,7 @@ Usage:
   extrovert message get <message-id> [--source] [--json]
   extrovert review list [--state <state>] [--limit <n>] [--json]
   extrovert review status <review-id> [--json]
+  extrovert review watch [--review-id <id>] [--wait-seconds <0..86400>] [--json]
   extrovert send --inbox <address> --to <email> --subject <text> --text <body>
                  --summary <reviewer-intent> [--client-id <id>] [--rules-reviewed]
 
@@ -406,7 +408,7 @@ async function authCommand(args: string[], context: CliContext): Promise<number>
       return whoamiCommand(args.slice(1), context);
     case "login": {
       const token = (context.env.EXTROVERT_API_KEY ?? "").trim() || (await readSecret(context, "API credential: "));
-      if (!isPersistentAPICredential(token)) throw new CliUsageError("Expected a scoped pk_agent_… key or independent ev_credential_… credential. Hosted OAuth access/refresh tokens remain managed by the host.");
+      if (!isPersistentAPICredential(token)) throw new CliUsageError("Expected a scoped pk_agent_... key or independent ev_credential_... credential. Hosted OAuth access/refresh tokens remain managed by the host.");
       const client = clientForKey(token, context, context.env.EXTROVERT_API_BASE_URL);
       const me = await client.whoami();
       context.store.save(token, clientBaseUrl(token, context, context.env.EXTROVERT_API_BASE_URL));
@@ -520,7 +522,7 @@ async function browserAuthCommand(args: string[], context: CliContext): Promise<
     const local = listener?.wait(request, controller.signal).then(code => ({ code, manual: false }));
     if (local) void local.catch(() => {}); // An abort during browser launch is handled by the race below.
     if (localUrl) {
-      context.stdout.write("Opening your browser to sign in…\n");
+      context.stdout.write("Opening your browser to sign in...\n");
       if (!await context.openBrowser(localUrl)) context.stdout.write("The browser could not be opened automatically.\n");
     }
     context.stdout.write(`If you are signing in on another machine or the browser did not open, visit:\n${authorizationUrl}\nThis link returns to Extrovert's website with a completion code.\n`);
@@ -651,11 +653,11 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
   const client = clientForKey(pending.agent_key, context, pending.api_base_url);
   let otp: string | undefined;
   if (pending.activation_method === "incoming_email") {
-    const wait = integerOption(args, "--wait-seconds", 300, 0, 300);
+    const wait = integerOption(args, "--wait-seconds", 1800, 0, 86400);
     context.stdout.write(`Send an email from ${pending.human_email} to ${pending.address}. Watching for up to ${wait} seconds; verification continues automatically when it arrives. Keep this agent turn active. If your terminal returns a running process ID, poll it through completion, then recover your practice review. A background CLI cannot resume a stopped agent.\n`);
     const activation = await waitForActivation(seconds => client.activationStatus(seconds), { timeoutSeconds: wait });
     if (activation.state !== "proven") {
-      context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent’s inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console. This watch ended with your reservation preserved. Resume with 'extrovert verify' in this same profile.\n`);
+      context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent's inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console. This watch ended with your reservation preserved. Resume with 'extrovert verify' in this same profile.\n`);
       return 0;
     }
   } else {
@@ -671,7 +673,7 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
   context.store.clearPendingSignup();
   if (result.onboarding) context.stdout.write(`Sender: ${result.onboarding.display_name} <${result.address}>\nPlan: ${result.onboarding.plan}\nOpen your workspace: ${result.onboarding.console_url}\n${result.onboarding.guidance}\n`);
   context.stdout.write(
-    `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nCall whoami through your MCP connection now. A running local MCP using this profile can pick up the saved credential; use the host’s native MCP reload if an older process still reports missing access. In Hermes, continue through this CLI now if its MCP tools have not loaded yet (extrovert tool describe/call exposes the review workflow); no full Hermes restart is needed.\n`,
+    `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nCall whoami through your MCP connection now. A running local MCP using this profile can pick up the saved credential; use the host's native MCP reload if an older process still reports missing access. In Hermes, continue through this CLI now if its MCP tools have not loaded yet (extrovert tool describe/call exposes the review workflow); no full Hermes restart is needed.\n`,
   );
   return 0;
 }
@@ -707,7 +709,7 @@ async function inboxCommand(args: string[], context: CliContext): Promise<number
     page,
     hasFlag(args, "--json"),
     (value) => {
-      const rows = value.items.map((inbox) => `${inbox.address}\t${inbox.status ?? "status unavailable"}\t${inbox.id}`).join("\n") || "No inboxes matched this connection’s scope and filters.";
+      const rows = value.items.map((inbox) => `${inbox.address}\t${inbox.status ?? "status unavailable"}\t${inbox.id}`).join("\n") || "No inboxes matched this connection's scope and filters.";
       return value.next_cursor ? `${rows}\nMore inboxes are available. Repeat with the same filters and --cursor ${JSON.stringify(value.next_cursor)}.` : rows;
     },
   );
@@ -742,6 +744,23 @@ async function messageCommand(args: string[], context: CliContext): Promise<numb
 async function reviewCommand(args: string[], context: CliContext): Promise<number> {
   const action = args[0];
   const client = requireAuthentication(context).client;
+  if (action === "watch") {
+    const review_id = option(args, "--review-id");
+    const timeoutSeconds = integerOption(args, "--wait-seconds", 1800, 0, 86400);
+    const limit = integerOption(args, "--limit", 100, 1, 100);
+    const result = await observeUntil(
+      (wait_seconds, signal) => wait_seconds === 0 ? client.listReviewEvents({ review_id, limit })
+        : client.waitForReviewEvent({ review_id, limit, wait_seconds }, signal),
+      value => value.events.length > 0 || value.pending_reviews === 0,
+      { timeoutSeconds },
+    );
+    const waiting = result.events.length === 0 && result.pending_reviews !== 0;
+    writeResult(context, { ...result, observer_status: waiting ? "deadline_reached" : result.events.length ? "attention_available" : "no_pending_reviews" }, hasFlag(args, "--json"), value =>
+      `${formatReviewEventsResult(value).content.map(item => item.text).join("\n")}\n${waiting
+        ? "Observer deadline reached; reviews and unhandled feedback are preserved. Resume with extrovert review watch."
+        : "Observation finished, not proof of sending. Read and handle the returned events; acknowledge only after handling. Reconcile tracked reviews before reporting sent."}`);
+    return 0;
+  }
   if (action === "status") {
     const id = positional(args.slice(1))[0];
     if (!id) throw new CliUsageError("review status requires a review id");
@@ -761,7 +780,7 @@ async function reviewCommand(args: string[], context: CliContext): Promise<numbe
     );
     return 0;
   }
-  throw new CliUsageError("review requires list or status");
+  throw new CliUsageError("review requires list, status or watch");
 }
 
 async function sendCommand(args: string[], context: CliContext): Promise<number> {
@@ -798,7 +817,7 @@ async function sendCommand(args: string[], context: CliContext): Promise<number>
   });
   writeResult(context, result, hasFlag(args, "--json"), (value) =>
     value.kind === "queued_for_review"
-      ? `Queued for review: NOT sent.\n${formatReviewHandoff(value.review)}\nCheck status: extrovert review status ${value.review.id}\nAfter sharing this link, keep the send task active. Use extrovert tool call wait_for_review_event --input-stdin with {"wait_seconds":55}, without review_id, and repeat after empty timeouts. Handle reviewer feedback and revise the same review; acknowledge handled events using their printed acknowledgement arguments. Continue until each tracked review has a confirmed terminal outcome.`
+      ? `Queued for review: NOT sent.\n${formatReviewHandoff(value.review)}\nCheck status: extrovert review status ${value.review.id}\nAfter sharing this link, keep the send task active. Run extrovert review watch --wait-seconds 86400 --json without review-id and collect its running process result. This observes quietly across short requests; it does not handle feedback or prove sending. Handle reviewer feedback and revise the same review; acknowledge successful handling, then watch again. Continue until each tracked review has a confirmed terminal outcome.`
       : JSON.stringify(value, null, 2));
   return 0;
 }

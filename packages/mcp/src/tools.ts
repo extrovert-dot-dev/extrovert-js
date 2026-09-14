@@ -1,6 +1,6 @@
 import type { QueuedSendResult } from "./types.js";
 /**
- * Extrovert MCP tool definitions (spec §8).
+ * Extrovert MCP tool definitions (spec section 8).
  *
  * Each tool is a plain object describing its name, a model-facing description,
  * a zod `inputSchema` (raw shape), behavioural annotations, and a handler that
@@ -9,7 +9,7 @@ import type { QueuedSendResult } from "./types.js";
  * `server.registerTool(...)` calls scattered around) makes the toolset easy to
  * audit and reuse across the stdio and HTTP transports.
  *
- * Auth model (spec §14): the host supplies a SCOPED agent key via env: never
+ * Auth model (spec section 14): the host supplies a SCOPED agent key via env: never
  * an org-wide master key. `redeem_enrollment` lets an agent exchange a
  * single-use enrollment token for that scoped key at runtime.
  */
@@ -71,6 +71,8 @@ import type {
   WaitForEmailResult,
   Webhook,
   WhoAmI,
+  InboxActivation,
+  ReviewEventsResult,
 } from "./types.js";
 
 interface ToolContext {
@@ -105,6 +107,7 @@ interface RegisterableTool {
   register: (server: McpServer, ctx: ToolContext) => void;
   describe: (profile?: CapabilityProfile) => Record<string, unknown>;
   invoke: (args: unknown, ctx: ToolContext) => Promise<ToolResult>;
+  validate: (args: unknown, profile: CapabilityProfile) => Record<string, unknown>;
 }
 
 /**
@@ -139,6 +142,10 @@ function defineTool<Shape extends ZodRawShape>(spec: ToolSpec<Shape>): Registera
   }, ctx.profile);
   return {
     name: spec.name,
+    validate: (args, profile) => {
+      if (!profileAllowsTool(profile, spec.name)) throw new Error("Tool unavailable in this connection.");
+      return schemaFor(profile).parse(args) as Record<string, unknown>;
+    },
     describe: (profile = "full") => ({ name: spec.name, title: spec.title, description: profileDescription(profile, spec.name, spec.description), inputSchema: z.toJSONSchema(schemaFor(profile), { io: "input" }), annotations }),
     invoke,
     register(server, ctx) {
@@ -156,7 +163,7 @@ const inboxRef = z
   .string()
   .min(1)
   .describe(
-    "Inbox id: the canonical OPAQUE inbox_id (`pmbx_…`; treat it as opaque), or the inbox's " +
+    "Inbox id: the canonical OPAQUE inbox_id (`pmbx_...`; treat it as opaque), or the inbox's " +
       "full email address as a within-project alias (agent7@extrovertmail.com).",
   );
 
@@ -187,8 +194,8 @@ const metadataValue = z.union([z.string().max(256), z.number(), z.boolean()]);
 const createMetadata = z
   .record(z.string(), metadataValue.nullable())
   .describe(
-    "Arbitrary key-value metadata to store on the inbox (string/number/boolean values; ≤256 keys, " +
-      "≤256 chars per key/string value; nested objects/arrays rejected; a key with a null value is " +
+    "Arbitrary key-value metadata to store on the inbox (string/number/boolean values; <=256 keys, " +
+      "<=256 chars per key/string value; nested objects/arrays rejected; a key with a null value is " +
       "dropped). Echoed back on the response and replayed on idempotent retries.",
   );
 
@@ -202,10 +209,10 @@ const updateMetadata = z
   .describe(
     "Patch the inbox's metadata with a shallow merge: an object merges in (a key whose value is null " +
       "DELETES that key); a top-level null clears ALL metadata; omit the field to leave it unchanged. " +
-      "Values are string/number/boolean; nested objects/arrays rejected; ≤256 keys, ≤256 chars each.",
+      "Values are string/number/boolean; nested objects/arrays rejected; <=256 keys, <=256 chars each.",
   );
 
-/** The agent's "for the human reviewer" intent (Review Loop, spec §11, D3). */
+/** The agent's "for the human reviewer" intent (Review Loop, spec section 11, D3). */
 const reviewIntent = z
   .object({
     summary: z.string().describe("Free-text intent summary (who/what/why). Required when mode is review."),
@@ -228,7 +235,7 @@ const reviewModeEnum = z
       "The account/inbox review policy may downgrade 'direct' to 'review'.",
   );
 
-/** The review-request states (spec §3.1), as a const tuple for zod enums. */
+/** The review-request states (spec section 3.1), as a const tuple for zod enums. */
 const REVIEW_STATES = [
   "needs_review",
   "in_review",
@@ -300,11 +307,11 @@ function renderInbox(inbox: Inbox, profile: CapabilityProfile = "full"): string 
   const domain = inbox.domain || inbox.address.split("@")[1] || "unavailable";
   const lines = [
     `${inbox.address}  [${inbox.status ?? "status unavailable"}]`,
-    `id: ${inbox.id} · domain: ${domain}${inbox.onboarding_mode ? ` (${inbox.onboarding_mode})` : ""} · ${sender}`,
+    `id: ${inbox.id} | domain: ${domain}${inbox.onboarding_mode ? ` (${inbox.onboarding_mode})` : ""} | ${sender}`,
   ];
   // Surface the fixed org/project the inbox lives in (RFC D9) when present.
   if (inbox.project_id || inbox.org_id) {
-    lines.push(`org: ${inbox.org_id ?? "(none)"} · project: ${inbox.project_id ?? "(none)"}`);
+    lines.push(`org: ${inbox.org_id ?? "(none)"} | project: ${inbox.project_id ?? "(none)"}`);
   }
   if (inbox.display_name) lines.push(`display name: ${inbox.display_name}`);
   if (inbox.daily_send_limit !== undefined) lines.push(`daily send limit: ${inbox.daily_send_limit} recipients / rolling 24h`);
@@ -340,8 +347,8 @@ function renderInbox(inbox: Inbox, profile: CapabilityProfile = "full"): string 
 function renderMessageHeader(m: Message): string {
   const arrow = m.direction === "inbound" ? "<-" : "->";
   const who = m.direction === "inbound" ? fmtAddr(m.from) : m.to.map(fmtAddr).join(", ");
-  const seen = m.direction === "inbound" ? (m.seen ? "" : " · unread") : "";
-  return `${arrow} ${who} · ${m.subject} · ${m.date}${seen}\n   id: ${m.id} · thread: ${m.thread_id}`;
+  const seen = m.direction === "inbound" ? (m.seen ? "" : " | unread") : "";
+  return `${arrow} ${who} | ${m.subject} | ${m.date}${seen}\n   id: ${m.id} | thread: ${m.thread_id}`;
 }
 
 /** Turn an HTML alternative into conservative visible text for the human-readable MCP result. */
@@ -426,15 +433,15 @@ function fmtAddr(a: { name?: string; email: string }): string {
 function renderThread(t: Thread): string {
   return [
     `${t.subject} (${t.message_count} msg)`,
-    `   id: ${t.id} · last: ${t.last_message_at}`,
+    `   id: ${t.id} | last: ${t.last_message_at}`,
     `   with: ${t.participants.join(", ")}`,
     `   ${t.snippet}`,
   ].join("\n");
 }
 
 function renderSendResult(r: SendResult): string {
-  const review = r.review_id ? ` · review: ${r.review_id}` : "";
-  return `message_id: ${r.message_id || "(queued)"} · thread: ${r.thread_id}${review}${r.submission_id ? `\nsubmission_id: ${r.submission_id} (get_submission to check transport status)` : ""}`;
+  const review = r.review_id ? ` | review: ${r.review_id}` : "";
+  return `message_id: ${r.message_id || "(queued)"} | thread: ${r.thread_id}${review}${r.submission_id ? `\nsubmission_id: ${r.submission_id} (get_submission to check transport status)` : ""}`;
 }
 
 /**
@@ -442,7 +449,7 @@ function renderSendResult(r: SendResult): string {
  *
  * The endpoint has two outcomes and the account's policy: not the caller: picks
  * between them, so a single "Sent." line would be a lie half the time. A queued
- * result must SAY it was queued and must surface the `rr_…` id: that id is the
+ * result must SAY it was queued and must surface the `rr_...` id: that id is the
  * only handle an agent has to resume after a crash, and it is what every
  * follow-up verb (get_review, submit_revision, the event drain) keys on.
  */
@@ -457,8 +464,8 @@ function renderSendOutcome(verb: string, result: SendEmailResult | ReplyEmailRes
     return [
       `Queued for human review: NOT sent.`,
       reviewHandoff(result.review),
-      `review: ${result.review.id} · state: ${result.review.state}${
-        result.review.effective_mode ? ` · effective_mode: ${result.review.effective_mode}` : ""
+      `review: ${result.review.id} | state: ${result.review.state}${
+        result.review.effective_mode ? ` | effective_mode: ${result.review.effective_mode}` : ""
       }`,
       `Next: monitor it with wait_for_review_event / list_review_events until a \`sent\` or \`send_failed\` event arrives.`,
     ].join("\n");
@@ -477,14 +484,14 @@ function renderSubmitResult(r: SubmitForReviewResult): string {
   if (r.kind === "sent") {
     const review = r.review?.id ? `\nreview: ${r.review.id}` : "";
     return `${providerAccepted(r) ? "Provider accepted." : "Submission recorded; check provider acceptance with get_submission."}\nmessage_id: ${r.message.id}${
-      r.message.thread_id ? ` · thread: ${r.message.thread_id}` : ""
+      r.message.thread_id ? ` | thread: ${r.message.thread_id}` : ""
     }${review}`;
   }
   return [
     `Queued for review: NOT sent.`,
     reviewHandoff(r.review),
-    `review: ${r.review.id} · state: ${r.review.state}${
-      r.review.effective_mode ? ` · effective_mode: ${r.review.effective_mode}` : ""
+    `review: ${r.review.id} | state: ${r.review.state}${
+      r.review.effective_mode ? ` | effective_mode: ${r.review.effective_mode}` : ""
     }`,
     `Next: monitor it with wait_for_review_event / list_review_events until a \`sent\` or \`send_failed\` event arrives.`,
   ].join("\n");
@@ -503,8 +510,8 @@ function renderSubmitResult(r: SubmitForReviewResult): string {
 function renderReview(r: Review): string {
   const subject = r.proposed_subject || "(no subject)";
   const intent = r.intent_summary ? `\n   intent: ${r.intent_summary}` : "";
-  const cat = r.category_id ? ` · category: ${r.category_id}` : "";
-  const version = r.version !== undefined ? ` · version: ${r.version}` : "";
+  const cat = r.category_id ? ` | category: ${r.category_id}` : "";
+  const version = r.version !== undefined ? ` | version: ${r.version}` : "";
   const lines = [
     `${r.id}  [${r.state}]  ${r.kind} from ${r.from_display_name ? `${r.from_display_name} <${r.from_address}>` : r.from_address}${cat}`,
     `   revision: ${r.revision}${version}  (pass revision as parent_revision to submit_revision)`,
@@ -541,7 +548,7 @@ function renderCategory(c: Category): string {
   const desc = c.description ? `\n   ${c.description}` : "";
   const versions =
     c.rules_version !== undefined || c.rule_high_water !== undefined
-      ? `\n   rules_version: ${c.rules_version} · rule_high_water: ${c.rule_high_water}` +
+      ? `\n   rules_version: ${c.rules_version} | rule_high_water: ${c.rule_high_water}` +
         `  (pass rule_high_water as submit_revision's rules_version_seen)`
       : "";
   const usage = `Messages: ${c.message_count_7d ?? 0} / 7d, ${c.message_count_30d ?? 0} / 30d, ${c.message_count_90d ?? 0} / 90d; last used: ${c.last_used_at ?? "never"}; pending reviews: ${c.pending_review_count ?? 0}.\n`;
@@ -551,8 +558,8 @@ function renderCategory(c: Category): string {
 /** Render a one-line summary of a writing rule for the ordered get_rules ladder. */
 function renderRule(r: Rule): string {
   const where = r.scope === "general" ? "house-style" : `category ${r.category_id ?? ""}`;
-  const tag = r.scope_agent_id ? " · per-agent" : "";
-  const layer = r.rule_layer ? ` · ${r.rule_layer}-layer` : "";
+  const tag = r.scope_agent_id ? " | per-agent" : "";
+  const layer = r.rule_layer ? ` | ${r.rule_layer}-layer` : "";
   return `${r.id} (rev ${r.rev}) [${r.kind}/${r.author_kind}${tag}${layer}] ${where}\n   ${r.rule_text}`;
 }
 
@@ -566,33 +573,33 @@ function renderWebhook(w: Webhook): string {
   const scope = w.inbox ? `inbox ${w.inbox}` : "all inboxes";
   const lines = [
     `${w.url}  [${w.active ? "active" : "inactive"}]`,
-    `id: ${w.id} · events: ${w.events.join(", ")} · scope: ${scope}`,
+    `id: ${w.id} | events: ${w.events.join(", ")} | scope: ${scope}`,
   ];
   if (w.agent_id) lines.push(`agent: ${w.agent_id}`);
   if (w.secret) lines.push(`secret (shown once): ${w.secret}`);
-  else lines.push(`secret: ${w.secret_prefix}… (set at registration, not retrievable)`);
+  else lines.push(`secret: ${w.secret_prefix}... (set at registration, not retrievable)`);
   return lines.join("\n");
 }
 
 function renderContactListEntry(e: ContactListEntry): string {
   const scope = e.inbox ? `inbox ${e.inbox}` : "all inboxes (account-wide)";
-  return `${e.kind.toUpperCase()} ${e.pattern}  [${e.direction}]\n   id: ${e.id} · scope: ${scope}`;
+  return `${e.kind.toUpperCase()} ${e.pattern}  [${e.direction}]\n   id: ${e.id} | scope: ${scope}`;
 }
 
 /** Render a one-line summary of a recipient suppression (opt-out) row. */
 function renderSuppression(s: SuppressionEntry): string {
   const status = s.revoked ? "revoked" : "active";
-  const narrow = s.narrow_agent_id || s.narrow_mailbox ? " · narrowed" : "";
+  const narrow = s.narrow_agent_id || s.narrow_mailbox ? " | narrowed" : "";
   const lines = [
     `${s.recipient}  [${status}]`,
-    `   id: ${s.id} · scope: ${s.scope} · source: ${s.source}${narrow} · since ${s.created_at}`,
+    `   id: ${s.id} | scope: ${s.scope} | source: ${s.source}${narrow} | since ${s.created_at}`,
   ];
   if (s.revoked) lines.push(`   revoked ${s.revoked_at ?? ""} by ${s.revoked_by ?? "?"}: ${s.revoke_reason ?? ""}`);
   return lines.join("\n");
 }
 
 function renderJob(j: Job): string {
-  const lines = [`${j.id}  [${j.status}]`, `type: ${j.type} · created ${j.created_at} · updated ${j.updated_at}`];
+  const lines = [`${j.id}  [${j.status}]`, `type: ${j.type} | created ${j.created_at} | updated ${j.updated_at}`];
   if (j.finished_at) lines.push(`finished: ${j.finished_at}`);
   const terminal = j.status === "succeeded" || j.status === "failed" || j.status === "cancelled";
   lines.push(terminal ? "terminal: no further polling needed." : "not terminal yet: keep polling.");
@@ -622,10 +629,10 @@ function renderCommerceBlocker(blocker: CommerceBlocker): string {
 function renderDomainQuote(quote: DomainQuote): string {
   const lines = [
     `${quote.domain}  [${quote.available ? "available" : "unavailable"}]`,
-    `quote: ${quote.quote_cents} ${quote.currency} cents · renewal: ${quote.renewal_cents} cents · premium: ${quote.premium ? "yes" : "no"}`,
+    `quote: ${quote.quote_cents} ${quote.currency} cents | renewal: ${quote.renewal_cents} cents | premium: ${quote.premium ? "yes" : "no"}`,
     `expires: ${quote.quote_expires_at}`,
   ];
-  if (quote.required_plan) lines.push(`required plan: ${quote.required_plan} · maximum monthly price: ${quote.required_plan_price_cents ?? 0} ${quote.currency} cents`);
+  if (quote.required_plan) lines.push(`required plan: ${quote.required_plan} | maximum monthly price: ${quote.required_plan_price_cents ?? 0} ${quote.currency} cents`);
   if (quote.blockers.length) {
     lines.push("blockers:");
     for (const blocker of quote.blockers) lines.push(`- ${renderCommerceBlocker(blocker)}`);
@@ -637,12 +644,12 @@ function renderCommerceRequest(request: CommerceRequest): string {
   const lines = [
     `${request.id}  [${request.state}]  ${request.kind}`,
     request.domain
-      ? `domain: ${request.domain} · scope: ${request.domain_scope ?? "project"}`
+      ? `domain: ${request.domain} | scope: ${request.domain_scope ?? "project"}`
       : `plan: ${request.current_plan ?? "unknown"} -> ${request.target_plan ?? "unknown"}`,
-    `quote: ${request.quote_cents} ${request.currency} cents · renewal: ${request.renewal_cents} cents${request.approved_max_cents !== undefined ? ` · approved max: ${request.approved_max_cents} cents` : ""}`,
+    `quote: ${request.quote_cents} ${request.currency} cents | renewal: ${request.renewal_cents} cents${request.approved_max_cents !== undefined ? ` | approved max: ${request.approved_max_cents} cents` : ""}`,
   ];
   if (request.quote_expires_at) lines.push(`quote expires: ${request.quote_expires_at}`);
-  if (request.required_plan) lines.push(`required plan: ${request.required_plan} · maximum monthly price: ${request.required_plan_price_cents ?? 0} ${request.currency} cents`);
+  if (request.required_plan) lines.push(`required plan: ${request.required_plan} | maximum monthly price: ${request.required_plan_price_cents ?? 0} ${request.currency} cents`);
   if (request.blocker_code) lines.push(`primary blocker: ${request.blocker_code}`);
   if (request.blockers.length) {
     lines.push("blockers:");
@@ -654,7 +661,7 @@ function renderCommerceRequest(request: CommerceRequest): string {
   if (request.effective_at) lines.push(`effective at: ${request.effective_at}`);
   lines.push(`agent next action: ${request.agent_next_action}`);
   lines.push(
-    `retry safe: ${request.retry_safe ? "yes" : "no"} · poll after: ${request.poll_after_seconds}s · version: ${request.version}`,
+    `retry safe: ${request.retry_safe ? "yes" : "no"} | poll after: ${request.poll_after_seconds}s | version: ${request.version}`,
   );
   return lines.join("\n");
 }
@@ -671,7 +678,7 @@ const redeemEnrollment = defineTool({
   name: "redeem_enrollment",
   title: "Redeem enrollment key",
   description:
-    "Exchange a single-use enrollment token (pk_enroll_…) for a SCOPED agent key (pk_agent_…) bound to this agent. " +
+    "Exchange a single-use enrollment token (pk_enroll_...) for a SCOPED agent key (pk_agent_...) bound to this agent. " +
     "Call this first when the host was started without EXTROVERT_API_KEY. The returned agent_key is shown once: store it " +
     "securely; it carries only the granted scopes (e.g. mailbox:create) and can be revoked independently. Pass a stable agent_handle " +
     "to make redemption idempotent (re-redeeming returns the same agent).",
@@ -679,13 +686,13 @@ const redeemEnrollment = defineTool({
     enrollment_token: z
       .string()
       .min(8)
-      .describe("The enrollment token to redeem, e.g. pk_enroll_42_aZ9…."),
+      .describe("The enrollment token to redeem, e.g. pk_enroll_42_aZ9...."),
     agent_handle: z
       .string()
       .min(1)
       .max(128)
       .optional()
-      .describe("Optional stable handle for idempotent enrollment (à la a client id)."),
+      .describe("Optional stable handle for idempotent enrollment (like a client id)."),
     client_id: z
       .string()
       .min(1)
@@ -709,7 +716,7 @@ const redeemEnrollment = defineTool({
       // Surface the FIXED org/project the issued key is bound to (enroll now resolves
       // and returns them), so the agent sees its scope when issued without a second
       // whoami call: consistent with whoami's text.
-      `org: ${result.org_id || "(none)"} · project: ${result.project_id || "(none)"} (fixed: bound to this key)`,
+      `org: ${result.org_id || "(none)"} | project: ${result.project_id || "(none)"} (fixed: bound to this key)`,
       `scopes: ${result.scopes.join(", ") || "(none)"}`,
       credentialPersistenceMessage(persistence),
     ].join("\n");
@@ -761,13 +768,18 @@ const checkActivation = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   handler: async (args, { client }) => {
     const result = await client.activationStatus(args.wait_seconds);
+    return formatActivationResult(result);
+  },
+});
+
+/** Shared presentation for synchronous calls and durable observer results. */
+export function formatActivationResult(result: InboxActivation): ToolResult {
     const message = result.state === "proven" ? "Inbox claimed. Human ownership is verified. Next: call verify_signup without an OTP to exchange this limited credential, then whoami."
       : result.state === "activated" ? "Inbox claimed. Next: verify your durable connection with whoami."
       : result.state === "expired" ? "This reservation expired. Sign in to Extrovert to continue; do not keep waiting for this activation."
       : `Inbox activation: ${result.state}. Send an email from ${result.human_email} to ${result.address}. Reservation expires ${new Date(result.expires_ms).toISOString()}.`;
     return ok(message, result as unknown as Record<string, unknown>);
-  },
-});
+}
 
 const correctActivationEmail = defineTool({
   name: "correct_activation_email",
@@ -961,7 +973,7 @@ const listInboxes = defineTool({
     if (profile === "assistant") page.items = page.items.map(assistantInbox);
     const text = page.items.length
       ? page.items.map(inbox => renderInbox(inbox, profile)).join("\n\n")
-      : "No inboxes matched this connection’s scope and filters. This does not establish that the account has no inboxes. Use whoami to inspect this connection.";
+      : "No inboxes matched this connection's scope and filters. This does not establish that the account has no inboxes. Use whoami to inspect this connection.";
     const continuation = page.next_cursor ? `\n\nMore inboxes are available. Call list_inboxes with the same filters and cursor=${JSON.stringify(page.next_cursor)}.` : "";
     return ok(`${page.items.length} inbox(es) on this page.\n\n${text}${continuation}`, {
       items: page.items,
@@ -1013,7 +1025,7 @@ const updateInbox = defineTool({
       .max(10_000)
       .optional()
       .describe(
-        "Effective recipient cap per rolling 24 hours (1–10,000). Requires mailbox:quota.",
+        "Effective recipient cap per rolling 24 hours (1-10,000). Requires mailbox:quota.",
       ),
     metadata: updateMetadata.optional(),
     project_id: projectAssertion,
@@ -1102,10 +1114,10 @@ const sendEmail = defineTool({
     "Starts a new thread. Use reply_email to respond within an existing thread. Before composing, recover composer=me list_reviews and list_review_events. Select one primary list_categories category by semantic fit; automatically propose_category if none fits, then use it immediately under supervision. Fetch get_rules with that category so category and house rules both apply.\n\n" +
     "ALWAYS pass `intent`. The account's review policy governs EVERY send, and the default policy is " +
     "`require_review`: a send with no `intent` is REFUSED with 422 intent_required, and nothing is sent OR queued. " +
-    "Normally an intent returns 202 queued_for_review plus a review id (rr_…): the message has NOT gone out yet. For a queued result, " +
+    "Normally an intent returns 202 queued_for_review plus a review id (rr_...): the message has NOT gone out yet. For a queued result, " +
     "first tell the human it has not been sent and share the returned review link for approval, edits or coaching; then immediately monitor that review with wait_for_review_event / list_review_events until a `sent` or `send_failed` event " +
     "arrives. After `send_failed`, report failure and acknowledge its event; failed is terminal, so do not cancel it or create a replacement send. " +
-    "Read `effective_review_policy`, `human_email_review`, and `internal_email_review` from get_inbox. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender’s enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review.  Immediate sending may be allowed by direct policy, category graduation, or the human-recipient exception. " +
+    "Read `effective_review_policy`, `human_email_review`, and `internal_email_review` from get_inbox. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender's enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review.  Immediate sending may be allowed by direct policy, category graduation, or the human-recipient exception. " +
     "That exception is default off: when enabled, exactly one To recipient must match the verified human email, with no Cc/Bcc or aliases. Writing rules, intent and limits still apply; other recipients keep their usual policy. Protected signup practice always requires review. Only the human or explicit Full account control can enable it. Do not repeatedly prompt for it.\n\n" +
     "`mode`/`category_id` refine the routing but never bypass it: the policy resolves the mode, so `mode:\"direct\"` " +
     "under require_review cannot grant a bypass; an independently enabled human-recipient or internal-recipient exception may apply. `intent.summary` is the first thing the human reviewer reads.\n\n" +
@@ -1136,7 +1148,7 @@ const sendEmail = defineTool({
     category_id: z
       .string()
       .optional()
-      .describe("Opaque category id (cat_…) matched from the registry. Never a name."),
+      .describe("Opaque category id (cat_...) matched from the registry. Never a name."),
     category_confidence: z
       .number()
       .min(0)
@@ -1214,16 +1226,16 @@ const replyEmail = defineTool({
     "message, which must be the newest message). Before composing, read ALL messages in get_thread, including multiple consecutive inbound messages and corrections inside quoted text. Reply once to the newest message, incorporating every outstanding point. Check list_reviews with inbox and thread_id, without composer=me, to find existing drafts by any accessible composer; coordinate or revise the existing draft rather than create a duplicate. Preserve context_version as expected_context_version. On reply_already_pending, recover/coordinate the existing draft instead of retrying with a new key. On 409 reply_context_changed, reread and reconsider the body, never merely refresh the token. If the latest message is outbound, check whether the request was already answered. For broken threads, search bounded related correspondence and read relevant results; keep separate threads identified and never infer membership from subject alone. Recipients default from the parent; optional to replaces that list. Subject and In-Reply-To/References remain derived server-side.\n\n" +
     "ALWAYS pass `intent`. Under the default `require_review` policy a reply with no intent is REFUSED with 422 " +
     "intent_required (nothing sent, nothing queued); with one it normally returns 202 queued_for_review and a review id " +
-    "(rr_…), and the reply has NOT gone out until a `sent` review event arrives. For a queued reply, first tell the human it has not been sent and share the returned review link for approval, edits or coaching; then immediately wait for review events. The envelope is resolved at submit, " +
-    "so the human reviews a message with its real subject and recipients. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender’s enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review. get_inbox.human_email_review can expose a separately enabled exception: exactly one derived To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. This starts off and ordinary agents cannot enable it.\n\n" +
+    "(rr_...), and the reply has NOT gone out until a `sent` review event arrives. For a queued reply, first tell the human it has not been sent and share the returned review link for approval, edits or coaching; then immediately wait for review events. The envelope is resolved at submit, " +
+    "so the human reviews a message with its real subject and recipients. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender's enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review. get_inbox.human_email_review can expose a separately enabled exception: exactly one derived To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. This starts off and ordinary agents cannot enable it.\n\n" +
     "Opt-outs: a reply to a suppressed recipient is rejected with recipient_suppressed (HTTP 422) at SUBMIT, before a " +
     "review is queued. Replies get ONE narrow exception: a suppressed recipient is allowed when this reply answers an " +
     "inbound message FROM them that arrived AFTER their opt-out (a recipient-re-initiated exchange). Nothing else " +
     "qualifies: send_email and forward_email get no exception at all.",
   inputSchema: {
     inbox: inboxRef,
-    thread_id: z.string().min(1).optional().describe("Thread to reply within (thr_…). One of thread_id / message_id."),
-    message_id: z.string().min(1).optional().describe("Specific message to reply to (msg_…). One of thread_id / message_id."),
+    thread_id: z.string().min(1).optional().describe("Thread to reply within (thr_...). One of thread_id / message_id."),
+    message_id: z.string().min(1).optional().describe("Specific message to reply to (msg_...). One of thread_id / message_id."),
     expected_context_version: z.string().min(1).describe("Required context_version from get_thread read before composing. A changed conversation returns 409 reply_context_changed: read all messages again, reconsider the draft, then submit with the new version."),
     expected_last_message_id: z
       .string()
@@ -1251,7 +1263,7 @@ const replyEmail = defineTool({
     category_id: z
       .string()
       .optional()
-      .describe("Opaque category id (cat_…) matched from the registry. Never a name."),
+      .describe("Opaque category id (cat_...) matched from the registry. Never a name."),
     category_confidence: z
       .number()
       .min(0)
@@ -1331,16 +1343,16 @@ const forwardEmail = defineTool({
     "received thread, so the review policy binds it just as hard as a send: otherwise it would be the way around " +
     "review, and a worse one, because it exfiltrates a conversation. Under the default `require_review` policy a " +
     "forward with no intent is REFUSED with 422 intent_required (nothing sent, nothing queued); with one it normally returns " +
-    "202 queued_for_review and a review id (rr_…). For a queued forward, first tell the human it has not been sent and share the returned review link for approval, edits or coaching; then immediately wait for review events. The subject and quoted body are materialized at SUBMIT, so the " +
+    "202 queued_for_review and a review id (rr_...). For a queued forward, first tell the human it has not been sent and share the returned review link for approval, edits or coaching; then immediately wait for review events. The subject and quoted body are materialized at SUBMIT, so the " +
     "human reviews the exact bytes that go out and an approved forward delivers the reviewer's edit.\n\n" +
     "Opt-outs: a forward to a suppressed recipient is ALWAYS rejected (recipient_suppressed 422). Forward gets NO " +
     "solicited-response exception: that exception exists only for a reply answering an inbound message from the " +
     "person who opted out.\n\n" +
     "A forward is deliberately NOT threaded to its parent (no In-Reply-To): the new recipients were never part of " +
-    "that conversation. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender’s enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review. get_inbox.human_email_review exposes the default-off exception for exactly one To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. Ordinary agents cannot enable it.",
+    "that conversation. Internal project/organization exceptions are exposed by get_inbox.internal_email_review. They start off and require every final To/Cc/Bcc recipient to belong to the sender's enabled project or exact organization. Other organizations, aliases, and mixed external recipients retain their usual policy. No inbox access is granted. Ordinary agents and project managers cannot enable them. Submit normally and follow the returned result; do not split recipients to evade review. get_inbox.human_email_review exposes the default-off exception for exactly one To recipient at the verified human email, no Cc/Bcc or aliases. Writing rules, intent and limits still apply; others keep their policy. Ordinary agents cannot enable it.",
   inputSchema: {
     inbox: inboxRef,
-    message_id: z.string().min(1).describe("Opaque id of the message to forward (msg_…)."),
+    message_id: z.string().min(1).describe("Opaque id of the message to forward (msg_...)."),
     to: z.array(emailAddress).max(50).min(1).describe("One or more recipient addresses."),
     cc: z.array(emailAddress).max(50).optional().describe("Optional Cc recipients."),
     bcc: z.array(emailAddress).max(50).optional().describe("Optional Bcc recipients."),
@@ -1356,7 +1368,7 @@ const forwardEmail = defineTool({
     category_id: z
       .string()
       .optional()
-      .describe("Opaque category id (cat_…) matched from the registry. Never a name."),
+      .describe("Opaque category id (cat_...) matched from the registry. Never a name."),
     category_confidence: z
       .number()
       .min(0)
@@ -1410,7 +1422,7 @@ const forwardEmail = defineTool({
   },
 });
 
-// --- Review Loop (HITL) reads (spec §5.2) ---
+// --- Review Loop (HITL) reads (spec section 5.2) ---
 
 const listReviews = defineTool({
   name: "list_reviews",
@@ -1429,7 +1441,7 @@ const listReviews = defineTool({
       ])
       .optional()
       .describe("Filter by one or more review states (e.g. needs_review)."),
-    category_id: z.string().optional().describe("Filter by opaque category id (cat_…)."),
+    category_id: z.string().optional().describe("Filter by opaque category id (cat_...)."),
     inbox: z.string().optional().describe("Filter by composer inbox address."),
     limit: z.number().int().min(1).max(200).optional().describe("Max reviews to return."),
     page: z.string().optional().describe("Opaque page cursor from a previous call."),
@@ -1460,14 +1472,14 @@ const getReview = defineTool({
   name: "get_review",
   title: "Get review",
   description:
-    "Fetch one review request by id (rr_…): its current state, `revision` (pass it as submit_revision's " +
+    "Fetch one review request by id (rr_...): its current state, `revision` (pass it as submit_revision's " +
     "parent_revision), the proposed draft, the intent, the category, and (once sent) the sent body + diff.\n\n" +
     "This is the DEFINITIVE per-review 'am I done?' answer, and the poll-side companion to the event drain: use it " +
     "after a crash, when your event cursor is gone. `closed` is true for sent, auto_sent, cancelled AND failed " +
     "(failed is absorbing: nobody will ever move that row, so waiting on it hangs forever). `send_path` says how it " +
     "got out; `send_error` says why it did not.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…) from list_reviews or a queued send/reply."),
+    id: z.string().min(1).describe("Review id (rr_...) from list_reviews or a queued send/reply."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1480,10 +1492,10 @@ const getReviewTurns = defineTool({
   name: "get_review_turns",
   title: "Get review thread turns",
   description:
-    "Fetch the append-only thread turns for a review (rr_…): the intent, every draft revision, human comments/edits/" +
+    "Fetch the append-only thread turns for a review (rr_...): the intent, every draft revision, human comments/edits/" +
     "decisions, captured diffs, and state changes: the full audit + learning trail.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1505,7 +1517,7 @@ function renderReviewFeedback(f: ReviewFeedback): string {
   const lines = [`feedback for ${f.review_id}: decision: ${f.decision}`];
   if (f.diff_unified) lines.push(`diff:\n${f.diff_unified}`);
   for (const c of f.comments) {
-    lines.push(`• source_turn_id: ${c.turn_id} [${c.actor_kind}] actor_id: ${c.actor_id ?? "unknown"} ${c.body}`);
+    lines.push(`- source_turn_id: ${c.turn_id} [${c.actor_kind}] actor_id: ${c.actor_id ?? "unknown"} ${c.body}`);
   }
   if (f.new_rules.length) lines.push(`rules born from this review: ${f.new_rules.join(", ")}`);
   return lines.join("\n");
@@ -1516,10 +1528,10 @@ function renderDecisionContext(dc: ReviewDecisionContext): string {
   const lines = [renderReview(dc.review)];
   lines.push(
     `   breakers: hops ${dc.hop_count}/${dc.max_hops}${dc.hops_exhausted ? " (EXHAUSTED)" : ""}` +
-      ` · deadline ${dc.review_deadline}${dc.deadline_passed ? " (PASSED)" : ""}`,
+      ` | deadline ${dc.review_deadline}${dc.deadline_passed ? " (PASSED)" : ""}`,
   );
   if (dc.force_to_human) {
-    lines.push(`   ⚠ a reject will be FORCED to the human (${dc.force_reason}): the human is the only terminal authority.`);
+    lines.push(`   WARNING: a reject will be FORCED to the human (${dc.force_reason}): the human is the only terminal authority.`);
   }
   if (dc.turns.length) {
     lines.push("   thread:");
@@ -1543,13 +1555,13 @@ const getReviewDecisionContext = defineTool({
   name: "get_review_decision_context",
   title: "Get a review's decision context (reviewer)",
   description:
-    "REVIEWER PLANE (review:act): fetch your read-only decision surface for a review (rr_…) you're linked to: the intent + " +
+    "REVIEWER PLANE (review:act): fetch your read-only decision surface for a review (rr_...) you're linked to: the intent + " +
     "current draft + the append-only thread + the TWO circuit-breaker budgets (hop_count vs max_hops, and the hard " +
     "review_deadline). force_to_human=true means a reject would be FORCED to the human regardless of your intent (the human " +
     "is the only terminal authority, D17). You can only see reviews your active review-link covers (per-inbox beats " +
     "account-wide); review:act alone is not enough. Read this, then reviewer_decide. $0 LLM: pure assembly on our side.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…) you are the linked reviewer for."),
+    id: z.string().min(1).describe("Review id (rr_...) you are the linked reviewer for."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1562,16 +1574,16 @@ const reviewerDecide = defineTool({
   name: "reviewer_decide",
   title: "Decide a review as the linked reviewer",
   description:
-    "REVIEWER PLANE (review:act): submit your decision on a review (rr_…) you're linked to. action=approve|edit|reject|" +
-    "escalate. approve/edit → the PLATFORM sends with the COMPOSER's credentials (you NEVER hold mailbox:send on an inbox " +
-    "you don't own: the credential boundary); edit also supplies a new subject/body. reject → back to the composer to " +
-    "redraft (hop_count++). escalate → straight to the human queue. revision is the CAS: it MUST equal the draft's current " +
+    "REVIEWER PLANE (review:act): submit your decision on a review (rr_...) you're linked to. action=approve|edit|reject|" +
+    "escalate. approve/edit -> the PLATFORM sends with the COMPOSER's credentials (you NEVER hold mailbox:send on an inbox " +
+    "you don't own: the credential boundary); edit also supplies a new subject/body. reject -> back to the composer to " +
+    "redraft (hop_count++). escalate -> straight to the human queue. revision is the CAS: it MUST equal the draft's current " +
     "revision (from get_review_decision_context): a mismatch is a 409 STALE with NO change (re-read, re-decide; the human " +
-    "always wins, D17). The two circuit breakers (hop_count ≥ max_hops, or the hard review_deadline) FORCE a reject to the " +
+    "always wins, D17). The two circuit breakers (hop_count >= max_hops, or the hard review_deadline) FORCE a reject to the " +
     "human regardless of your intent: the result's forced_by_breaker names it. $0 LLM: YOU judge; we route, send, and " +
     "enforce the breakers.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
     action: z.enum(["approve", "edit", "reject", "escalate"]).describe("approve | edit | reject | escalate."),
     revision: z.number().int().min(0).describe("The revision you decided against (PRIMARY CAS; 409 STALE on mismatch)."),
     version: z.number().int().optional().describe("Optional row-version CAS (defense in depth)."),
@@ -1598,7 +1610,7 @@ const postReviewChat = defineTool({
   name: "post_review_chat",
   title: "Post a chat turn on a review",
   description:
-    "Ask the human reviewer a clarifying question on a review's thread (rr_…): append an agent_question turn.\n\n" +
+    "Ask the human reviewer a clarifying question on a review's thread (rr_...): append an agent_question turn.\n\n" +
     "LEGAL FROM: needs_review, in_review, chatting. A question on a needs_review draft does NOT open it: the draft " +
     "stays in the human queue, no reviewer is assigned, and no nudge is sent. Only an in_review draft flips to " +
     "chatting. (A HUMAN comment on a needs_review draft DOES open it: that asymmetry is deliberate: an agent must " +
@@ -1607,7 +1619,7 @@ const postReviewChat = defineTool({
     "get_review_feedback). Idempotent on client_id (the Idempotency-Key). Use this when you are UNSURE what the human " +
     "wants; otherwise just submit_revision a redraft. $0 LLM: YOU compose the question.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
     text: z.string().min(1).describe("Your question/comment for the human reviewer."),
     client_id: z.string().optional().describe("Idempotency key (Idempotency-Key); a retry with the same key never doubles the turn."),
   },
@@ -1622,7 +1634,7 @@ const submitRevision = defineTool({
   name: "submit_revision",
   title: "Submit a redrafted revision",
   description:
-    "Post a NEW draft for a review (rr_…) under a parent_revision CAS: the way to redraft after feedback, a chat " +
+    "Post a NEW draft for a review (rr_...) under a parent_revision CAS: the way to redraft after feedback, a chat " +
     "answer, or a rule_changed / recheck_category nudge. Humans may approve or edit-send during a recheck, superseding that work. Reread get_review before acting; never revise an approved or terminal review. `parent_revision` MUST equal the draft's current `revision`, " +
     "which get_review prints.\n\n" +
     "LEGAL FROM: needs_review, in_review, chatting, rejected. needs_review IS legal: a reviewer reject, a born-stale " +
@@ -1630,17 +1642,17 @@ const submitRevision = defineTool({
     "it is exactly what you are being asked to do. On success the draft is re-rendered in place (revision++), stays/" +
     "returns to needs_review, and the reviewer is nudged.\n\n" +
     "The three 409s are DIFFERENT errors: read `code`, not just the status:\n" +
-    "  • `stale`: your (revision, version) is no longer current and NOTHING was mutated. RETRY, bounded (≤3): " +
+    "  - `stale`: your (revision, version) is no longer current and NOTHING was mutated. RETRY, bounded (<=3): " +
     "re-read get_review + get_review_feedback, re-apply your edit on top of theirs, resubmit with the new " +
     "parent_revision. The human always wins (D17).\n" +
-    "  • `wrong_state`: this verb is illegal from the current state but the draft is still live. NEVER retry it; " +
+    "  - `wrong_state`: this verb is illegal from the current state but the draft is still live. NEVER retry it; " +
     "read the allowed_action hints in the error and pick a legal verb.\n" +
-    "  • `terminal`: the review is sent/auto_sent/cancelled. STOP. Nothing will ever succeed, and a `front_run_next` " +
+    "  - `terminal`: the review is sent/auto_sent/cancelled. STOP. Nothing will ever succeed, and a `front_run_next` " +
     "event is waiting in your drain.\n\n" +
     "Pin `rules_version_seen` to the category's rule_high_water (get_category prints it). $0 LLM: YOU compose the " +
     "redraft. For replies, reread the complete email thread (including new messages) and pass its expected_context_version before revising. This is separate from reviewer feedback. The composition_token must match the current review category from get_review (omit category_id in get_rules when the review is uncategorized). Learning a new category rule does not reclassify an existing draft.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
     expected_context_version: z.string().min(1).optional().describe("Required when revising a reply: context_version from rereading its entire get_thread before redrafting. On 409 reread and reconsider; never restamp stale text."),
     parent_revision: z
       .number()
@@ -1704,13 +1716,13 @@ const cancelReview = defineTool({
   name: "cancel_review",
   title: "Withdraw a pending review",
   description:
-    "Withdraw your own pending review (rr_…) to the terminal cancelled state: you decided not to send it after all. " +
+    "Withdraw your own pending review (rr_...) to the terminal cancelled state: you decided not to send it after all. " +
     "Only the composing agent may cancel its own review. It is also the ONLY legal close-out for a `failed` review: " +
     "after a send_failed event the row cannot be retried by anyone, so cancel it and compose a NEW message.\n\n" +
     "An already-cancelled review returns its existing result and releases no quota twice. Sent/auto_sent answers 409 `terminal`: STOP, do not retry. An `approved` " +
     "review answers 409 `wrong_state`: it is mid-delivery, so wait for the `sent` or `send_failed` event instead.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
     client_id: z
       .string()
       .min(1)
@@ -1729,7 +1741,7 @@ const restampReview = defineTool({
   name: "restamp_review",
   title: "Re-stamp a draft's rules-version without redrafting ($0)",
   description:
-    "The $0 escape valve when a rule_changed/recheck nudge fires AND the draft genuinely already complies (D19/§8). " +
+    "The $0 escape valve when a rule_changed/recheck nudge fires AND the draft genuinely already complies (D19/section 8). " +
     "Reread get_review first: a human can approve or edit-send during a pending recheck, superseding it. Never restamp an approved or terminal review. Use it ONLY for 'I read the new rules and no change is needed'. If the draft DOES need to change, use " +
     "submit_revision: re-stamping a draft that should have been redrafted makes you lie to the born-stale " +
     "accounting. Human approval is a separate explicit decision and does not depend on this compliance stamp. " +
@@ -1740,17 +1752,17 @@ const restampReview = defineTool({
     "against_version must NOT exceed the category's current rules-version (you can't claim a version that doesn't exist). " +
     "Use submit_revision instead when the draft DOES need to change. $0 LLM: you judged.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
     against_version: z
       .number()
       .int()
       .min(0)
-      .describe("The category rules-version you reviewed against (≤ the category's current rules-version)."),
+      .describe("The category rules-version you reviewed against (<= the category's current rules-version)."),
     house_style_version: z
       .number()
       .int()
       .optional()
-      .describe("Optional: re-stamp the house-style axis to this version (≤ the org's current house_style_version)."),
+      .describe("Optional: re-stamp the house-style axis to this version (<= the org's current house_style_version)."),
     client_id: z
       .string()
       .min(1)
@@ -1774,12 +1786,12 @@ const getReviewFeedback = defineTool({
   name: "get_review_feedback",
   title: "Get the human's feedback on a review",
   description:
-    "Fetch the human's assembled feedback for a review (rr_…): the unified + structured diff of the human's edit, the human " +
-    "comments / rejection feedback, the decision (edited|approved|rejected|…), and the rules already born from this review. " +
+    "Fetch the human's assembled feedback for a review (rr_...): the unified + structured diff of the human's edit, the human " +
+    "comments / rejection feedback, the decision (edited|approved|rejected|...), and the rules already born from this review. " +
     "Read this after a rejected/edited nudge to learn what the human wanted, then judge whether a generalizable rule exists " +
     "(learn_review_rule with the authenticated source_turn_id) and/or submit_revision a redraft. $0 LLM: pure assembly on our side.",
   inputSchema: {
-    id: z.string().min(1).describe("Review id (rr_…)."),
+    id: z.string().min(1).describe("Review id (rr_...)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1825,9 +1837,9 @@ const listCategories = defineTool({
 const getCategory = defineTool({
   name: "get_category",
   title: "Get category",
-  description: "Fetch one category by id (cat_…): its name, description, scope, and graduation state.",
+  description: "Fetch one category by id (cat_...): its name, description, scope, and graduation state.",
   inputSchema: {
-    id: z.string().min(1).describe("Category id (cat_…) from list_categories."),
+    id: z.string().min(1).describe("Category id (cat_...) from list_categories."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1879,7 +1891,7 @@ const updateCategory = defineTool({
     "nothing keys on the name. Any agent in the account may edit; a rename/redescribe entry is written to the audit log. " +
     "Use merge_categories only for eligible new duplicates; broader merges and deletion are console actions.",
   inputSchema: {
-    id: z.string().min(1).describe("Category id (cat_…)."),
+    id: z.string().min(1).describe("Category id (cat_...)."),
     name: z.string().optional().describe("New display name."),
     description: z.string().optional().describe("New skill-style description."),
   },
@@ -1894,13 +1906,13 @@ const updateCategory = defineTool({
 
 /** Render a one-line summary of the graduation gate status. */
 function renderGraduationStatus(st: GraduationStatus): string {
-  const next = st.next_state ? `→ ${st.next_state}` : "(top rung)";
+  const next = st.next_state ? `-> ${st.next_state}` : "(top rung)";
   const gate =
     st.next_state === "auto_silent"
-      ? ` · maturity ${st.maturity_gate_met ? "MET" : "unmet"} (approvals ${st.clean_approval_count}/${st.graduate_min_approvals}, age ${st.age_met ? "ok" : "young"})`
+      ? ` | maturity ${st.maturity_gate_met ? "MET" : "unmet"} (approvals ${st.clean_approval_count}/${st.graduate_min_approvals}, age ${st.age_met ? "ok" : "young"})`
       : "";
-  const lock = st.never_graduate ? " · LOCKED (never_graduate)" : "";
-  return `${st.category_id} [${st.state}] ${next}${gate} · drift ${st.drift_count}/${st.drift_demote_after} · can_graduate=${st.can_graduate}${lock}`;
+  const lock = st.never_graduate ? " | LOCKED (never_graduate)" : "";
+  return `${st.category_id} [${st.state}] ${next}${gate} | drift ${st.drift_count}/${st.drift_demote_after} | can_graduate=${st.can_graduate}${lock}`;
 }
 
 const getRiskDial = defineTool({
@@ -1924,7 +1936,7 @@ const getRiskDial = defineTool({
         ? dial.categories
             .map(
               (c) =>
-                `• ${c.category_id}: min_confidence ${c.effective.min_confidence}` +
+                `- ${c.category_id}: min_confidence ${c.effective.min_confidence}` +
                 (c.min_confidence === null ? " (inherited)" : " (override)"),
             )
             .join("\n")
@@ -1938,12 +1950,12 @@ const getGraduationStatus = defineTool({
   name: "get_graduation_status",
   title: "Read a category's graduation status",
   description:
-    "Read whether a category is ready to graduate to the NEXT rung (supervised→auto_notify→auto_silent). Reports the " +
+    "Read whether a category is ready to graduate to the NEXT rung (supervised->auto_notify->auto_silent). Reports the " +
     "gates passed / still needed: clean approvals (N / needed), category age, the maturity gate (required for auto_silent, " +
     "D16), the drift counter vs K, and can_graduate (would a human graduate succeed right now). Use this to decide when " +
     "to propose_graduation: you can never flip the bit yourself (a human confirms; D16/D6).",
   inputSchema: {
-    id: z.string().min(1).describe("Category id (cat_…)."),
+    id: z.string().min(1).describe("Category id (cat_...)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1956,13 +1968,13 @@ const getBacklogStatus = defineTool({
   name: "get_backlog_status",
   title: "Read the D19 backlog-reconciliation status",
   description:
-    "Read the category's backlog reconciliation picture (D19/§8): how many of its QUEUED drafts are STALE (composed under " +
+    "Read the category's backlog reconciliation picture (D19/section 8): how many of its QUEUED drafts are STALE (composed under " +
     "older rules: they need a redraft) vs CURRENT-ENOUGH (within tolerance of the current rules-version) against the " +
     "current category rules-version + house-style version. A pure $0-LLM integer compare. Read-only: you READ the picture; " +
     "the human (console scan-backlog) or the graduate/rule-change hooks TRIGGER the actual sweep that releases current-enough " +
     "drafts and nudges stale ones. Use it to see whether your queued drafts are about to be re-checked.",
   inputSchema: {
-    id: z.string().min(1).describe("Category id (cat_…)."),
+    id: z.string().min(1).describe("Category id (cat_...)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -1980,21 +1992,21 @@ const getPacingState = defineTool({
   name: "get_pacing_state",
   title: "Read the demand-driven pacing state for a category",
   description:
-    "Read the category's demand-driven pacing snapshot (M7 Slice B/§8): the human review CURSOR position, the effective " +
+    "Read the category's demand-driven pacing snapshot (M7 Slice B/section 8): the human review CURSOR position, the effective " +
     "lookahead window (freshness is guaranteed only for the next few drafts after the cursor), the HARD per-nudge fan-out " +
     "ceiling (rework_batch_max: one nudge can never fan to 500), the per-agent nudge interval, and each queued draft's " +
     "classification (behind_cursor | in_window_fresh | in_window_redrafting | ahead). A pure $0-LLM read; the cursor advances " +
     "from the human's console approve/reject/edit actions. Use it to see which of your drafts are about to surface (and should " +
     "be redrafted against current rules) vs already passed.",
   inputSchema: {
-    id: z.string().min(1).describe("Category id (cat_…)."),
+    id: z.string().min(1).describe("Category id (cat_...)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
     const st = await client.getPacingState(args.id);
     const text =
       `pacing for ${st.category_id}: cursor ${st.cursor_review_id ?? "(start)"} ` +
-      `(advanced ${st.cursor_advanced_count}×): ${st.queued} queued, ${st.in_window} in-window ` +
+      `(advanced ${st.cursor_advanced_count}x): ${st.queued} queued, ${st.in_window} in-window ` +
       `(${st.redrafting} redrafting), window ${st.lookahead_window}, ceiling ${st.rework_batch_max}, ` +
       `interval ${st.nudge_min_interval_ms}ms`;
     return ok(text, st as unknown as Record<string, unknown>);
@@ -2010,7 +2022,7 @@ const proposeGraduation = defineTool({
     "(console) action; an agent can only propose. A never_graduate category stays locked. Check get_graduation_status " +
     "first so you only propose when the gates are (nearly) met.",
   inputSchema: {
-    id: z.string().min(1).describe("Category id (cat_…)."),
+    id: z.string().min(1).describe("Category id (cat_...)."),
     evidence: z
       .record(z.string(), z.unknown())
       .optional()
@@ -2033,7 +2045,7 @@ const getRules = defineTool({
   name: "get_rules",
   title: "Get the ordered writing-rule set",
   description:
-    "Get the ORDERED active writing rules for a compose/redraft. The §7 precedence ladder is applied SERVER-SIDE " +
+    "Get the ORDERED active writing rules for a compose/redraft. The section 7 precedence ladder is applied SERVER-SIDE " +
     "(deterministic, NO LLM on our side): absolute hard house rules apply across all categories; otherwise project rules outrank broader rules they " +
     "inherits; within a layer, hard before soft; specificity per-agent > category > general; human before agent; newest " +
     "rev; higher priority. Each rule carries its rule_layer (org | project) so you can see where it came from. Returns " +
@@ -2041,7 +2053,7 @@ const getRules = defineTool({
     "the list semantically and write the draft; we never apply a rule. Pass category_id to include that category's rules; " +
     "omit it for ONLY the house-style layer.",
   inputSchema: {
-    category_id: z.string().optional().describe("Category id (cat_…). Empty returns ONLY house-style/general rules."),
+    category_id: z.string().optional().describe("Category id (cat_...). Empty returns ONLY house-style/general rules."),
     scope: z.enum(RULE_SCOPES).optional().describe("Narrow to one layer (general | category). Default returns both."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -2086,7 +2098,7 @@ const saveRule = defineTool({
   name: "save_rule",
   title: "Save / edit a writing rule",
   description:
-    "Maintain a project-level writing rule outside authenticated reviewer feedback. The audit log and undo preserve history. scope='general' iff category_id is empty (applies to this project’s categories); else " +
+    "Maintain a project-level writing rule outside authenticated reviewer feedback. The audit log and undo preserve history. scope='general' iff category_id is empty (applies to this project's categories); else " +
     "category-scoped. Saves are ALWAYS project-layer: the new rule is bound to this key's fixed project (see whoami) and " +
     "its rule_layer is 'project'. Use learn_review_rule for all authenticated reviewer feedback, including project and category guidance. For org-wide house rules, save_rule cannot " +
     "create them. With supersedes_id the write is an EDIT (append-only by supersession: a new rev of the same " +
@@ -2095,13 +2107,13 @@ const saveRule = defineTool({
   inputSchema: {
     client_id: z.string().min(1).max(128).optional().describe("Stable retry id for this exact rule save; reuse it after a timeout. The MCP derives one when omitted."),
     rule_text: z.string().min(1).describe("The rule body, e.g. 'no em-dashes' or 'be more pushy, we need MRR'."),
-    category_id: z.string().optional().describe("Category id (cat_…). Empty = house-style/general (D2)."),
+    category_id: z.string().optional().describe("Category id (cat_...). Empty = house-style/general (D2)."),
     scope: z.enum(RULE_SCOPES).optional().describe("Defaults from category_id (general iff empty)."),
     kind: z.enum(RULE_KINDS).optional().describe("soft (default) or hard (non-overridable)."),
     priority: z.number().int().optional().describe("Higher wins the last ladder tiebreak."),
-    source_review_id: z.string().optional().describe("Provenance: the review this rule was learned from (rr_…)."),
-    source_turn_id: z.string().optional().describe("Provenance: the thread turn (turn_…)."),
-    supersedes_id: z.string().optional().describe("Set to EDIT the prior version (rule_…)."),
+    source_review_id: z.string().optional().describe("Provenance: the review this rule was learned from (rr_...)."),
+    source_turn_id: z.string().optional().describe("Provenance: the thread turn (turn_...)."),
+    supersedes_id: z.string().optional().describe("Set to EDIT the prior version (rule_...)."),
     scope_agent_id: z.string().optional().describe("Set for a per-agent override; empty = all org agents."),
     propagate_to_pending: z
       .boolean()
@@ -2144,7 +2156,7 @@ const promoteRule = defineTool({
     "category rule apply across ALL categories (house-style); promote to 'category' to scope a general rule down. Never " +
     "promote to general without a human signal: house-style has account-wide blast radius (D2).",
   inputSchema: {
-    id: z.string().min(1).describe("Rule id (rule_…)."),
+    id: z.string().min(1).describe("Rule id (rule_...)."),
     to_scope: z.enum(RULE_SCOPES).describe("general (house-style) or category."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -2161,7 +2173,7 @@ const retireRule = defineTool({
     "Soft-delete a rule (status='retired'); the history survives as training data (there is NO hard delete). Use this to " +
     "drop a rule that no longer applies: consolidate redundant rules by saving one merged rule and retiring the originals.",
   inputSchema: {
-    id: z.string().min(1).describe("Rule id (rule_…)."),
+    id: z.string().min(1).describe("Rule id (rule_...)."),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2179,7 +2191,7 @@ const getRuleAudit = defineTool({
     "undo_rule_change.",
   inputSchema: {
     entity_kind: z.enum(AUDIT_ENTITY_KINDS).optional().describe("Narrow to one entity kind."),
-    entity_id: z.string().optional().describe("Narrow to one entity (rule_… or cat_…)."),
+    entity_id: z.string().optional().describe("Narrow to one entity (rule_... or cat_...)."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2196,11 +2208,11 @@ const undoRuleChange = defineTool({
   name: "undo_rule_change",
   title: "Undo a rule change",
   description:
-    "Undo a rule change by its audit-row id (udo_…): restore the prior version as a NEW forward supersession (action=" +
+    "Undo a rule change by its audit-row id (udo_...): restore the prior version as a NEW forward supersession (action=" +
     "'restore'). Agents may undo too (the audit safety net is in both planes: D11). Idempotent: a re-undo of an already-" +
     "undone row is a clean 409. Find the udo_ id via get_rule_audit.",
   inputSchema: {
-    udo_id: z.string().min(1).describe("Audit row id to undo (udo_…)."),
+    udo_id: z.string().min(1).describe("Audit row id to undo (udo_...)."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2209,7 +2221,7 @@ const undoRuleChange = defineTool({
   },
 });
 
-// --- Review Loop (HITL) realtime: durable nudge drain/ack/wait (spec §5.9) ---
+// --- Review Loop (HITL) realtime: durable nudge drain/ack/wait (spec section 5.9) ---
 
 /**
  * Render one review event (durable nudge).
@@ -2222,9 +2234,9 @@ const undoRuleChange = defineTool({
  * to do, which makes the whole drain loop unactionable.
  */
 function renderReviewEvent(e: ReviewEvent): string {
-  const scope = e.review_id ? ` · review: ${e.review_id}` : " · broadcast";
+  const scope = e.review_id ? ` | review: ${e.review_id}` : " | broadcast";
   const terminal = isTerminalReviewEvent(e.reason) ? "  [TERMINAL: this review is done]" : "";
-  const lines = [`• seq ${e.seq} · ${e.reason}${scope} · ${e.id}${terminal}`];
+  const lines = [`- seq ${e.seq} | ${e.reason}${scope} | ${e.id}${terminal}`];
   const acknowledgement = e.review_id
     ? { acks: [{ review_id: e.review_id, through_seq: e.seq }] }
     : { broadcast_ids: [e.id] };
@@ -2232,7 +2244,7 @@ function renderReviewEvent(e: ReviewEvent): string {
   const payload = e.payload ?? {};
   const keys = Object.keys(payload);
   if (keys.length) {
-    lines.push(`   ${keys.map((k) => `${k}=${formatPayloadValue(payload[k])}`).join(" · ")}`);
+    lines.push(`   ${keys.map((k) => `${k}=${formatPayloadValue(payload[k])}`).join(" | ")}`);
   }
   return lines.join("\n");
 }
@@ -2260,11 +2272,11 @@ const listReviewEvents = defineTool({
     "Non-terminal reasons: `redraft_requested` and `rejected` (redraft via submit_revision), `feedback_added` (a " +
     "HUMAN commented: answer or redraft), `rule_changed` and `propagate_general_rule` (re-read get_rules, then " +
     "redraft or restamp_review), `recheck_category` (browse current category descriptions and rules, consolidate eligible semantic duplicates with merge_categories, then fetch fresh get_rules and revise or restamp). `staleness` and `approved` " +
-    "are RESERVED and never emitted. Handle any unknown reason by acking and ignoring it: the set grows additively.\n\n" +
+    "are RESERVED and never emitted. For an unknown reason, inspect the current review before acknowledging; never skip unhandled human feedback merely because its reason is unfamiliar. The set grows additively.\n\n" +
     "Each event's `payload` carries the actionable detail (the delivered message_id, the scrubbed send error, the " +
     "current revision) and is printed with the event.",
   inputSchema: {
-    review_id: z.string().optional().describe("Restrict the drain to one review's events (rr_…)."),
+    review_id: z.string().optional().describe("Restrict the drain to one review's events (rr_...)."),
     limit: z.number().int().min(1).max(100).optional().describe("Max events to return."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -2283,11 +2295,11 @@ const waitForReviewEvent = defineTool({
   name: "wait_for_review_event",
   title: "Wait for a review event",
   description:
-    "Long-poll (~25–55s) for the next review nudge: blocks until one is available OR the deadline, then returns like " +
+    "Long-poll (~25-55s) for the next review nudge: blocks until one is available OR the deadline, then returns like " +
     "list_review_events (empty on timeout: re-call to keep watching). Use this for an always-on agent that wants to " +
     "react to human feedback, delivery outcomes, writing-rule changes and category reconsideration; use list_review_events for recovery. After a newly queued send, first tell the human it has not been sent and share the returned review link for approval, edits or coaching. Immediately wait after that handoff and after every revision, including interactive Hermes sessions. Omit review_id to watch all reviews this caller may access with one durable attention wait. Unlike wait_for_email, this includes reviewer feedback and rule/category updates. No events are acknowledged by waiting; reconnect with the same identity to replay unhandled work, and acknowledge only after successful handling. Cancellation stops the wait, never the reviews. An empty timeout means call again, not finish the task.",
   inputSchema: {
-    review_id: z.string().optional().describe("Restrict the wait to one review's events (rr_…)."),
+    review_id: z.string().optional().describe("Restrict the wait to one review's events (rr_...)."),
     wait_seconds: z.number().int().min(1).max(55).optional().describe("Long-poll budget in seconds (default ~30)."),
     limit: z.number().int().min(1).max(100).optional().describe("Max events to return."),
   },
@@ -2300,15 +2312,20 @@ const waitForReviewEvent = defineTool({
     }, signal);
     // Hosts may mistake identical successful long-poll heartbeats for a stuck
     // tool loop. The observed completion time identifies each finished wait.
-    const completedAt = new Date().toISOString();
-    const text = res.events.length ? res.events.map(renderReviewEvent).join("\n") : `No review events (timed out). Wait completed at ${completedAt}.`;
+    return formatReviewEventsResult(res, true);
+  },
+});
+
+/** Does not acknowledge events or equate observer completion with sending. */
+export function formatReviewEventsResult(res: ReviewEventsResult, timedOut = false): ToolResult {
+    const text = res.events.length ? res.events.map(renderReviewEvent).join("\n")
+      : timedOut ? `No review events (timed out). Wait completed at ${new Date().toISOString()}.` : "No review events.";
     return ok(`${res.events.length} review event(s).\n\n${text}`, {
       events: res.events,
       cursors: res.cursors ?? [],
       ...(res.pending_reviews !== undefined ? { pending_reviews: res.pending_reviews } : {}),
     });
-  },
-});
+}
 
 const ackReviewEvent = defineTool({
   name: "ack_review_event",
@@ -2327,13 +2344,13 @@ const ackReviewEvent = defineTool({
     acks: z
       .array(
         z.strictObject({
-          review_id: z.string().trim().min(1).describe("The review (rr_…) whose cursor to advance."),
+          review_id: z.string().trim().min(1).describe("The review (rr_...) whose cursor to advance."),
           through_seq: z.number().int().min(1).describe("Advance the cursor through this observed event seq (inclusive)."),
         }),
       )
       .max(100)
       .optional()
-      .describe("Per-review cursor advances; use the event’s review_id and seq, not its nudge id."),
+      .describe("Per-review cursor advances; use the event's review_id and seq, not its nudge id."),
     broadcast_ids: z.array(z.string().trim().min(1)).max(100).optional().describe("Only nudge ids for events WITHOUT review_id. Review events require acks instead."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -2344,7 +2361,7 @@ const ackReviewEvent = defineTool({
     const res = await client.ackReviewEvent({ acks: args.acks, broadcast_ids: args.broadcast_ids });
     const cursors = res.cursors ?? [];
     const text = cursors.length
-      ? cursors.map((c) => `• ${c.review_id} → last_acked_seq ${c.last_acked_seq}`).join("\n")
+      ? cursors.map((c) => `- ${c.review_id} -> last_acked_seq ${c.last_acked_seq}`).join("\n")
       : "Acked.";
     return ok(`Acked review events.\n\n${text}`, { cursors });
   },
@@ -2392,11 +2409,11 @@ const getMessage = defineTool({
   name: "get_message",
   title: "Get message",
   description:
-    "Fetch one message by its opaque id (msg_…), as returned by read_messages / search / wait_for_email. The owning " +
+    "Fetch one message by its opaque id (msg_...), as returned by read_messages / search / wait_for_email. The owning " +
     "inbox is resolved from the id. Structured output carries nullable source text/HTML fields and their nullable " +
     "best-effort extracted variants; choose the presentation format below.",
   inputSchema: {
-    id: z.string().min(1).describe("Opaque message id (msg_…)."),
+    id: z.string().min(1).describe("Opaque message id (msg_...)."),
     format: z
       .enum(["auto", "text", "html", "both"])
       .default("auto")
@@ -2424,7 +2441,7 @@ const listAttachments = defineTool({
     "get_attachment to download the bytes. The inbox owns the message.",
   inputSchema: {
     inbox: inboxRef,
-    message_id: z.string().min(1).describe("Opaque message id (msg_…) whose attachments to list."),
+    message_id: z.string().min(1).describe("Opaque message id (msg_...) whose attachments to list."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2434,7 +2451,7 @@ const listAttachments = defineTool({
     });
     const text = page.items.length
       ? page.items
-          .map((a) => `${a.filename} · ${a.content_type} · ${a.size} bytes\n   id: ${a.id}`)
+          .map((a) => `${a.filename} | ${a.content_type} | ${a.size} bytes\n   id: ${a.id}`)
           .join("\n\n")
       : "No attachments on this message.";
     return ok(`${page.items.length} attachment(s).\n\n${text}`, {
@@ -2453,8 +2470,8 @@ const getAttachment = defineTool({
     "inbox owns the message.",
   inputSchema: {
     inbox: inboxRef,
-    message_id: z.string().min(1).describe("Opaque message id (msg_…) the attachment belongs to."),
-    attachment_id: z.string().min(1).describe("Opaque attachment id (att_…) from list_attachments."),
+    message_id: z.string().min(1).describe("Opaque message id (msg_...) the attachment belongs to."),
+    attachment_id: z.string().min(1).describe("Opaque attachment id (att_...) from list_attachments."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2476,7 +2493,7 @@ const markRead = defineTool({
     "read=false to mark unread. The message is resolved from its id; inbox is required to open the right inbox.",
   inputSchema: {
     inbox: inboxRef,
-    id: z.string().min(1).describe("Opaque message id (msg_…)."),
+    id: z.string().min(1).describe("Opaque message id (msg_...)."),
     read: z.boolean().default(true).describe("true to mark read, false to mark unread."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -2540,17 +2557,20 @@ const getThread = defineTool({
   name: "get_thread",
   title: "Get thread",
   description:
-    "Fetch one conversation thread by its stable id (thr_…), with all its messages oldest-first. Use this to read a full " +
-    "back-and-forth before replying. The inbox owns the thread.",
+    "Read a full conversation, all messages oldest-first. If you already have a message, pass its exact message_id; " +
+    "the server resolves the thread for you. Otherwise pass an exact thread_id from list_threads. Provide exactly one " +
+    "selector and its owning inbox. Never decode, shorten or reconstruct opaque IDs. Read this full context before replying.",
   inputSchema: {
     inbox: inboxRef,
-    thread_id: z.string().min(1).describe("Stable thread id (thr_…) from list_threads or a message."),
+    thread_id: z.string().min(1).optional().describe("Exact stable thread id from list_threads. Omit when using message_id."),
+    message_id: z.string().min(1).optional().describe("Exact opaque message id from read_messages, search or get_message; resolves its full conversation. Omit thread_id."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
     const thread: ThreadDetail = await client.getThread({
       inbox: args.inbox,
       thread_id: args.thread_id,
+      message_id: args.message_id,
     });
     const head = renderThread(thread);
     // Source bodies preserve corrections inside quotations; extracted text is only a convenience.
@@ -2608,12 +2628,12 @@ const deleteMessage = defineTool({
   name: "delete_message",
   title: "Delete a message",
   description:
-    "Delete one message by its opaque id (msg_…). By default it is moved to the Trash folder (a recoverable soft " +
+    "Delete one message by its opaque id (msg_...). By default it is moved to the Trash folder (a recoverable soft " +
     "delete); pass expunge=true to permanently remove it. A message already in Trash is always expunged. The inbox " +
     "owns the message. Returns {id, deleted, expunged, count}.",
   inputSchema: {
     inbox: inboxRef.describe("Owned inbox the message belongs to."),
-    id: z.string().min(1).describe("Opaque message id (msg_…)."),
+    id: z.string().min(1).describe("Opaque message id (msg_...)."),
     expunge: z.boolean().default(false).describe("true to permanently remove instead of moving to Trash."),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -2628,12 +2648,12 @@ const deleteThread = defineTool({
   name: "delete_thread",
   title: "Delete a thread",
   description:
-    "Delete an entire conversation thread by its stable id (thr_…): every message in it (across INBOX and Sent). By " +
+    "Delete an entire conversation thread by its stable id (thr_...): every message in it (across INBOX and Sent). By " +
     "default the messages are moved to Trash (recoverable); pass expunge=true to permanently remove them. The inbox " +
     "owns the thread. Returns {id, deleted, expunged, count} where count is the number of messages removed.",
   inputSchema: {
     inbox: inboxRef.describe("Owned inbox the thread belongs to."),
-    thread_id: z.string().min(1).describe("Stable thread id (thr_…) from list_threads or a message."),
+    thread_id: z.string().min(1).describe("Stable thread id (thr_...) from list_threads or a message."),
     expunge: z.boolean().default(false).describe("true to permanently remove instead of moving to Trash."),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -2658,7 +2678,7 @@ const batchUpdateMessages = defineTool({
     "Returns {updated, failed}.",
   inputSchema: {
     inbox: inboxRef.describe("Owned inbox the messages belong to."),
-    ids: z.array(z.string().min(1)).min(1).max(200).describe("Opaque message ids (msg_…), all in this inbox."),
+    ids: z.array(z.string().min(1)).min(1).max(200).describe("Opaque message ids (msg_...), all in this inbox."),
     read: z.boolean().optional().describe("Set (true) or clear (false) the read flag on each id."),
     folder: z
       .enum(["INBOX", "Sent", "Trash", "Junk", "Archive"])
@@ -2850,11 +2870,11 @@ const listWebhooks = defineTool({
 const getWebhook = defineTool({
   name: "get_webhook",
   title: "Get webhook",
-  description: "Fetch one registered webhook by id (whk_…). The signing secret is redacted.",
+  description: "Fetch one registered webhook by id (whk_...). The signing secret is redacted.",
   inputSchema: {
  org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
  project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
-    id: z.string().min(1).describe("Webhook id (whk_…) from register_webhook / list_webhooks."),
+    id: z.string().min(1).describe("Webhook id (whk_...) from register_webhook / list_webhooks."),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2867,14 +2887,14 @@ const updateWebhook = defineTool({
   name: "update_webhook",
   title: "Update webhook",
   description:
-    "Update a registered webhook in place by id (whk_…). Change the delivery `url`, the subscribed `events`, the " +
+    "Update a registered webhook in place by id (whk_...). Change the delivery `url`, the subscribed `events`, the " +
     "`inbox` filter (empty string clears the address filter within the persisted resource boundary), or `active` to " +
     "enable/disable delivery without deleting. Omitted fields are left unchanged. The signing secret is immutable and " +
     "stays redacted. Returns the updated webhook.",
   inputSchema: {
  org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
  project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
-    id: z.string().min(1).describe("Webhook id (whk_…) from register_webhook / list_webhooks."),
+    id: z.string().min(1).describe("Webhook id (whk_...) from register_webhook / list_webhooks."),
     url: z.string().url().optional().describe("Replace the HTTPS delivery endpoint."),
     events: z
       .array(webhookEventEnum)
@@ -2902,11 +2922,11 @@ const updateWebhook = defineTool({
 const deleteWebhook = defineTool({
   name: "delete_webhook",
   title: "Delete webhook",
-  description: "Delete a registered webhook by id (whk_…). Deliveries stop immediately. This cannot be undone.",
+  description: "Delete a registered webhook by id (whk_...). Deliveries stop immediately. This cannot be undone.",
   inputSchema: {
  org_id: z.string().optional().describe("For a broader connection, explicitly select an allowed organization."),
  project_id: z.string().optional().describe("For a broader connection, explicitly select an allowed project."),
-    id: z.string().min(1).describe("Webhook id (whk_…) to delete."),
+    id: z.string().min(1).describe("Webhook id (whk_...) to delete."),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -2969,10 +2989,10 @@ const listContactListEntries = defineTool({
 const deleteContactListEntry = defineTool({
   name: "delete_contact_list_entry",
   title: "Delete a contact allow/block entry",
-  description: "Delete a contact-list entry by id (lst_…). The allow/block rule stops applying immediately.",
+  description: "Delete a contact-list entry by id (lst_...). The allow/block rule stops applying immediately.",
   inputSchema: {
     inbox: inboxRef.describe("Owned inbox the entry belongs to."),
-    id: z.string().min(1).describe("Entry id (lst_…) from add_contact_list_entry / list_contact_lists."),
+    id: z.string().min(1).describe("Entry id (lst_...) from add_contact_list_entry / list_contact_lists."),
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
@@ -3056,7 +3076,7 @@ const revokeSuppression = defineTool({
     "platform-global, or shared-domain id is an indistinguishable not-found). Find the id via list_suppressions or " +
     "check_suppression. Returns the revoked row.",
   inputSchema: {
-    id: z.string().min(1).describe("Suppression row id (sup_…) from list_suppressions / check_suppression."),
+    id: z.string().min(1).describe("Suppression row id (sup_...) from list_suppressions / check_suppression."),
     reason: z
       .string()
       .min(1)
@@ -3089,8 +3109,8 @@ const getDeliverabilityStatus = defineTool({
     const rep: ReputationRollup = await client.getReputation();
     const m = rep.metrics;
     const lines = [
-      `status: ${rep.status} · sending: ${rep.sending_status} · open findings: ${rep.open_findings}`,
-      `metrics: ${m.sends} sends · ${m.bounces} bounces (${(m.bounce_rate * 100).toFixed(2)}%) · ${m.complaints} complaints (${(m.complaint_rate * 100).toFixed(3)}%)`,
+      `status: ${rep.status} | sending: ${rep.sending_status} | open findings: ${rep.open_findings}`,
+      `metrics: ${m.sends} sends | ${m.bounces} bounces (${(m.bounce_rate * 100).toFixed(2)}%) | ${m.complaints} complaints (${(m.complaint_rate * 100).toFixed(3)}%)`,
 
     ];
     return ok(lines.join("\n"), rep as unknown as Record<string, unknown>);
@@ -3198,7 +3218,7 @@ const listDomainEvents = defineTool({
   handler: async (args, { client, profile }) => {
     const result = await client.listDomainEvents(args.domain, { after: args.after, limit: args.limit });
     const page = profile === "assistant" ? assistantDomainEvents(result) : result;
-    const text = page.items.length ? page.items.map((e) => `${e.created_at}: ${e.domain} — ${e.summary}`).join("\n\n") : "No new domain updates. Use get_domain for the current readiness result.";
+    const text = page.items.length ? page.items.map((e) => `${e.created_at}: ${e.domain}  -  ${e.summary}`).join("\n\n") : "No new domain updates. Use get_domain for the current readiness result.";
     return ok(text, page as unknown as Record<string, unknown>);
   },
 });
@@ -3473,9 +3493,9 @@ const streamInfo = defineTool({
       "For active review work, call wait_for_review_event now and keep processing until sent. External workers can consume the SSE journal below:",
       "",
       args.inbox
-        ? `• One inbox:   GET ${url(inboxPath!)}`
-        : `• All inboxes: GET ${url(allPath)}`,
-      args.inbox ? `• All inboxes: GET ${url(allPath)}` : `• One inbox:   GET ${url("/v1/inboxes/{address}/stream")}`,
+        ? `- One inbox:   GET ${url(inboxPath!)}`
+        : `- All inboxes: GET ${url(allPath)}`,
+      args.inbox ? `- All inboxes: GET ${url(allPath)}` : `- One inbox:   GET ${url("/v1/inboxes/{address}/stream")}`,
       "",
       "Headers: Authorization: Bearer <agent key>, Accept: text/event-stream.",
       "Resume:  set Last-Event-ID: <last seq> (or ?last_event_id=<seq>) to replay events after it.",
@@ -3658,6 +3678,13 @@ export function exportToolCatalog(profile: CapabilityProfile = "full"): Record<s
   return ALL_TOOLS.filter(tool => profileAllowsTool(profile, tool.name)).map(tool => tool.describe(profile));
 }
 
+/** Reuse the same profile/schema boundary from optional transport extensions. */
+export function validateToolArguments(name: string, input: unknown, profile: CapabilityProfile = "full"): Record<string, unknown> {
+  const tool = ALL_TOOLS.find(item => item.name === name);
+  if (!tool) throw new Error("Tool unavailable in this connection.");
+  return tool.validate(input, profile);
+}
+
 // The CLI uses the same schemas, handlers, and workflow guidance while a native
 // host is loading its MCP catalog. This is an in-process call, not a transport.
 const CLI_REVIEW_TOOLS = new Set(["whoami", "get_inbox", "list_inboxes", "list_reviews", "get_review", "get_review_turns", "get_review_feedback", "list_review_events", "wait_for_review_event", "ack_review_event", "post_review_chat", "submit_revision", "restamp_review", "list_categories", "get_category", "propose_category", "merge_categories", "get_rules", "learn_review_rule"]);
@@ -3680,12 +3707,12 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
 
 function truncate(text: string, max: number): string {
   const trimmed = text.trim();
-  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max)}…`;
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max)}...`;
 }
 
 /**
  * Map an offline-store sentinel error (by class name, to avoid importing the
- * fixtures module) to the contract's problem-code + HTTP status (redesign §5.1
+ * fixtures module) to the contract's problem-code + HTTP status (redesign section 5.1
  * closed enum). The live path already carries these via {@link ExtrovertApiError};
  * this keeps the OFFLINE error surface identical so an agent switching between
  * mock and live sees the same machine codes.

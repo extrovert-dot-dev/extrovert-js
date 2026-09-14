@@ -1,4 +1,6 @@
 import { Administration } from "./administration.js";
+import { AgentTasks } from "./agent-tasks.js";
+import { observeUntil, type ObserverWaitOptions } from "./observer-wait.js";
 /**
  * ExtrovertClient - the entry point.
  *
@@ -85,6 +87,8 @@ function readEnv(name: string): string | undefined {
 const DEFAULT_RETRY: RetryOptions = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 8000 };
 
 export class ExtrovertClient {
+  /** Durable observers for ownership proof or review attention; never implicit actions. */
+  readonly tasks: AgentTasks;
   /** Customer administration; requires explicit full account control. */
   readonly administration: Administration;
   /** `extrovert.inboxes` - create / list / get / update / delete inboxes. */
@@ -177,6 +181,7 @@ export class ExtrovertClient {
     }
 
     this.administration = new Administration((request) => this.transport.administrativeRequest(request));
+    this.tasks = new AgentTasks(this.transport);
     const ctx = { transport: this.transport, handleOptions: this.handleOptions, keyTier: this.keyTier };
     this.inboxes = new Inboxes(ctx);
     this.messages = new Messages(ctx);
@@ -227,6 +232,10 @@ export class ExtrovertClient {
    * free signup is paused.
    */
   activationStatus(signal?: AbortSignal, waitSeconds?: number): Promise<InboxActivation> { return this.transport.activationStatus(signal, waitSeconds); }
+  /** Wait across request timeouts for ownership proof; does not exchange credentials. */
+  waitForActivation(options: ObserverWaitOptions = {}): Promise<InboxActivation> {
+    return observeUntil((seconds, signal) => this.transport.activationStatus(signal, seconds), result => result.state !== "pending", options);
+  }
   correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation> { return this.transport.correctActivationEmail(human_email, revision, signal); }
 
   verify(req: VerifyRequest, signal?: AbortSignal): Promise<VerifyResponse> {

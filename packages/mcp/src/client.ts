@@ -23,6 +23,7 @@ import { buildAgentContext, fetchAgentContext, type AgentContext } from "./agent
 import { FixtureStore, NotFoundError } from "./fixtures.js";
 import { keyTierFromRawKey } from "./types.js";
 import type {
+  AgentTask, CreateAgentTaskInput,
   LearnReviewRuleRequest, LearnedReviewRule,
   Attachment,
   AttachmentDownload,
@@ -625,6 +626,12 @@ export interface DurableCredentialPersistenceStatus {
 }
 
 export interface ExtrovertClientOptions {
+  /** Explicit test-owned task backend. Never used by a live client. */
+  agentTasks?: {
+    create(input: CreateAgentTaskInput): Promise<AgentTask>;
+    get(id: string): Promise<AgentTask>;
+    cancel(id: string): Promise<AgentTask>;
+  };
   /** Local CLI/stdio only. Resolves a fresh credential before each request, without retrying requests. */
   credentialProvider?: () => Promise<string>;
   /**
@@ -728,6 +735,31 @@ export class ExtrovertClient {
     return this.config.mock;
   }
 
+  /** Observer state is persisted by the API, never the hosted MCP process. */
+  async createAgentTask(input: CreateAgentTaskInput): Promise<AgentTask> {
+    if (this.store) {
+      if (!this.options.agentTasks) throw new Error("Durable tasks require an explicit test backend in mock mode.");
+      return this.options.agentTasks.create(input);
+    }
+    return this.post("/v1/agent-tasks", input);
+  }
+
+  async getAgentTask(id: string): Promise<AgentTask> {
+    if (this.store) {
+      if (!this.options.agentTasks) throw new Error("Durable tasks require an explicit test backend in mock mode.");
+      return this.options.agentTasks.get(id);
+    }
+    return this.get(`/v1/agent-tasks/${encodeURIComponent(id)}`);
+  }
+
+  async cancelAgentTask(id: string): Promise<AgentTask> {
+    if (this.store) {
+      if (!this.options.agentTasks) throw new Error("Durable tasks require an explicit test backend in mock mode.");
+      return this.options.agentTasks.cancel(id);
+    }
+    return this.post(`/v1/agent-tasks/${encodeURIComponent(id)}/cancel`, {});
+  }
+
   // ---- enrollment (POST /v1/enroll) -------------------------------------
 
   async redeemEnrollment(input: RedeemEnrollmentInput): Promise<EnrollmentResult> {
@@ -785,9 +817,9 @@ export class ExtrovertClient {
     return res;
   }
 
-  async activationStatus(wait_seconds = 0): Promise<InboxActivation> {
+  async activationStatus(wait_seconds = 0, signal?: AbortSignal): Promise<InboxActivation> {
     if (this.store) return this.store.activationStatus();
-    return this.request<InboxActivation>("GET", "/v1/agent/activation", undefined, { wait_seconds }, (wait_seconds + 10) * 1000);
+    return this.request<InboxActivation>("GET", "/v1/agent/activation", undefined, { wait_seconds }, (wait_seconds + 10) * 1000, undefined, signal);
   }
 
   async correctActivationEmail(human_email: string, revision: number): Promise<InboxActivation> {
@@ -1595,13 +1627,29 @@ export class ExtrovertClient {
   }
 
   /**
-   * Fetch one thread (with its messages, oldest-first) by stable id, scoped to
-   * the owning inbox: `GET /v1/inboxes/{inbox_id}/threads/{id}`.
+   * Fetch one full conversation by exactly one opaque thread or message selector.
+   * Message selection composes existing authorized reads, never parses IDs.
    */
-  async getThread(input: { inbox: string; thread_id: string }): Promise<ThreadDetail> {
-    if (this.store) return this.store.getThread(input.inbox, input.thread_id);
+  async getThread(input: { inbox: string; thread_id?: string; message_id?: string }): Promise<ThreadDetail> {
+    if ((input.thread_id !== undefined) === (input.message_id !== undefined) ||
+        !(input.thread_id ?? input.message_id)?.trim()) {
+      throw new ExtrovertApiError("Provide exactly one nonempty thread_id or message_id.", 400, "invalid_argument");
+    }
+    let threadId = input.thread_id;
+    if (input.message_id !== undefined) {
+      const inbox = await this.getInbox(input.inbox);
+      const message = await this.getMessage(input.message_id);
+      if (!inbox.address || !message.inbox || inbox.address.toLowerCase() !== message.inbox.toLowerCase()) {
+        throw new ExtrovertApiError("Message not found in the selected inbox.", 404, "not_found");
+      }
+      if (!message.thread_id?.trim()) {
+        throw new ExtrovertApiError("Message has no available conversation reference.", 502, "invalid_response");
+      }
+      threadId = message.thread_id;
+    }
+    if (this.store) return this.store.getThread(input.inbox, threadId!);
     return this.get<ThreadDetail>(
-      `/v1/inboxes/${encodeURIComponent(input.inbox)}/threads/${encodeURIComponent(input.thread_id)}`,
+      `/v1/inboxes/${encodeURIComponent(input.inbox)}/threads/${encodeURIComponent(threadId!)}`,
     );
   }
 

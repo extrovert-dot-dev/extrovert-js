@@ -784,6 +784,26 @@ export interface CategoryPacingState {
   items: PacingItem[];
 }
 
+/** Durable observer, not an authorization to activate an account or send mail. */
+export interface CreateAgentTaskInput {
+  kind: "activation" | "review";
+  review_id?: string;
+  limit?: number;
+  ttl_seconds?: number;
+  client_id?: string;
+}
+
+export interface AgentTask {
+  id: string;
+  kind: "activation" | "review";
+  status: "working" | "completed" | "cancelled";
+  created_at: string;
+  last_updated_at: string;
+  expires_at: string;
+  poll_interval_ms: number;
+  result?: InboxActivation | ReviewEventsResult;
+}
+
 /** Drain result for list/wait: un-acked events in FIFO seq order + cursors. */
 export interface ReviewEventsResult {
   pending_reviews?: number;

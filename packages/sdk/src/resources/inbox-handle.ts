@@ -7,6 +7,7 @@
  */
 
 import type { AttachmentDownload, Transport } from "../transport.js";
+import { readThreadByMessage } from "../thread-workflow.js";
 import type {
   AddContactListRequest,
   Attachment,
@@ -247,6 +248,15 @@ export class InboxHandle {
   /** Fetch one thread (with its messages) in this inbox by stable id. */
   thread(threadId: string, signal?: AbortSignal): Promise<ThreadDetail> {
     return this.transport.getThread(this.ref, threadId, signal);
+  }
+
+  /** Read a message's complete conversation in this inbox. */
+  threadByMessage(messageId: string, signal?: AbortSignal): Promise<ThreadDetail> {
+    return readThreadByMessage({
+      inbox: s => this.transport.getInbox(this.ref, s),
+      message: (id, s) => this.transport.getMessage(id, s),
+      thread: (id, s) => this.transport.getThread(this.ref, id, s),
+    }, messageId, signal);
   }
 
   /** Check an accepted submission without sending it again. */

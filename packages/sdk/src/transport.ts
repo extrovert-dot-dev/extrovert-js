@@ -1,4 +1,6 @@
 import { ensureSendIdempotencyKey } from "./send-idempotency.js";
+import type { AgentTask, CreateAgentTaskRequest } from "./agent-tasks.js";
+import { agentTaskFixtures } from "./agent-task-fixtures.js";
 import type { ListWebhooksParams, ConnectionResourceSelection } from "./models.js";
 import type { AdministrativeRequest } from "./administration.js";
 import { normalizeInboxPage } from "./inbox-page.js";
@@ -118,6 +120,9 @@ export interface AttachmentDownload {
 
 /** The RPC surface every transport implements. One method per spec §8 endpoint. */
 export interface Transport {
+  createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<AgentTask>;
+  getAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask>;
+  cancelAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask>;
   administrativeRequest(request: AdministrativeRequest): Promise<unknown>;
   enroll(req: EnrollRequest, signal?: AbortSignal): Promise<EnrollResponse>;
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse>;
@@ -190,6 +195,7 @@ export interface Transport {
   listThreads(address: string, params: ListThreadsParams, signal?: AbortSignal): Promise<Page<Thread>>;
   searchThreads(address: string, params: SearchMessagesParams, signal?: AbortSignal): Promise<Page<Thread>>;
   getThread(address: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail>;
+  getThreadInProject(projectId: string, inboxId: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail>;
   getSubmission(address: string, submissionId: string, signal?: AbortSignal): Promise<Submission>;
   listInboxOutbox(address: string, params?: { before?: string; limit?: number }, signal?: AbortSignal): Promise<{ items: OutboxItem[]; next_before?: string }>;
   getSubmissionInProject(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission>;
@@ -382,6 +388,15 @@ function forwardBody(req: ForwardRequest): Record<string, unknown> {
 /** Live transport: each method maps to a `/v1` request. */
 export class HttpTransport implements Transport {
   constructor(private readonly http: HttpClient) {}
+  createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<AgentTask> {
+    return this.call({ method: "POST", path: "/v1/agent-tasks", body: input, query: selection ? { ...selection } : undefined, signal });
+  }
+  getAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask> {
+    return this.call({ method: "GET", path: `/v1/agent-tasks/${encodeURIComponent(id)}`, signal });
+  }
+  cancelAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask> {
+    return this.call({ method: "POST", path: `/v1/agent-tasks/${encodeURIComponent(id)}/cancel`, signal });
+  }
 
   async administrativeRequest(request: AdministrativeRequest): Promise<unknown> {
     const options = { method: request.method, path: request.path, query: request.query, body: request.body, signal: request.signal, retryable: request.method === "GET" };
@@ -680,6 +695,12 @@ export class HttpTransport implements Transport {
       path: `/v1/inboxes/${this.encodeAddress(address)}/threads/${encodeURIComponent(threadId)}`,
       signal,
     });
+  }
+
+  getThreadInProject(projectId: string, inboxId: string, threadId: string, signal?: AbortSignal): Promise<ThreadDetail> {
+    return this.call({ method: "GET",
+      path: `/v1/projects/${encodeURIComponent(projectId)}/inboxes/${encodeURIComponent(inboxId)}/threads/${encodeURIComponent(threadId)}`,
+      signal });
   }
 
   getSubmission(address: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
@@ -1204,6 +1225,13 @@ export class HttpTransport implements Transport {
 
 /** Offline transport backed by {@link MockBackend}. Never touches the network. */
 export class MockTransport implements Transport {
+  async createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection: ConnectionResourceSelection = {}): Promise<AgentTask> {
+    signal?.throwIfAborted();
+    if (selection.org_id || selection.project_id) throw new Error("Offline observer fixtures do not simulate organization/project selection; use live credentials for scoped checks.");
+    return agentTaskFixtures(this.backend).create(input);
+  }
+  async getAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask> { signal?.throwIfAborted(); return agentTaskFixtures(this.backend).get(id); }
+  async cancelAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask> { signal?.throwIfAborted(); return agentTaskFixtures(this.backend).cancel(id); }
   readonly backend: MockBackend;
   constructor(backend?: MockBackend) {
     this.backend = backend ?? new MockBackend();
@@ -1356,6 +1384,10 @@ export class MockTransport implements Transport {
     } catch {
       throw notFound("thread", threadId);
     }
+  }
+  async getThreadInProject(projectId: string, inboxId: string, threadId: string): Promise<ThreadDetail> {
+    const inbox = await this.getInboxInProject(projectId, inboxId);
+    return this.getThread(inbox.id, threadId);
   }
   async getSubmission(address: string, submissionId: string): Promise<Submission> {
     const result = this.backend.getSubmission(address, submissionId);

@@ -30,6 +30,9 @@
 
 export { ExtrovertClient, ExtrovertClient as Extrovert, DEFAULT_BASE_URL, MOCK_BASE_URL } from "./client.js";
 export type { ExtrovertClientOptions } from "./client.js";
+export type { ObserverWaitOptions } from "./observer-wait.js";
+export { AgentTasks } from "./agent-tasks.js";
+export type { AgentTask, CreateAgentTaskRequest } from "./agent-tasks.js";
 
 // Resource classes (for advanced typing / DI).
 export { Inboxes, Messages, Threads, Submissions, Webhooks, ContactLists, Suppressions, Domains, Commerce, Reviews, ReviewEvents, Categories, Rules, Projects, ProjectInboxes, InboxHandle } from "./resources/index.js";

@@ -2,13 +2,23 @@
 
 # @extrovert.dev/sdk
 
-For pending review attention, use one `client.reviews.events.wait({ wait_seconds: 55,
-limit: 100 }, signal)` across accessible reviews. It includes human feedback and
+For pending review attention, use one `client.reviews.events.watch({ limit: 100 },
+{ timeoutSeconds: 86400, signal })` across accessible reviews. It quietly repeats
+short requests without model calls. The default watch is 30 minutes; the maximum
+is 24 hours. A zero budget performs one nonblocking read. It includes human feedback and
 rule/category changes; `waitForEmail` watches incoming mail only. Reconnect with the
 same identity to replay unhandled events, and acknowledge only after handling them.
 Cancellation ends the wait without cancelling reviews. Reply requests may supply an
 explicit nonempty `to` array; omission keeps the parent-derived recipients. Read the
-thread and writing rules before drafting; pass its `context_version` as `expected_context_version` and the rules read’s `composition_token`.
+thread and writing rules before drafting; pass its `context_version` as `expected_context_version` and the rules read's `composition_token`.
+
+For a durable handle, use `client.tasks.create({ kind: "review", ttl_seconds: 86400,
+client_id: "watch-1" })`, then `client.tasks.get(id)` or `client.tasks.cancel(id)`.
+Resume with the same credential family and original resource selection. The API
+rechecks access even for completed results. Completion returns an immutable
+attention snapshot, not a sent outcome; read current review state before acting.
+Cancellation or expiry never cancels the review. Existing `events.wait` remains a
+single bounded request. [Waiting guide](https://docs.extrovert.dev/mcp/waiting/).
 
 **A real inbox for your agent, in one call.**
 
@@ -157,11 +167,11 @@ const x = new Extrovert({ apiKey: process.env.EXTROVERT_API_KEY! });
 const { project_id } = await x.whoami();          // the key's fixed project
 
 // Create / send / list in a project: keyed by the opaque inbox_id.
-const inbox = await x.projects.inboxes.create(project_id!, { username: "ada" });
+const inbox = await x.projects.inboxes.create(project_id!, { username: "adabot" });
 const rules = await x.rules.get(); // Read and apply before composing.
 if (!rules.composition_token) throw new Error("Full writing rules must return a composition token");
-await x.projects.inboxes.send(project_id!, inbox.id, { composition_token: rules.composition_token, to: "ops@acme.test", subject: "hi", text: "…",
-  intent: { summary: "…one sentence for the human reviewer…" } });   // queues for review
+await x.projects.inboxes.send(project_id!, inbox.id, { composition_token: rules.composition_token, to: "ops@acme.test", subject: "hi", text: "...",
+  intent: { summary: "...one sentence for the human reviewer..." } });   // queues for review
 
 // One list envelope: { object: "list", data, has_more, next_cursor }. The ListPage
 // auto-paginates over OPAQUE cursors: never thread a cursor by hand.
@@ -169,7 +179,7 @@ const page = await x.projects.inboxes.list(project_id!, { limit: 50 });
 for await (const ib of page) console.log(ib.id);   // walks every page
 const all = await (await x.projects.inboxes.list(project_id!)).collect();  // eager
 
-// Expand relations (per-resource allowlist, depth ≤ 2):
+// Expand relations (per-resource allowlist, depth <= 2):
 await x.projects.inboxes.get(project_id!, inbox.id, { include: ["agent", "domain"] });
 ```
 
@@ -276,8 +286,8 @@ console.log(me.org_id, me.project_id, me.scopes);
 
 ## Inbox metadata: attach your own key-value data
 
-Every inbox carries an arbitrary `metadata` object (string / number / boolean values; ≤256 keys,
-≤256 chars per key and per string value). Set it at create time, read it on every inbox shape, and
+Every inbox carries an arbitrary `metadata` object (string / number / boolean values; <=256 keys,
+<=256 chars per key and per string value). Set it at create time, read it on every inbox shape, and
 patch it in place with shallow-merge / null-delete semantics: no delete+recreate.
 
 ```ts
@@ -327,10 +337,15 @@ const summary = firstPage.items[0];
 if (summary) {
   const thread = await extrovert.threads.get(inbox.address, summary.id);
   const sourceBodies = thread.messages.map((message) => message.text ?? message.html);
+  if (sourceBodies.some((body) => body == null)) {
+    throw new Error("A source body is unavailable; resolve the missing context before composing.");
+  }
+  // Read every source body, including quoted corrections, before writing.
+  // If your host truncates this data, read the affected messages separately.
   const rules = await extrovert.rules.get(); // Read and apply before writing.
   if (!rules.composition_token) throw new Error("Full writing rules must return a composition token");
   const pending = await extrovert.reviews.list({ inbox: inbox.address, thread_id: thread.id });
-  // Coordinate pending responses before composing; do not duplicate another composer’s work.
+  // Coordinate pending responses before composing; do not duplicate another composer's work.
 
   // Recipients, subject, In-Reply-To, and References are derived server-side.
   await extrovert.threads.reply(inbox.address, {
@@ -338,7 +353,7 @@ if (summary) {
     expected_context_version: thread.context_version,
     expected_last_message_id: thread.last_message_id,
     composition_token: rules.composition_token,
-    text: "On it — thanks.",
+    text: "On it  -  thanks.",
     intent: { summary: "Acknowledge the deployment request." },
     idempotency_key: "deployment-ack-v1",
   });
@@ -347,6 +362,10 @@ if (summary) {
 
 If conversation context changes, `expected_context_version` returns a 409: fetch the entire thread again and
 reconsider the draft. It is an optimistic check at submission, not an atomic lock through delivery.
+The SDK returns structured source messages. MCP's bounded text rendering separately
+reports `text_context_complete` and `incomplete_message_ids`: read those IDs with
+`get_message` and `variant: "source"` before composing. A preview or extracted body
+is not evidence that all source text was read.
 
 For an inbox-bound style, use `inbox.threads(...)`, `inbox.searchThreads(...)`,
 `inbox.thread(...)`, `inbox.reply(...)`, and `inbox.deleteThread(...)`.
@@ -581,7 +600,7 @@ protocol; there is no `/v1/contract` endpoint). Three guarantees:
   version, the MCP server, and the OpenAPI `info.version`. Pin it; pin `CONTRACT_MANIFEST` for the
   exact shape set you built against.
 - **Named, documented types.** The five canonical shapes: `ReviewIntent`, `ReviewFeedback`,
-  `DiffJson` (+`DiffHunk`), `Rule`, `ReviewEvent`: plus the full M1–M8 surface (submit/states,
+  `DiffJson` (+`DiffHunk`), `Rule`, `ReviewEvent`: plus the review workflow surface (submit/states,
   chat, categories, graduation + risk dial, reconciliation + pacing, rules + audit, the BYO reviewer
   decision plane) are exported as named TypeScript types from the `contract` module.
   `CONTRACT_MANIFEST.shapes` enumerates them all by name.
@@ -591,7 +610,7 @@ protocol; there is no `/v1/contract` endpoint). Three guarantees:
   the build breaks: the published types can't silently diverge from the wire.
 
 > **Provisional 0.x.** The contract is open and documented but MAY still evolve additively before
-> 1.0 (no external users yet). Pin `CONTRACT_VERSION` and `CONTRACT_MANIFEST`.
+> 1.0. Pin `CONTRACT_VERSION` and `CONTRACT_MANIFEST`.
 
 ---
 
@@ -615,13 +634,13 @@ EXTROVERT_API_BASE_URL=mock npx tsx examples/wait-for-otp.ts
 
 ---
 
-MIT © Message Science. *A side gate for agents.*
+MIT (c) Message Science. *A side gate for agents.*
 
 ## Incoming-email activation
 
 When signup returns `activation_method: "incoming_email"`, ask the human to send an
 email from `human_email` to `address`. The inbox reservation expires at
-`activation_expires_at`. Keep the temporary key and call `activationStatus()` until
+`activation_expires_at`. Keep the temporary key and use `waitForActivation()` or call `activationStatus()` until
 `state` is `"proven"`, then call `verify({})` to receive the durable key. Pending keys
 cannot read or send mail. `correctActivationEmail(humanEmail, revision)` clears any
 previous proof and keeps the original deadline. Legacy signup responses that issued
@@ -646,16 +665,16 @@ keys do not grant manager administration.
 Hosted MCP OAuth tokens have a different audience; do not copy them into a direct SDK client.
 
 To hand a manager a key without OAuth, select its project in the console, then open
-**Credentials → API keys → Create project manager key**. Choose expiry and whether
+**Credentials -> API keys -> Create project manager key**. Choose expiry and whether
 sending is allowed; store the one-time secret in `EXTROVERT_API_KEY`. Alternatively,
-authorize the manager through OAuth with **Project → Project manager**; include
+authorize the manager through OAuth with **Project -> Project manager**; include
 **Send mail** under Custom if its workers need sending permission.
 
 Start with `client.whoami()` to verify the fixed organization/project and scopes.
 Use `createAgent` and `adminCreateInbox` through `client.administration.call` for its
 team. Use `createConnectionCredential` to hand off a worker or submanager credential:
 inspect `client.administration.describe("createConnectionCredential")`, pass the
-manager’s own connection ID, and request only its project and a subset of its scopes.
+manager's own connection ID, and request only its project and a subset of its scopes.
 Submanagers need explicit `agent:manage` and `credential:delegate`; ordinary workers
 do not. The human-only root-key endpoint is a console/API action, separate from
 this parent-attributed delegation path. Workers survive ordinary parent revocation;

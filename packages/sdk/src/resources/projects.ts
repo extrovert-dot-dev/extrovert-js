@@ -21,6 +21,7 @@
  */
 
 import type { Transport, AttachmentDownload } from "../transport.js";
+import { readThreadByMessage } from "../thread-workflow.js";
 import { ValidationError } from "../errors.js";
 import { ListPage } from "../pagination.js";
 import type {
@@ -266,6 +267,16 @@ export class ProjectInboxes {
     return this.ctx.transport.getThread(this.ref(projectId, inboxId), threadId, signal);
   }
 
+  /** Resolve a message's full conversation, retaining the explicit project boundary. */
+  threadByMessage(projectId: string, inboxId: string, messageId: string, signal?: AbortSignal): Promise<ThreadDetail> {
+    this.ref(projectId, inboxId);
+    return readThreadByMessage({
+      inbox: s => this.ctx.transport.getInboxInProject(projectId, inboxId, {}, s),
+      message: (id, s) => this.ctx.transport.getMessage(id, s),
+      thread: (id, s) => this.ctx.transport.getThreadInProject(projectId, inboxId, id, s),
+    }, messageId, signal);
+  }
+
   /** Read recipient transport and Sent-copy status for an accepted submission. */
   getSubmission(projectId: string, inboxId: string, submissionId: string, signal?: AbortSignal): Promise<Submission> {
     return this.ctx.transport.getSubmissionInProject(projectId, inboxId, submissionId, signal);
@@ -292,13 +303,17 @@ export class ProjectInboxes {
   /**
    * The inbox reference the message/send/thread transport methods key on.
    *
-   * The frozen contract project-prefixes ONLY the inbox collection/item/credentials
+   * The legacy chain below originally project-prefixed ONLY collection/item/credentials
    * routes (`/v1/projects/{project_id}/inboxes[/{inbox_id}][/credentials]`); the
-   * send/reply/forward/message/thread/wait sub-ops have NO project-prefixed path :
+   * send/reply/forward/message/thread/wait sub-ops used bare paths:
    * they address the inbox by its opaque id directly (`/v1/inboxes/{inbox_id}/…`),
    * where the project is implicit in (and enforced by) the inbox id server-side.
    *
-   * So for these sub-ops `projectId` cannot be carried on the URL and is NOT a URL
+   * The new threadByMessage workflow does not use this legacy routing: it retains
+   * the real project-prefixed inbox and thread routes and uses this helper only
+   * to validate the caller's project argument.
+   *
+   * For the legacy sub-ops `projectId` is not carried on the URL and is NOT a URL
    * selector. The adversarial review flagged that silently discarding it makes the
    * signature misleading. CHOICE: keep the arg (dropping it would break the chain's
    * symmetry with create/list/get/update/delete: the more disruptive option) but

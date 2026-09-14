@@ -39,7 +39,7 @@ const INSTRUCTIONS = [
   "     acknowledge handled events, and wait again. A timeout is a heartbeat, not completion. Only confirmed sent succeeds.",
   "     Maintain one wait across pending messages. Resume your own pending list_reviews (composer=me) after interruption.",
   "  4. wait_for_email: block for an incoming message and read the extracted OTP code / verification link.",
-  "  5. list_threads / search_threads → get_thread: find and read every source message in a conversation; finish all incomplete-body reads before replying.",
+  "  5. list_threads / search_threads -> get_thread: find and read every source message in a conversation; finish all incomplete-body reads before replying.",
   "     Read get_rules BEFORE writing; pass its composition_token yourself. No tool fetches it silently at submission.",
   "     Reply once to the newest message using the read context_version as expected_context_version; on 409 reread and reconsider.",
   "     Check list_reviews with inbox/thread_id and no composer filter to coordinate existing drafts across accessible composers.",
@@ -74,6 +74,8 @@ export interface CreateExtrovertServerOptions {
   config?: ExtrovertConfig;
   client?: ExtrovertClient;
   profile?: CapabilityProfile;
+  /** Only true when the serving transport has the current Tasks adapter. */
+  tasksEnabled?: boolean;
 }
 
 /** Create a configured Extrovert MCP server (and its client). */
@@ -90,7 +92,7 @@ export function createExtrovertServer(options: CreateExtrovertServerOptions = {}
     {
       // Catalogs are fixed for each build; the stateless HTTP deployment has no
       // cross-node catalog notification publisher. Do not promise push updates.
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: false }, ...(options.tasksEnabled ? { extensions: { "io.modelcontextprotocol/tasks": {} } } : {}) },
       // SDK codecs emit these only for supported modern protocol requests.
       // Older clients retain their negotiated wire format and use live context.
       cacheHints: {

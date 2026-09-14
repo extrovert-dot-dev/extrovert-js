@@ -37,6 +37,7 @@ import { buildAgentContext } from "./agent-context.js";
 import { createExtrovertServer } from "./server.js";
 import { ASSISTANT_INSTRUCTIONS, ASSISTANT_PROFILE, ASSISTANT_TOOL_NAMES, type CapabilityProfile } from "./profiles.js";
 import { ASSISTANT_RELEASE } from "./assistant-release.generated.js";
+import { handleTaskMessage, type TaskProtocolOptions } from "./agent-tasks.js";
 
 export interface HttpServerOptions {
   port?: number;
@@ -50,6 +51,8 @@ export interface CreateHttpAppOptions extends HttpServerOptions {
   oauthMetadata?: OAuthMetadata;
   authConfig?: HostedAuthConfig;
   baseConfig?: ExtrovertConfig;
+  /** Explicit offline test backend; live requests always use authenticated API access. */
+  mockTaskClient?: TaskProtocolOptions["client"];
 }
 
 export interface HttpApp {
@@ -103,11 +106,11 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
   });
 
   const makeHandler = (profile: CapabilityProfile) => createMcpHandler(
-    ({ authInfo }) => {
+    ({ authInfo, era }) => {
       const apiToken = authInfo?.extra?.apiToken;
       const config = configForRequest(baseConfig, typeof apiToken === "string" ? apiToken : authInfo?.token);
       const client = new ExtrovertClient(config);
-      return createExtrovertServer({ config, client, profile }).server;
+      return createExtrovertServer({ config, client, profile, tasksEnabled: era === "modern" && (!config.mock || options.mockTaskClient !== undefined) }).server;
     },
     {
       legacy: "stateless",
@@ -122,6 +125,31 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
   const assistantNodeHandler = toNodeHandler(assistantHandler, {
     onerror: () => process.stderr.write("extrovert-mcp: assistant HTTP adapter error\n"),
   });
+  const dispatch = (profile: CapabilityProfile, fallback: typeof nodeHandler) => async (req: Request, res: Response): Promise<void> => {
+    if (req.method === "POST" && req.is("application/json")) {
+      const apiToken = req.auth?.extra?.apiToken;
+      const config = configForRequest(baseConfig, typeof apiToken === "string" ? apiToken : req.auth?.token);
+      if (!config.mock || options.mockTaskClient) {
+        // This handler is mounted AFTER the same bearer verification as MCP.
+        const response = await handleTaskMessage(req.body, {
+          client: config.mock && options.mockTaskClient ? options.mockTaskClient : new ExtrovertClient(config),
+          profile,
+          headers: {
+            protocolVersion: req.get("MCP-Protocol-Version"),
+            method: req.get("Mcp-Method"), name: req.get("Mcp-Name"),
+          },
+        });
+        if (response) {
+          res.setHeader("Cache-Control", "no-store");
+          res.status(200).json(response);
+          return;
+        }
+      }
+    }
+    await fallback(req, res, req.body);
+  };
+  const fullDispatch = dispatch("full", nodeHandler);
+  const assistantDispatch = dispatch("assistant", assistantNodeHandler);
 
   const challenge = env.EXTROVERT_OPENAI_APPS_CHALLENGE;
   if (challenge !== undefined && challenge !== "" && (challenge.length > 4096 || /\s/.test(challenge))) {
@@ -184,7 +212,7 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
         verifier: assistantVerifier,
         resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(assistantResource),
       }),
-      (req: Request, res: Response) => { void assistantNodeHandler(req, res, req.body); },
+      assistantDispatch,
     );
     app.all(
       "/mcp",
@@ -192,14 +220,10 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
         verifier,
         resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(authConfig.resourceUrl),
       }),
-      (req: Request, res: Response) => {
-        void nodeHandler(req, res, req.body);
-      },
+      fullDispatch,
     );
   } else {
-    app.all("/mcp", (req: Request, res: Response) => {
-      void nodeHandler(req, res, req.body);
-    });
+    app.all("/mcp", fullDispatch);
   }
 
   return { app, handler, authEnabled, close: async () => { await Promise.all([handler.close(), assistantHandler.close()]); } };
