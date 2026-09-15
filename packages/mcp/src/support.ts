@@ -1,3 +1,8 @@
+/** support:submit (included in new presets) files and follows own feedback/cases.
+ * Explicit support:read / support:write grants cover other records within the
+ * credential's authorized project or organization and resource ceilings.
+ * Custom credential scopes replace defaults; omit support scopes to opt out.
+ */
 /** Structured customer evidence. Never pass tool transcripts, mail bodies or credentials. */
 export interface FeedbackInput {
   client_id: string;

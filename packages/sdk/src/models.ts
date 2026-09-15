@@ -45,6 +45,7 @@ export type Scope =
   | "commerce:request"
   | "review:act"
   | "signup:verify"
+  | "support:submit"
   | "support:read"
   | "support:write";
 
