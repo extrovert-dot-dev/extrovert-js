@@ -33,7 +33,7 @@ export function parseSkillInspection(args: string[], env: NodeJS.ProcessEnv): Sk
   }
   const scope = values.get("--scope");
   const names = (values.get("--skills") ?? "").split(",");
-  if (!["claude", "codex", "hermes"].includes(host ?? "") || !["project", "user"].includes(scope ?? "") || names.length > 9 || new Set(names).size !== names.length || names.some(name => !Object.hasOwn(AGENT_RELEASE.skills, name))) throw new Error("Specify a supported host, project|user scope, and exact published Extrovert skill names.");
+  if (!["claude", "codex", "hermes"].includes(host ?? "") || !["project", "user"].includes(scope ?? "") || names.length > Object.keys(AGENT_RELEASE.skills).length || new Set(names).size !== names.length || names.some(name => !Object.hasOwn(AGENT_RELEASE.skills, name))) throw new Error("Specify a supported host, project|user scope, and exact published Extrovert skill names.");
   return { host: host as SkillHost, scope: scope as SkillScope, names };
 }
 

@@ -26,7 +26,7 @@ export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert with
 
 Usage:
   extrovert tool describe <review-tool-name>
-  extrovert tool call <review-tool-name> --input-stdin [--json]
+  extrovert tool call <review-or-support-tool-name> --input-stdin [--json]
   extrovert version [--json]
   extrovert agent status [--json]
   extrovert agent status --host auto|claude|codex|hermes --scope project|user

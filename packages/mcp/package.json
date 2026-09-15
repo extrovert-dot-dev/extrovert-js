@@ -1,6 +1,6 @@
 {
   "name": "@extrovert.dev/mcp",
-  "version": "0.1.1-pre.0",
+  "version": "0.1.1",
   "description": "Extrovert MCP server - a real mailbox for your agent, in one call. Tools incl. a blocking wait_for_email with OTP/link extraction.",
   "keywords": [
     "extrovert",
@@ -24,7 +24,7 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "next"
+    "tag": "latest"
   },
   "type": "module",
   "bin": {

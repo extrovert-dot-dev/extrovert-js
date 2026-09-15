@@ -9,7 +9,8 @@ const TIMEOUT_MS = 5_000;
 
 const releaseSchema = z.object({
   schema_version: z.literal(1), release_version: z.string().max(80), channel: z.enum(["latest", "next", "beta"]),
-  skills: z.record(z.string().max(64), z.object({ version: z.string().max(80), sha256: z.string().regex(/^[a-f0-9]{64}$/), source: z.string().url() })),
+  skill_digest_format: z.string().max(500).optional(),
+  skills: z.record(z.string().max(64), z.object({ version: z.string().max(80), sha256: z.string().regex(/^[a-f0-9]{64}$/), skill_md_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), source: z.string().url() })),
 });
 export const agentContextSchema = releaseSchema.extend({
   published_cli_version: z.string().max(80).nullable(), publication_observed_at: z.string().max(40).nullable(),

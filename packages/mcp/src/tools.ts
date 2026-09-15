@@ -3744,9 +3744,10 @@ export function validateToolArguments(name: string, input: unknown, profile: Cap
 // The CLI uses the same schemas, handlers, and workflow guidance while a native
 // host is loading its MCP catalog. This is an in-process call, not a transport.
 const CLI_REVIEW_TOOLS = new Set(["whoami", "get_inbox", "list_inboxes", "list_reviews", "get_review", "get_review_turns", "get_review_feedback", "list_review_events", "wait_for_review_event", "ack_review_event", "post_review_chat", "submit_revision", "restamp_review", "list_categories", "get_category", "propose_category", "merge_categories", "get_rules", "learn_review_rule"]);
+const CLI_SUPPORT_TOOLS = new Set(["get_support_settings", "submit_feedback", "list_feedback", "get_feedback", "create_support_case", "list_support_cases", "get_support_case", "list_support_case_events", "reply_to_support_case", "resolve_support_case", "reopen_support_case"]);
 export function cliReviewTool(name: string): RegisterableTool {
   const tool = ALL_TOOLS.find(item => item.name === name);
-  if (!tool || !CLI_REVIEW_TOOLS.has(name)) throw new Error("This tool is not available through the CLI review bridge. Use its native CLI command or MCP tool.");
+  if (!tool || !(CLI_REVIEW_TOOLS.has(name) || CLI_SUPPORT_TOOLS.has(name))) throw new Error("This tool is not available through the CLI review and support bridge. Use its native CLI command or MCP tool.");
   return tool;
 }
 
