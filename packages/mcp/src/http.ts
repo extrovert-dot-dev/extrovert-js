@@ -110,7 +110,7 @@ export async function createHttpApp(options: CreateHttpAppOptions = {}): Promise
       const apiToken = authInfo?.extra?.apiToken;
       const config = configForRequest(baseConfig, typeof apiToken === "string" ? apiToken : authInfo?.token);
       const client = new ExtrovertClient(config);
-      return createExtrovertServer({ config, client, profile, tasksEnabled: era === "modern" && (!config.mock || options.mockTaskClient !== undefined) }).server;
+      return createExtrovertServer({ config, client, profile, transport:"streamable-http", tasksEnabled: era === "modern" && (!config.mock || options.mockTaskClient !== undefined) }).server;
     },
     {
       legacy: "stateless",

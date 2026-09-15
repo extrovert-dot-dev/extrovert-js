@@ -505,6 +505,12 @@
       "client_methods": [
         "reopenSupportCase"
       ]
+    },
+    {
+      "name": "get_support_context",
+      "client_methods": [
+        "getSupportContext"
+      ]
     }
   ],
   "api_routes": [
@@ -522,6 +528,8 @@
     "GET /v1/domains",
     "GET /v1/domains/{domain}",
     "GET /v1/domains/{domain}/events",
+    "GET /v1/feedback",
+    "GET /v1/feedback/{id}",
     "GET /v1/inboxes",
     "GET /v1/inboxes/{inbox_id}",
     "GET /v1/inboxes/{inbox_id}/lists",
@@ -553,6 +561,11 @@
     "GET /v1/risk-dial",
     "GET /v1/rules",
     "GET /v1/rules/audit",
+    "GET /v1/support-cases",
+    "GET /v1/support-cases/{id}",
+    "GET /v1/support-cases/{id}/events",
+    "GET /v1/support-context",
+    "GET /v1/support-settings",
     "GET /v1/suppressions",
     "PATCH /v1/inboxes/{inbox_id}",
     "PATCH /v1/inboxes/{inbox_id}/messages/batch",
@@ -564,6 +577,7 @@
     "POST /v1/categories/{id}/merge",
     "POST /v1/domains",
     "POST /v1/domains/{domain}/verify",
+    "POST /v1/feedback",
     "POST /v1/inboxes",
     "POST /v1/inboxes/{inbox_id}/lists",
     "POST /v1/inboxes/{inbox_id}/messages/{id}/forward",
@@ -585,6 +599,10 @@
     "POST /v1/rules/audit/{udo_id}/undo",
     "POST /v1/rules/{id}/promote",
     "POST /v1/rules/{id}/retire",
+    "POST /v1/support-cases",
+    "POST /v1/support-cases/{id}/reopen",
+    "POST /v1/support-cases/{id}/replies",
+    "POST /v1/support-cases/{id}/resolve",
     "POST /v1/suppressions/{id}/revoke",
     "POST /v1/wait",
     "PUT /v1/categories/{id}",

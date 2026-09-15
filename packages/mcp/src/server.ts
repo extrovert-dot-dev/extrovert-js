@@ -79,6 +79,7 @@ export interface CreateExtrovertServerOptions {
   config?: ExtrovertConfig;
   client?: ExtrovertClient;
   profile?: CapabilityProfile;
+  transport?: "stdio" | "streamable-http";
   /** Only true when the serving transport has the current Tasks adapter. */
   tasksEnabled?: boolean;
 }
@@ -108,7 +109,7 @@ export function createExtrovertServer(options: CreateExtrovertServerOptions = {}
     },
   );
 
-  registerTools(server, { client, config, profile: options.profile ?? "full" });
+  registerTools(server, { client, config, profile: options.profile ?? "full", transport: options.transport ?? "stdio" });
 
   return { server, client, config };
 }

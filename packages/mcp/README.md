@@ -632,4 +632,26 @@ Read the error message and quota counts before requesting a plan change. See
 
 ## Product support
 
-Submit limited evidence with `feedback.submit`, open a tracked conversation with `support.cases.create`, and follow published replies with `support.cases.get` / `.events`. MCP users can use `submit_feedback` and the support case tools. Existing grants need explicitly selected `support:read` / `support:write`; automatic reporting remains opt-in and Assistant reporting is explicit-only. See [support reporting](https://docs.extrovert.dev/operating/support/) and the `extrovert-support` skill.
+Check cases with `list_support_cases {}` in MCP or `support.cases.list()` in the
+TypeScript SDK. Get or reply using only the case ID. Ask for help with a title
+and description; authenticated context supplies an unambiguous project. Use
+`get_support_context` if the destination is ambiguous. Project-first SDK signatures
+and project-prefixed HTTP routes remain compatible.
+
+MCP, CLI and the TypeScript SDK generate retry IDs once before sending. Preserve
+the exact recovery request on uncertain errors. If the whole response is lost,
+check existing reports before a new create. Raw HTTP requires explicit client_id.
+Append-only replies can omit expected_version; resolve/reopen require it.
+
+`support:submit` files and follows own/shared reports. Explicit support:read and
+support:write cover other reports within granted resource limits; project managers
+include all three. Automatic feedback remains opt-in, and cases require an explicit
+request. Feedback alone records evidence without opening a conversation.
+
+CLI: `extrovert support cases list --json`, `support cases create --input-stdin`,
+and `support cases reply CASE_ID --input-stdin` share the MCP handlers.
+
+For an update check, use MCP agent_context or whoami in the active conversation.
+Executing runtime facts are separate from hosted releases and fresh CLI invocations.
+In Hermes, reload local MCP with `/reload-mcp`, then verify a subsequent MCP call.
+See [support](https://docs.extrovert.dev/operating/support/) and the `extrovert-support` skill.

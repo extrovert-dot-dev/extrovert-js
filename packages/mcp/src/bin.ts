@@ -32,6 +32,7 @@ const CLI_COMMANDS = new Set([
   "whoami",
   "admin",
   "tool",
+  "support",
   "inbox",
   "message",
   "review",

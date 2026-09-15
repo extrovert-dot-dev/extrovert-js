@@ -13,9 +13,10 @@ export class SupportFixtures {
   setAutomaticFeedback(enabled: boolean) { this.automaticFeedback=enabled; }
   async request<T>(r: SupportRequest): Promise<T> {
     if (r.signal?.aborted) throw r.signal.reason;
-    const parts = r.path.split("/").map(decodeURIComponent);
+    if (r.path === "/v1/support-context") return {capabilities:{report_and_follow:true,read_other_reports:false,manage_other_cases:false},default_project:{id:"proj_mock",org_id:"org_mock",name:"Mock"},projects:{object:"list",data:[{id:"proj_mock",org_id:"org_mock",name:"Mock"}],has_more:false,next_cursor:""}} as T;
+    const parts = (r.path.startsWith("/v1/projects/") ? r.path : r.path.replace("/v1/","/v1/projects/proj_mock/")).split("/").map(decodeURIComponent);
     const project = parts[3]!, resource = parts[4]!, id = parts[5], operation = parts[6];
-    const body = r.body as FeedbackInput & SupportCaseInput & SupportMutation;
+    const body = structuredClone(r.body) as FeedbackInput & SupportCaseInput & SupportMutation;
     const key = `${project}:${resource}:${id ?? ""}:${operation ?? ""}:${body?.client_id}`;
     const hash = JSON.stringify(r.body);
     if (r.method === "POST" && resource !== "support-settings") {
@@ -42,6 +43,7 @@ export class SupportFixtures {
     else if (resource === "feedback" && id) result = this.scoped(this.feedback.get(id), project);
     else if (resource === "feedback") result = this.page([...this.feedback.values()].filter(v => project === "-" || v.project_id === project), r);
     else if (resource === "support-cases" && r.method === "POST" && !id) {
+      if(body.description){if(body.feedback||body.feedback_id)throw new Error("invalid support case");body.feedback={client_id:body.client_id,submission_mode:"explicit",category:"other",user_intent:body.title,observed_behavior:body.description,outcome:"observation"};}
       if ((!body.feedback_id) === (!body.feedback) || !body.title) throw new Error("invalid support case");
       const feedback = body.feedback ? this.submit(project, body.feedback) : this.scoped(this.feedback.get(body.feedback_id!), project);
       const now = Date.now(), number = ++this.sequence;
@@ -51,7 +53,7 @@ export class SupportFixtures {
       const item = this.scoped(this.cases.get(id), project);
       if (r.method === "GET") result = operation === "events" ? this.page(this.events.get(id)!, r, true) : item;
       else {
-        if (body.expected_version !== item.version) throw new Error("conflict");
+        if ((operation !== "replies" || body.expected_version !== undefined) && body.expected_version !== item.version) throw new Error("conflict");
         if (!body.body?.trim() || body.body.length > 4000) throw new Error("invalid body");
         if (operation === "resolve") { item.status = "resolved"; item.resolved_ms = item.customer_confirmed_ms = Date.now(); item.resolution_kind = "customer_confirmed"; item.resolution_summary = body.body; }
         else if (operation === "reopen") { if (item.status !== "resolved") throw new Error("conflict"); item.status = "working"; delete item.resolved_ms; delete item.customer_confirmed_ms; delete item.resolution_kind; delete item.resolution_summary; }

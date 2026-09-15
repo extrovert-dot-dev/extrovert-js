@@ -1,4 +1,3 @@
-import { SDK_VERSION } from "./http.js";
 import { FeedbackResource, SupportResource } from "./support.js";
 import { Administration } from "./administration.js";
 import { AgentTasks } from "./agent-tasks.js";
@@ -185,20 +184,8 @@ export class ExtrovertClient {
     }
 
     this.administration = new Administration((request) => this.transport.administrativeRequest(request));
-    this.feedback = new FeedbackResource((request) => {
-      if(request.method!=="POST" || !request.body)return this.transport.supportRequest(request);
-      const body=structuredClone(request.body) as Record<string,any>;
-      const evidence=request.path.endsWith("/feedback")?body:body.feedback;
-      if(evidence)evidence.client_versions={...evidence.client_versions,sdk:SDK_VERSION};
-      return this.transport.supportRequest({...request,body});
-    });
- this.support = new SupportResource((request) => {
-      if(request.method!=="POST" || !request.body)return this.transport.supportRequest(request);
-      const body=structuredClone(request.body) as Record<string,any>;
-      const evidence=request.path.endsWith("/feedback")?body:body.feedback;
-      if(evidence)evidence.client_versions={...evidence.client_versions,sdk:SDK_VERSION};
-      return this.transport.supportRequest({...request,body});
-    });
+    this.feedback = new FeedbackResource(request => this.transport.supportRequest(request));
+    this.support = new SupportResource(request => this.transport.supportRequest(request));
  this.tasks = new AgentTasks(this.transport);
     const ctx = { transport: this.transport, handleOptions: this.handleOptions, keyTier: this.keyTier };
     this.inboxes = new Inboxes(ctx);

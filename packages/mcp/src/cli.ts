@@ -27,6 +27,9 @@ export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert with
 Usage:
   extrovert tool describe <review-tool-name>
   extrovert tool call <review-or-support-tool-name> --input-stdin [--json]
+  extrovert support context [--json]
+  extrovert support cases list|get|events|create|reply|resolve|reopen [case-id] [--project <id>] [--input-stdin] [--json]
+  extrovert support feedback list|get|submit [feedback-id] [--project <id>] [--input-stdin] [--json]
   extrovert version [--json]
   extrovert agent status [--json]
   extrovert agent status --host auto|claude|codex|hermes --scope project|user
@@ -187,6 +190,8 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
         return await whoamiCommand(argv.slice(1), context);
       case "doctor":
         return await doctorCommand(argv.slice(1), context);
+      case "support":
+        return await supportCommand(argv.slice(1), context);
       case "admin":
         return await administrativeCommand(argv.slice(1), context);
       case "inbox":
@@ -226,6 +231,21 @@ async function reviewToolCommand(args: string[], context: CliContext): Promise<n
   if (hasFlag(args, "--json")) context.stdout.write(`${JSON.stringify(result)}\n`);
   else context.stdout.write(`${result.content.map(item => item.text).join("\n")}\n`);
   return result.isError ? 1 : 0;
+}
+
+async function supportCommand(args: string[], context: CliContext): Promise<number> {
+ const names:Record<string,string>={"context":"get_support_context","cases list":"list_support_cases","cases get":"get_support_case","cases events":"list_support_case_events","cases create":"create_support_case","cases reply":"reply_to_support_case","cases resolve":"resolve_support_case","cases reopen":"reopen_support_case","feedback list":"list_feedback","feedback get":"get_feedback","feedback submit":"submit_feedback"};
+ const name=names[args[0]==="context"?"context":`${args[0]} ${args[1]}`];
+ if(!name)throw new CliUsageError("Choose support context, support cases, or support feedback and an operation from --help.");
+ let input:Record<string,unknown>={};
+ if(hasFlag(args,"--input-stdin")){let raw="";for await(const chunk of context.stdin){raw+=String(chunk);if(Buffer.byteLength(raw)>65536)throw new CliUsageError("Support input exceeds 64 KB");}input=JSON.parse(raw);if(!input||Array.isArray(input)||typeof input!=="object")throw new CliUsageError("Support input must be a JSON object");}
+ const project=option(args,"--project");if(project)input.project_id=project;
+ if(args[2]&&!args[2].startsWith("--"))input[args[0]==="cases"?"case_id":"feedback_id"]=args[2];
+ for(const field of ["title","description","body","search","status","cursor","view","client-id"]){const value=option(args,`--${field}`);if(value!==undefined)input[field.replaceAll("-","_")]=value;}
+ for(const field of ["limit","expected-version"]){const value=option(args,`--${field}`);if(value!==undefined)input[field.replaceAll("-","_")]=Number(value);}
+ const result=await cliReviewTool(name).invoke(input,{client:requireAuthentication(context).client,config:loadConfig(context.env)});
+ context.stdout.write(hasFlag(args,"--json")?`${JSON.stringify(result)}\n`:`${result.content.map(c=>c.text).join("\n")}\n`);
+ return result.isError?1:0;
 }
 
 async function administrativeCommand(args: string[], context: CliContext): Promise<number> {
@@ -683,8 +703,9 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
 }
 
 async function whoamiCommand(args: string[], context: CliContext): Promise<number> {
-  const me = await requireAuthentication(context).client.whoami();
-  writeResult(context, me, hasFlag(args, "--json"), formatWhoAmI);
+  const client=requireAuthentication(context).client;
+  const me = {...await client.whoami(),executing_runtime:client.runtimeFacts()};
+  writeResult(context, me, hasFlag(args, "--json"), value=>`${formatWhoAmI(value)}\nExecuting runtime: ${JSON.stringify(value.executing_runtime)}`);
   return 0;
 }
 

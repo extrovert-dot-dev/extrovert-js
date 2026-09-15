@@ -651,10 +651,16 @@ export interface ExtrovertClientOptions {
   ) => { location?: string } | void;
 }
 
+const SUPPORT_RUNTIME_INSTANCE = randomUUID();
 export class ExtrovertClient {
+ private runtime = {source:"cli",transport:"cli",profile:"full",profile_version:MCP_PACKAGE_VERSION,catalog_digest:null as string|null};
+ setExecutingRuntime(runtime: typeof this.runtime) {this.runtime={...runtime};}
+ runtimeFacts() { return {...this.runtime,package_version:MCP_PACKAGE_VERSION,build:process.env.EXTROVERT_BUILD_SHA ?? null,instance_id:SUPPORT_RUNTIME_INSTANCE,observed_ms:Date.now(),active_conversation_mcp:this.runtime.source==="mcp"?"observed":"unknown",host_version:null,skill_version:null}; }
+
  private readonly supportFixtures = new SupportFixtures();
- readonly feedback = new FeedbackResource(<T>(request: SupportRequest) => this.supportRequest<T>(this.supportVersion(request)));
- readonly support = new SupportResource(<T>(request: SupportRequest) => this.supportRequest<T>(this.supportVersion(request)));
+ readonly feedback = new FeedbackResource(<T>(request: SupportRequest) => this.supportRequest<T>(request));
+ readonly support = new SupportResource(<T>(request: SupportRequest) => this.supportRequest<T>(request));
+ getSupportContext(...args: Parameters<ExtrovertClient["support"]["context"]>) { return this.support.context(...args); }
  getSupportSettings(...args: Parameters<ExtrovertClient["support"]["settings"]>) { return this.support.settings(...args); }
  submitFeedback(...args: Parameters<ExtrovertClient["feedback"]["submit"]>) { return this.feedback.submit(...args); }
  listFeedback(...args: Parameters<ExtrovertClient["feedback"]["list"]>) { return this.feedback.list(...args); }
@@ -666,14 +672,7 @@ export class ExtrovertClient {
  replyToSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["reply"]>) { return this.support.cases.reply(...args); }
  resolveSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["resolve"]>) { return this.support.cases.resolve(...args); }
  reopenSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["reopen"]>) { return this.support.cases.reopen(...args); }
- private supportVersion(request: SupportRequest): SupportRequest {
-   if(request.method!=="POST" || !request.body)return request;
-   const body=structuredClone(request.body) as Record<string,any>;
-   const input=request.path.endsWith("/feedback")?body:body.feedback;
-   if(input)input.client_versions={...input.client_versions,mcp:MCP_PACKAGE_VERSION};
-   return {...request,body};
- }
- private supportRequest<T>(r: SupportRequest): Promise<T> { return this.config.mock ? this.supportFixtures.request<T>(r) : this.request<T>(r.method,r.path,r.body,r.query,undefined,undefined,r.signal); }
+ private supportRequest<T>(r: SupportRequest): Promise<T> { return this.config.mock ? this.supportFixtures.request<T>(r) : this.request<T>(r.method,r.path,r.body,r.query,undefined,r.method==="POST"?{"X-Extrovert-Support-Runtime":JSON.stringify(this.runtimeFacts())}:undefined,r.signal); }
   private readonly storageWarnings = new AsyncLocalStorage<{ warning?: { threshold: number; used_bytes: number; limit_bytes: number; cleanup_url?: string; billing_url?: string }; key?: string }>();
   private readonly storageNotified = new Map<string, number>();
 

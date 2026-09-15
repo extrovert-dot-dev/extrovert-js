@@ -17,7 +17,7 @@ import { parseProblem, type Problem } from "./problem.js";
 import { API_VERSION_HEADER, CURRENT_API_VERSION } from "./version.js";
 
 /** The library version, surfaced in the User-Agent. Kept in sync with package.json by build. */
-export const SDK_VERSION = "0.1.2";
+export const SDK_VERSION = "0.1.3";
 
 export interface RetryOptions {
   /** Max retry attempts for idempotent requests on 429/5xx/network errors. Default 2. */
@@ -37,6 +37,7 @@ export interface RequestOptions {
   body?: unknown;
   /** Per-request idempotency key, sent as the `Idempotency-Key` header. */
   idempotencyKey?: string;
+  supportRuntime?: Record<string, unknown>;
   /** Per-request timeout override (ms). */
   timeoutMs?: number;
   /** Per-request abort signal, merged with the timeout signal. */
@@ -157,6 +158,7 @@ export class HttpClient {
           [API_VERSION_HEADER]: this.config.apiVersion || CURRENT_API_VERSION,
           ...this.config.defaultHeaders,
         };
+        if (options.supportRuntime) headers["X-Extrovert-Support-Runtime"] = JSON.stringify(options.supportRuntime);
         if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
         let bodyInit: string | undefined;
         if (options.body !== undefined) {

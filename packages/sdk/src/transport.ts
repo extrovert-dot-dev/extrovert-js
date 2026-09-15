@@ -1,3 +1,4 @@
+import { SDK_VERSION } from "./http.js";
 import type { SupportRequest } from "./support.js";
 import { SupportFixtures } from "./support-fixtures.js";
 import { ensureSendIdempotencyKey } from "./send-idempotency.js";
@@ -390,7 +391,7 @@ function forwardBody(req: ForwardRequest): Record<string, unknown> {
 
 /** Live transport: each method maps to a `/v1` request. */
 export class HttpTransport implements Transport {
- supportRequest<T>(request: SupportRequest): Promise<T> { return this.http.request<T>({ ...request, retryable: true }); }
+ supportRequest<T>(request: SupportRequest): Promise<T> { return this.http.request<T>({ ...request, retryable: true, supportRuntime:{source:"sdk",transport:"http",package_version:SDK_VERSION,observed_ms:Date.now()} }); }
   constructor(private readonly http: HttpClient) {}
   createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<AgentTask> {
     return this.call({ method: "POST", path: "/v1/agent-tasks", body: input, query: selection ? { ...selection } : undefined, signal });

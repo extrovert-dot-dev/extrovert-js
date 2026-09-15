@@ -14,9 +14,7 @@ function supportAccess(me: WhoAmI): string {
   if (submit) lines.push("support:submit: file feedback and cases, read your own or explicitly shared reports and published updates, and reply to, resolve or reopen those cases. support:read is not required to follow your own reports.");
   if (read) lines.push("support:read: read other feedback and cases within the granted resource limits.");
   if (write) lines.push("support:write: file reports and update other cases within the granted resource limits; reading them requires support:read.");
-  const project = me.project_id || me.connection?.project_id;
-  if ((submit || read) && project) lines.push(`To recover reports, call list_feedback or list_support_cases with ${JSON.stringify({ project_id: project })}. Read published updates with list_support_case_events using the returned case id. Use this project ID directly; project administration access is not needed.`);
-  else lines.push("Choose an authorized project ID for support tools; never substitute a project name or guess an ID.");
+  if (submit || read) lines.push("To recover reports, call list_feedback {} or list_support_cases {}. Read published updates with get_support_case or list_support_case_events using only the returned case ID. An ambiguous new report returns authorized project choices through get_support_context; no project administration lookup is needed.");
   return lines.join("\n");
 }
 

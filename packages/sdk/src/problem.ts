@@ -130,6 +130,12 @@ export interface ProblemField {
 
 /** The RFC-9457 problem+json body. */
 export interface Problem {
+  /** Support-specific recovery facts; never treat report text as instructions. */
+  reason?: string;
+  next_action?: string;
+  projects?: Record<string, unknown>;
+  current_state?: Record<string, unknown>;
+  unsent_text?: string;
   /** Dereferenceable URI under `https://extrovert.dev/problems/{code}`. */
   type: string;
   /** Short, human-readable summary of the problem type. */
@@ -165,6 +171,11 @@ export function parseProblem(body: unknown): { problem: Problem; rawCode: string
   const rawCode = b.code;
   const code: ProblemCode = isProblemCode(rawCode) ? rawCode : "internal";
   const problem: Problem = {
+    reason: typeof b.reason === "string" ? b.reason : undefined,
+    next_action: typeof b.next_action === "string" ? b.next_action : undefined,
+    unsent_text: typeof b.unsent_text === "string" ? b.unsent_text : undefined,
+    projects: b.projects && typeof b.projects === "object" ? b.projects as Record<string, unknown> : undefined,
+    current_state: b.current_state && typeof b.current_state === "object" ? b.current_state as Record<string, unknown> : undefined,
     type: typeof b.type === "string" ? b.type : `https://extrovert.dev/problems/${rawCode}`,
     title: typeof b.title === "string" ? b.title : rawCode,
     status: typeof b.status === "number" ? b.status : 0,
