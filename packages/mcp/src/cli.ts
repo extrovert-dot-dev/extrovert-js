@@ -1,3 +1,4 @@
+import { activationHandoff, signupConsoleHandoff } from "./signup-handoff.js";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
@@ -664,7 +665,7 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
     api_base_url: config.apiBaseUrl,
   });
   context.stdout.write(
-    `${result.activation_method === "incoming_email" ? result.message : `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.`}\nInbox: ${result.address}\nPending credential saved securely.\n`,
+    `${result.activation_method === "incoming_email" ? activationHandoff(humanEmail, result.address) : `Verification code sent to ${result.otp_sent_to}. If it is missing, confirm the address and check spam/junk for the Extrovert verification email.`}\nInbox: ${result.address}\nPending credential saved securely.\n`,
   );
   if (result.activation_method === "incoming_email") return verifyCommand(args, context);
   context.stdout.write("Run 'extrovert verify' with the code from your email.\n");
@@ -681,7 +682,7 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
     context.stdout.write(`Send an email from ${pending.human_email} to ${pending.address}. Watching for up to ${wait} seconds; verification continues automatically when it arrives. Keep this agent turn active. If your terminal returns a running process ID, poll it through completion, then recover your practice review. A background CLI cannot resume a stopped agent.\n`);
     const activation = await waitForActivation(seconds => client.activationStatus(seconds), { timeoutSeconds: wait });
     if (activation.state !== "proven") {
-      context.stdout.write(activation.state === "expired" ? "This reservation expired. Sign in to the console to continue.\n" : `Your agent's inbox is almost ready. Send an email from ${activation.human_email} to ${activation.address}, or approve it in the console. This watch ended with your reservation preserved. Resume with 'extrovert verify' in this same profile.\n`);
+      context.stdout.write(activation.state === "expired" ? "This reservation expired. Open https://extrovert.dev; choose Sign up if new, or Sign in if already registered, with the same human email.\n" : `Your agent's inbox is almost ready. ${activationHandoff(pending.human_email, pending.address)} This watch ended with your reservation preserved. Resume with 'extrovert verify' in this same profile.\n`);
       return 0;
     }
   } else {
@@ -695,7 +696,7 @@ async function verifyCommand(args: string[], context: CliContext): Promise<numbe
     throw new Error(`Verification succeeded, but the new credential could not be saved. No key was printed. Fix this profile's storage permissions and ask the account owner for a replacement scoped key; do not repeat signup or create another account. ${renderError(error)}`);
   }
   context.store.clearPendingSignup();
-  if (result.onboarding) context.stdout.write(`Sender: ${result.onboarding.display_name} <${result.address}>\nPlan: ${result.onboarding.plan}\nOpen your workspace: ${result.onboarding.console_url}\n${result.onboarding.guidance}\n`);
+  if (result.onboarding) context.stdout.write(`Sender: ${result.onboarding.display_name} <${result.address}>\nPlan: ${result.onboarding.plan}\nOpen your workspace: ${result.onboarding.console_url}\n${signupConsoleHandoff(pending.human_email)}\n${result.onboarding.guidance}\n`);
   context.stdout.write(
     `Verified. Full credential saved at ${context.store.paths.credential}.\nInbox: ${result.address}\nScopes: ${result.scopes.join(", ")}\nCall whoami through your MCP connection now. A running local MCP using this profile can pick up the saved credential; use the host's native MCP reload if an older process still reports missing access. In Hermes, continue through this CLI now if its MCP tools have not loaded yet (extrovert tool describe/call exposes the review workflow); no full Hermes restart is needed.\n`,
   );

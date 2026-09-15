@@ -1,3 +1,4 @@
+import { activationHandoff, signupConsoleHandoff } from "./signup-handoff.js";
 import type { QueuedSendResult } from "./types.js";
 /**
  * Extrovert MCP tool definitions (spec section 8).
@@ -734,7 +735,7 @@ const signUp = defineTool({
   description:
     "Reserve a free inbox for your agent. Supply the human email expected to activate it. " +
     "For incoming-email activation, ask the human to send from that email to the returned inbox within 24 hours, " +
-    "or approve it after verified console sign-in. The key can only check, correct, or complete activation; it cannot read or send mail. " +
+    "or sign up in the console with that same human email and connect the workspace (sign in if already registered). The key can only check, correct, or complete activation; it cannot read or send mail. " +
     "Keep the issued key: repeating signup does not extend the reservation. Existing human accounts enroll agents through their console. " +
     "During migration, a legacy response may instead report an emailed OTP. Follow the returned activation method.",
   inputSchema: {
@@ -751,7 +752,7 @@ const signUp = defineTool({
   handler: async (args, { client }) => {
     const res: SignUpResult = await client.signUp({ human_email: args.human_email, username: args.username, display_name: args.display_name });
     const text = [
-      res.activation_method === "incoming_email" ? res.message : `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
+      res.activation_method === "incoming_email" ? activationHandoff(args.human_email, res.address) : `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
       `inbox: ${res.address}`,
       ...(res.activation_method === "incoming_email" ? [`Tell the human the activation instructions now, then call check_activation {"wait_seconds":55}. While this session is active, repeat pending waits for up to five minutes. A timeout preserves the reservation; resume with the same key.`] : []),
       `agent_key (limited, shown once): ${res.agent_key}`,
@@ -780,7 +781,7 @@ const checkActivation = defineTool({
 export function formatActivationResult(result: InboxActivation): ToolResult {
     const message = result.state === "proven" ? "Inbox claimed. Human ownership is verified. Next: call verify_signup without an OTP to exchange this limited credential, then whoami."
       : result.state === "activated" ? "Inbox claimed. Next: verify your durable connection with whoami."
-      : result.state === "expired" ? "This reservation expired. Sign in to Extrovert to continue; do not keep waiting for this activation."
+      : result.state === "expired" ? "This reservation expired. Open https://extrovert.dev and choose Sign up if new, or Sign in if already registered, with the same human email; do not keep waiting for this activation."
       : `Inbox activation: ${result.state}. Send an email from ${result.human_email} to ${result.address}. Reservation expires ${new Date(result.expires_ms).toISOString()}.`;
     return ok(message, result as unknown as Record<string, unknown>);
 }
@@ -817,7 +818,7 @@ const verifySignup = defineTool({
     const text = [
       `Inbox claimed. The signup credential exchange succeeded.`,
       `Next call: whoami {}. Call it now with the new credential, even if you called whoami while activation was pending. Explain this verified identity before continuing.`,
-      ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, ...(res.onboarding.starter ? [] : [res.onboarding.guidance])] : []),
+      ...(res.onboarding ? [`Sender: ${res.onboarding.display_name} <${res.address}>`, `Plan: ${res.onboarding.plan}`, `Open your workspace: ${res.onboarding.console_url}`, signupConsoleHandoff(res.onboarding.human_email), ...(res.onboarding.starter ? [] : [res.onboarding.guidance])] : []),
       ...(res.onboarding?.starter ? [`Prepared practice review: ${res.onboarding.starter.review_id} (${res.onboarding.starter.status}). Keep this review; do not submit another hello. The whoami response provides its review link and coaching steps after connection verification.`] : []),
       `agent_key (full, shown once): ${res.agent_key}`,
       `scopes: ${res.scopes.join(", ")}`,

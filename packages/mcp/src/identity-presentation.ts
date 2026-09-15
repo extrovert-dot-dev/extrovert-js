@@ -1,3 +1,4 @@
+import { signupConsoleHandoff } from "./signup-handoff.js";
 import type { WhoAmI } from "./types.js";
 
 function namedID(name?: string, id?: string): string {
@@ -83,6 +84,7 @@ export function formatSignupStarter(starter: NonNullable<WhoAmI["signup_starter"
     'After reading the draft and showing its review link, actually call wait_for_review_event {"wait_seconds":55,"limit":100}; promising to monitor is not a tool call. Keep one shared wait active across your reviews. Recover other outstanding work with list_reviews {"composer":"me"} and list_review_events {}. Handle feedback, acknowledge after handling, and continue until confirmed sent or another terminal outcome.',
   );
   lines.push("Explain briefly: messages initially wait for review. Agents organize categories and save reusable feedback as Extrovert rules. House rules cover all categories; projects can have their own rules shared by their agents. Later, the owner can choose direct sending or authorize a review agent. Describe only the access returned by whoami, and offer to help the human explore the console and capabilities with separately approved access.");
+  lines.push(signupConsoleHandoff());
   lines.push("Report the observed milestone and its next action: inbox claimed → verify the connection; agent connected → recover the draft; draft awaiting review → show its review link before waiting; message sent → ask the human to check their inbox. Say message sent only after a confirmed sent result. Setup complete is too vague, and sending does not confirm receipt.");
   return lines.join("\n");
 }
