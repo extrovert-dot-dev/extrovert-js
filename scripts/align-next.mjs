@@ -13,7 +13,10 @@ async function request(url, options = {}) {
   } catch {
     throw new Error("Registry/identity request failed or timed out");
   }
-  if (!response.ok) throw new Error(`Request rejected (HTTP ${response.status})`);
+  if (!response.ok) {
+    const endpoint = new URL(url);
+    throw new Error(`${options.method || "GET"} ${endpoint.hostname}${endpoint.pathname}: HTTP ${response.status}`);
+  }
   return response;
 }
 
@@ -28,7 +31,7 @@ async function credentials(name) {
     headers: { Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
   })).json();
   if (!identity.value) throw new Error("Identity response missing token");
-  const exchange = await (await request(`${registry}/-/npm/v1/oidc/token/exchange/package/${encodeURIComponent(name)}`, {
+  const exchange = await (await request(`${registry}/-/npm/v1/oidc/token/exchange/package/${escaped(name)}`, {
     method: "POST", headers: { Authorization: `Bearer ${identity.value}` },
   })).json();
   if (!exchange.token) throw new Error("Exchange response missing token");
