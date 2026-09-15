@@ -44,7 +44,9 @@ export type Scope =
   | "domain:purchase"
   | "commerce:request"
   | "review:act"
-  | "signup:verify";
+  | "signup:verify"
+  | "support:read"
+  | "support:write";
 
 /** How a Extrovert domain was onboarded (§7). */
 export type OnboardingMode = "shared" | "purchased" | "ns_delegated" | "manual";

@@ -1,3 +1,5 @@
+import { SDK_VERSION } from "./http.js";
+import { FeedbackResource, SupportResource } from "./support.js";
 import { Administration } from "./administration.js";
 import { AgentTasks } from "./agent-tasks.js";
 import { observeUntil, type ObserverWaitOptions } from "./observer-wait.js";
@@ -87,6 +89,8 @@ function readEnv(name: string): string | undefined {
 const DEFAULT_RETRY: RetryOptions = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 8000 };
 
 export class ExtrovertClient {
+ readonly feedback: FeedbackResource;
+ readonly support: SupportResource;
   /** Durable observers for ownership proof or review attention; never implicit actions. */
   readonly tasks: AgentTasks;
   /** Customer administration; requires explicit full account control. */
@@ -181,7 +185,21 @@ export class ExtrovertClient {
     }
 
     this.administration = new Administration((request) => this.transport.administrativeRequest(request));
-    this.tasks = new AgentTasks(this.transport);
+    this.feedback = new FeedbackResource((request) => {
+      if(request.method!=="POST" || !request.body)return this.transport.supportRequest(request);
+      const body=structuredClone(request.body) as Record<string,any>;
+      const evidence=request.path.endsWith("/feedback")?body:body.feedback;
+      if(evidence)evidence.client_versions={...evidence.client_versions,sdk:SDK_VERSION};
+      return this.transport.supportRequest({...request,body});
+    });
+ this.support = new SupportResource((request) => {
+      if(request.method!=="POST" || !request.body)return this.transport.supportRequest(request);
+      const body=structuredClone(request.body) as Record<string,any>;
+      const evidence=request.path.endsWith("/feedback")?body:body.feedback;
+      if(evidence)evidence.client_versions={...evidence.client_versions,sdk:SDK_VERSION};
+      return this.transport.supportRequest({...request,body});
+    });
+ this.tasks = new AgentTasks(this.transport);
     const ctx = { transport: this.transport, handleOptions: this.handleOptions, keyTier: this.keyTier };
     this.inboxes = new Inboxes(ctx);
     this.messages = new Messages(ctx);

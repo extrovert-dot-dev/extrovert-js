@@ -1499,6 +1499,7 @@ export type ProblemCode =
   | "forbidden_scope"
   | "not_found"
   | "conflict"
+  | "support_record_deleted"
   | "idempotency_conflict"
   | "breadth_required"
   | "quota_exceeded"
@@ -1527,6 +1528,7 @@ export const PROBLEM_CODES: readonly ProblemCode[] = [
   "forbidden_scope",
   "not_found",
   "conflict",
+  "support_record_deleted",
   "idempotency_conflict",
   "breadth_required",
   "quota_exceeded",

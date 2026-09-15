@@ -1,3 +1,5 @@
+import type { SupportRequest } from "./support.js";
+import { SupportFixtures } from "./support-fixtures.js";
 import { ensureSendIdempotencyKey } from "./send-idempotency.js";
 import type { AgentTask, CreateAgentTaskRequest } from "./agent-tasks.js";
 import { agentTaskFixtures } from "./agent-task-fixtures.js";
@@ -120,6 +122,7 @@ export interface AttachmentDownload {
 
 /** The RPC surface every transport implements. One method per spec §8 endpoint. */
 export interface Transport {
+ supportRequest<T>(request: SupportRequest): Promise<T>;
   createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<AgentTask>;
   getAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask>;
   cancelAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask>;
@@ -387,6 +390,7 @@ function forwardBody(req: ForwardRequest): Record<string, unknown> {
 
 /** Live transport: each method maps to a `/v1` request. */
 export class HttpTransport implements Transport {
+ supportRequest<T>(request: SupportRequest): Promise<T> { return this.http.request<T>({ ...request, retryable: true }); }
   constructor(private readonly http: HttpClient) {}
   createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection?: ConnectionResourceSelection): Promise<AgentTask> {
     return this.call({ method: "POST", path: "/v1/agent-tasks", body: input, query: selection ? { ...selection } : undefined, signal });
@@ -1224,7 +1228,10 @@ export class HttpTransport implements Transport {
 }
 
 /** Offline transport backed by {@link MockBackend}. Never touches the network. */
+const supportMockStates = new WeakMap<MockBackend,SupportFixtures>();
 export class MockTransport implements Transport {
+ private get supportFixtures(): SupportFixtures { let fixtures=supportMockStates.get(this.backend);if(!fixtures){fixtures=new SupportFixtures();supportMockStates.set(this.backend,fixtures)}return fixtures; }
+ supportRequest<T>(request: SupportRequest): Promise<T> { return this.supportFixtures.request<T>(request); }
   async createAgentTask(input: CreateAgentTaskRequest, signal?: AbortSignal, selection: ConnectionResourceSelection = {}): Promise<AgentTask> {
     signal?.throwIfAborted();
     if (selection.org_id || selection.project_id) throw new Error("Offline observer fixtures do not simulate organization/project selection; use live credentials for scoped checks.");

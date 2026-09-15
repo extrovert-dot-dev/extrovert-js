@@ -617,3 +617,7 @@ Deleting unused inboxes frees account capacity but does not refund key usage; in
 allowance does not increase account capacity. These are inbox counts, separate from sending limits.
 Read the error message and quota counts before requesting a plan change. See
 [Rate limits and quotas](https://docs.extrovert.dev/operating/limits/#lifetime-inbox-creation).
+
+## Product support
+
+Submit limited evidence with `feedback.submit`, open a tracked conversation with `support.cases.create`, and follow published replies with `support.cases.get` / `.events`. MCP users can use `submit_feedback` and the support case tools. Existing grants need explicitly selected `support:read` / `support:write`; automatic reporting remains opt-in and Assistant reporting is explicit-only. See [support reporting](https://docs.extrovert.dev/operating/support/) and the `extrovert-support` skill.

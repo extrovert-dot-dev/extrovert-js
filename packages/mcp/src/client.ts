@@ -1,3 +1,7 @@
+import { FeedbackResource, SupportResource, type SupportRequest } from "./support.js";
+import { SupportFixtures } from "./support-fixtures.js";
+import { createRequire } from "node:module";
+const MCP_PACKAGE_VERSION = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 import { randomUUID } from "node:crypto";
 import type { MergeCategoriesRequest, MergeCategoriesResult } from "./types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -648,6 +652,28 @@ export interface ExtrovertClientOptions {
 }
 
 export class ExtrovertClient {
+ private readonly supportFixtures = new SupportFixtures();
+ readonly feedback = new FeedbackResource(<T>(request: SupportRequest) => this.supportRequest<T>(this.supportVersion(request)));
+ readonly support = new SupportResource(<T>(request: SupportRequest) => this.supportRequest<T>(this.supportVersion(request)));
+ getSupportSettings(...args: Parameters<ExtrovertClient["support"]["settings"]>) { return this.support.settings(...args); }
+ submitFeedback(...args: Parameters<ExtrovertClient["feedback"]["submit"]>) { return this.feedback.submit(...args); }
+ listFeedback(...args: Parameters<ExtrovertClient["feedback"]["list"]>) { return this.feedback.list(...args); }
+ getFeedback(...args: Parameters<ExtrovertClient["feedback"]["get"]>) { return this.feedback.get(...args); }
+ createSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["create"]>) { return this.support.cases.create(...args); }
+ listSupportCases(...args: Parameters<ExtrovertClient["support"]["cases"]["list"]>) { return this.support.cases.list(...args); }
+ getSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["get"]>) { return this.support.cases.get(...args); }
+ listSupportCaseEvents(...args: Parameters<ExtrovertClient["support"]["cases"]["events"]>) { return this.support.cases.events(...args); }
+ replyToSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["reply"]>) { return this.support.cases.reply(...args); }
+ resolveSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["resolve"]>) { return this.support.cases.resolve(...args); }
+ reopenSupportCase(...args: Parameters<ExtrovertClient["support"]["cases"]["reopen"]>) { return this.support.cases.reopen(...args); }
+ private supportVersion(request: SupportRequest): SupportRequest {
+   if(request.method!=="POST" || !request.body)return request;
+   const body=structuredClone(request.body) as Record<string,any>;
+   const input=request.path.endsWith("/feedback")?body:body.feedback;
+   if(input)input.client_versions={...input.client_versions,mcp:MCP_PACKAGE_VERSION};
+   return {...request,body};
+ }
+ private supportRequest<T>(r: SupportRequest): Promise<T> { return this.config.mock ? this.supportFixtures.request<T>(r) : this.request<T>(r.method,r.path,r.body,r.query,undefined,undefined,r.signal); }
   private readonly storageWarnings = new AsyncLocalStorage<{ warning?: { threshold: number; used_bytes: number; limit_bytes: number; cleanup_url?: string; billing_url?: string }; key?: string }>();
   private readonly storageNotified = new Map<string, number>();
 
@@ -2121,7 +2147,7 @@ export class ExtrovertClient {
     for (const [key, value] of Object.entries(query ?? {})) url.searchParams.set(key, String(value));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
-    const headers: Record<string, string> = { "User-Agent": "extrovert-mcp/0.1.0" };
+    const headers: Record<string, string> = { "User-Agent": `extrovert-mcp/${MCP_PACKAGE_VERSION}` };
     if (credential) headers.Authorization = `Bearer ${credential}`;
     let res: Response;
     try {
@@ -2191,7 +2217,7 @@ export class ExtrovertClient {
 
     const headers: Record<string, string> = {
       Accept: "application/json",
-      "User-Agent": "extrovert-mcp/0.1.0",
+      "User-Agent": `extrovert-mcp/${MCP_PACKAGE_VERSION}`,
     };
     if (credential) headers.Authorization = `Bearer ${credential}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";

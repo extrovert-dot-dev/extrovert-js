@@ -439,6 +439,72 @@
         "getDomain",
         "verifyDomain"
       ]
+    },
+    {
+      "name": "get_support_settings",
+      "client_methods": [
+        "getSupportSettings"
+      ]
+    },
+    {
+      "name": "submit_feedback",
+      "client_methods": [
+        "submitFeedback"
+      ]
+    },
+    {
+      "name": "list_feedback",
+      "client_methods": [
+        "listFeedback"
+      ]
+    },
+    {
+      "name": "get_feedback",
+      "client_methods": [
+        "getFeedback"
+      ]
+    },
+    {
+      "name": "create_support_case",
+      "client_methods": [
+        "createSupportCase"
+      ]
+    },
+    {
+      "name": "list_support_cases",
+      "client_methods": [
+        "listSupportCases"
+      ]
+    },
+    {
+      "name": "get_support_case",
+      "client_methods": [
+        "getSupportCase"
+      ]
+    },
+    {
+      "name": "list_support_case_events",
+      "client_methods": [
+        "listSupportCaseEvents"
+      ]
+    },
+    {
+      "name": "reply_to_support_case",
+      "client_methods": [
+        "replyToSupportCase"
+      ]
+    },
+    {
+      "name": "resolve_support_case",
+      "client_methods": [
+        "resolveSupportCase"
+      ]
+    },
+    {
+      "name": "reopen_support_case",
+      "client_methods": [
+        "reopenSupportCase"
+      ]
     }
   ],
   "api_routes": [
@@ -469,6 +535,12 @@
     "GET /v1/inboxes/{inbox_id}/threads/search",
     "GET /v1/inboxes/{inbox_id}/threads/{id}",
     "GET /v1/messages/{id}",
+    "GET /v1/projects/{project_id}/feedback",
+    "GET /v1/projects/{project_id}/feedback/{id}",
+    "GET /v1/projects/{project_id}/support-cases",
+    "GET /v1/projects/{project_id}/support-cases/{id}",
+    "GET /v1/projects/{project_id}/support-cases/{id}/events",
+    "GET /v1/projects/{project_id}/support-settings",
     "GET /v1/reputation",
     "GET /v1/reputation/findings",
     "GET /v1/reviews",
@@ -498,6 +570,11 @@
     "POST /v1/inboxes/{inbox_id}/reply",
     "POST /v1/inboxes/{inbox_id}/send",
     "POST /v1/inboxes/{inbox_id}/wait",
+    "POST /v1/projects/{project_id}/feedback",
+    "POST /v1/projects/{project_id}/support-cases",
+    "POST /v1/projects/{project_id}/support-cases/{id}/reopen",
+    "POST /v1/projects/{project_id}/support-cases/{id}/replies",
+    "POST /v1/projects/{project_id}/support-cases/{id}/resolve",
     "POST /v1/reviews/events/ack",
     "POST /v1/reviews/{id}/cancel",
     "POST /v1/reviews/{id}/chat",

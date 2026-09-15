@@ -307,3 +307,5 @@ export type { ConnectionResourceSelection, ListWebhooksParams } from "./models.j
 export type { InternalEmailReview, HumanEmailReview } from "./models.js";
 
 export { ensureSendIdempotencyKey } from "./send-idempotency.js";
+
+export * from "./support.js";

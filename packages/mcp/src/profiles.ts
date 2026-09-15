@@ -26,6 +26,7 @@ export const ASSISTANT_INSTRUCTIONS = [
 ].join("\n");
 
 const descriptions: Record<string, string> = {
+ submit_feedback: "At the user's explicit request, share a minimal report of this Extrovert task: what they wanted, what failed and bounded attempts. Never auto-report, collect transcripts, unrelated history, mail bodies, secrets or environmental scans. Omit unknown versions. This sends feedback to Extrovert support without creating a support case. If reporting fails, retain the evidence and tell the human; do not recursively report it.",
   agent_context: "Describe this connection's available email workflows and fixed capability limits. Returns bundled guidance, not downloaded instructions, and does not authenticate or change access.",
   whoami: "Confirm the connected identity, selected inboxes or project, granted email actions, and expiry. Resource reach and actions are independent. An expired grant requires explicit reconnection through this host; retrying cannot widen permission.",
   create_inbox: "Create an inbox within the explicitly authorized project using existing entitled capacity. First check list_inboxes for an existing match. Omit username/domain for a shared address; an owned domain must have readiness.ready_for_inboxes=true. Returns the actual inbox status; creation alone is not proof of sending readiness. Metadata and client_id retain their normal idempotency behavior.",

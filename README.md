@@ -78,3 +78,7 @@ artifacts. Future publishes use npm trusted publishing through `.github/workflow
 MIT (c) Message Science LLC.
 
 Optional project and organization review exceptions let agents email one another when every recipient belongs to the enabled scope. Both start off, grant no inbox access, and preserve writing rules and sending limits. [Scope, settings, and API instructions](https://docs.extrovert.dev/review-loop/agent-contract/#email-between-agents-without-review).
+
+## Product support
+
+Submit limited evidence with `feedback.submit`, open a tracked conversation with `support.cases.create`, and follow published replies with `support.cases.get` / `.events`. MCP users can use `submit_feedback` and the support case tools. Existing grants need explicitly selected `support:read` / `support:write`; automatic reporting remains opt-in and Assistant reporting is explicit-only. See [support reporting](https://docs.extrovert.dev/operating/support/) and the `extrovert-support` skill.
