@@ -35,7 +35,10 @@ export type AgentScope =
   /** Legacy keys may still report this scope; it does not approve or execute purchases. */
   | "domain:purchase"
   | "review:act"
-  | "signup:verify";
+  | "signup:verify"
+  | "support:submit"
+  | "support:read"
+  | "support:write";
 
 /**
  * Derive the key tier from the raw agent-key prefix (redesign §3.1, Appendix A).

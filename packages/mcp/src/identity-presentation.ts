@@ -1,18 +1,39 @@
 import type { WhoAmI } from "./types.js";
 
+function namedID(name?: string, id?: string): string {
+  return name && id && name !== id ? `${name} (${id})` : id || name || "not supplied";
+}
+
+function supportAccess(me: WhoAmI): string {
+  // Top-level scopes describe the active credential, which may be narrower than its grant.
+  const submit = me.scopes.includes("support:submit");
+  const read = me.scopes.includes("support:read");
+  const write = me.scopes.includes("support:write");
+  if (!submit && !read && !write) return "Support: no reporting or case access is granted to this credential.";
+  const lines = ["Support access stays within this connection's authorized resources."];
+  if (submit) lines.push("support:submit: file feedback and cases, read your own or explicitly shared reports and published updates, and reply to, resolve or reopen those cases. support:read is not required to follow your own reports.");
+  if (read) lines.push("support:read: read other feedback and cases within the granted resource limits.");
+  if (write) lines.push("support:write: file reports and update other cases within the granted resource limits; reading them requires support:read.");
+  const project = me.project_id || me.connection?.project_id;
+  if ((submit || read) && project) lines.push(`To recover reports, call list_feedback or list_support_cases with ${JSON.stringify({ project_id: project })}. Read published updates with list_support_case_events using the returned case id. Use this project ID directly; project administration access is not needed.`);
+  else lines.push("Choose an authorized project ID for support tools; never substitute a project name or guess an ID.");
+  return lines.join("\n");
+}
+
 export function formatWhoAmI(me: WhoAmI): string {
   if (me.connection) return formatConnection(me);
   if (me.scopes.length === 1 && me.scopes[0] === "signup:verify") return [
     "Signup credential exchange is still pending. This limited key verifies signup; it cannot read mail or handle reviews yet.",
-    `Agent: ${me.agent_id}. Project: ${me.project_name || me.project_id || "not supplied"}.`,
+    `Agent: ${me.agent_id}. Project: ${namedID(me.project_name, me.project_id)}.`,
     'Next call: check_activation {}. If state is proven, call verify_signup {} without an OTP, then whoami {} through this same connection before recovering the practice review. If pending, keep a bounded check_activation watch running. For a legacy OTP signup, use verify_signup with the human-supplied code instead.',
     "CLI recovery: run extrovert verify in this same saved profile. An interrupted watch preserves the reservation; no browser login, broader permissions, replacement account, or full host restart is needed.",
     ...(me.signup_starter?.review_id ? [`Reserved practice review: ${me.signup_starter.review_id}. Recover it only after credential exchange; do not submit another hello.`] : []),
   ].join("\n");
   const lines = [me.signup_starter ? "Connection identity verified. Recover the practice review below." : "Connection identity verified. Next: use list_inboxes to verify the intended inbox access.", me.summary ?? "Your agent is connected to Extrovert.",
     `Agent: ${me.agent_name ? `${me.agent_name} (${me.agent_id})` : me.agent_id}`,
-    `Organization: ${me.organization_name || me.org_id || "not supplied"}`,
-    `Project: ${me.project_name || me.project_id || "not supplied"}`];
+    `Organization: ${namedID(me.organization_name, me.org_id)}`,
+    `Project: ${namedID(me.project_name, me.project_id)}`];
+  lines.push(`Actions: ${me.scopes.join(", ") || "none"}.`);
   lines.push(`Connection: ${me.auth_method ?? "authentication method unavailable"} · ${me.key_id}`);
   if (me.inbox_scope) lines.push(`Inbox access: ${me.inbox_scope}${me.inbox_id ? ` (${me.inbox_id})` : ""}.`);
   if (me.capabilities) {
@@ -26,6 +47,7 @@ export function formatWhoAmI(me: WhoAmI): string {
     lines.push(`This connection can ${allowed.length ? allowed.join(", ") : "not use these mail features yet"}.`);
     lines.push("If a capability you need is missing, ask the account owner for the appropriate access; reconnecting or retrying does not add permission.");
   } else lines.push("This server did not return a capability summary. Use --json for granted permissions; do not assume every operation is available.");
+  lines.push(supportAccess(me));
   if (me.signup_starter) lines.push(formatSignupStarter(me.signup_starter));
   return lines.join("\n");
 }
@@ -38,14 +60,15 @@ function formatConnection(me: WhoAmI): string {
     `Connection: ${grant.name} (${grant.id})`,
     `Acting identity: ${grant.identity === "personal_assistant" ? `Personal assistant for ${grant.authorizer_id}` : `Dedicated agent ${grant.agent_id}`}`,
     `Resource access: ${reach[grant.reach]}.`,
-    `Actions: ${grant.scopes.join(", ")}.`,
+    `Actions: ${me.scopes.join(", ")}.`,
     `Expires: ${grant.expires_at_ms === 0 ? "Until revoked" : new Date(grant.expires_at_ms).toISOString()}. Refresh does not extend this deadline.`,
   ];
-  if (grant.org_id) lines.push(`Organization: ${me.organization_name || grant.org_id} (${grant.org_id})`);
-  if (grant.project_id) lines.push(`Project: ${me.project_name || grant.project_id} (${grant.project_id})`);
+  if (grant.org_id) lines.push(`Organization: ${namedID(me.organization_name, grant.org_id)}`);
+  if (grant.project_id) lines.push(`Project: ${namedID(me.project_name, grant.project_id)}`);
   if (grant.reach === "inboxes") lines.push(`Selected inbox IDs: ${grant.inbox_ids.join(", ")}. Use list_inboxes to resolve their addresses and current readiness.`);
   if (grant.reach === "full_account") lines.push("This connection can change permissions and policies, use other agents' inboxes, and approve requests including its own. Credentials it creates expire or revoke independently.");
   if (grant.created_by_connection_id) lines.push(`Created by connection: ${grant.created_by_connection_id}; this grant has its own expiry and revocation.`);
+  lines.push(supportAccess(me));
   if (me.signup_starter) lines.push(formatSignupStarter(me.signup_starter));
   return lines.join("\n");
 }
