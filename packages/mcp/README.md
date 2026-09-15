@@ -11,7 +11,7 @@ and administer. Hosted OAuth connections carry the resource reach and actions ch
 consent; existing scoped agent keys retain their fixed resource ceilings. Call `whoami` to inspect
 the actual connection, its reach, actions, and expiry before starting work.
 
-> **Prerelease status:** the package is published on npm under the `next` dist-tag. Extrovert also
+> **Distribution:** default npm commands use stable; `@next` is opt-in preview. Extrovert also
 > operates `https://mcp.extrovert.dev/mcp` as a stateless Streamable HTTP endpoint with browser OAuth.
 > The same package installs `extrovert-mcp` for transports and `extrovert` for supported setup,
 > authentication, mailbox, review-status, and reviewed-send commands.
@@ -41,7 +41,7 @@ Call `agent_context` on first Extrovert use in a session, after an hour, and aft
 Without connected tools, read https://mcp.extrovert.dev/.well-known/agent-contract.json or the live
 agent guide. The CLI exposes `extrovert version --json` and `extrovert agent status --json`.
 These checks never update files or authenticate, and status does not inspect installed skill files.
-`@next` resolves the prerelease channel; `--prefer-online` requests fresh registry metadata.
+Unqualified commands resolve stable; `@next` selects preview. `--prefer-online` requests fresh registry metadata.
 Resolution does not restart an already running MCP process. Respect pinned versions and local edits; update only Extrovert skills in their original scope when
 allowed. Updating files does not reload an active skill or local stdio process.
 
@@ -197,24 +197,36 @@ grant. Existing scoped `pk_agent_...` bearer keys also work when a client is con
 The hosted service runs MCP SDK v2's fresh-server-per-request handler: no process-local session map,
 sticky routing, or session teardown is required.
 
-## Install and run the prerelease
+## Preview access
 
-Use the explicit prerelease tag:
+Default commands below use stable. To try an early feature or fix, run
+`npx --yes --prefer-online @extrovert.dev/mcp@next --help`. For a new local stdio
+entry, also pass `setup --host codex --transport stdio --channel next` (or choose
+Claude/Hermes). Running a preview CLI alone does not change existing entries.
+Supported Claude refresh accepts `--channel next` to opt in and `--channel latest`
+to return; ordinary refresh preserves the saved channel. Pins still require a
+manual change. Restart the host connection and verify `whoami` afterward.
+See [preview access](https://docs.extrovert.dev/operating/agent-updates/#preview-access)
+for existing installations, SDKs, compatibility checks and hosted/plugin boundaries.
+
+## Install and run
+
+Use the default stable package:
 
 ```bash
 # stdio for an MCP host
-npx -y @extrovert.dev/mcp@next
+npx -y @extrovert.dev/mcp
 
 # inspect the packaged CLI
-npx -y @extrovert.dev/mcp@next --help
+npx -y @extrovert.dev/mcp --help
 
 # register the stdio server in Codex or Claude Code
-npx -y @extrovert.dev/mcp@next setup --host codex
-npx -y @extrovert.dev/mcp@next setup --host claude
-npx -y @extrovert.dev/mcp@next setup --host hermes
+npx -y @extrovert.dev/mcp setup --host codex
+npx -y @extrovert.dev/mcp setup --host claude
+npx -y @extrovert.dev/mcp setup --host hermes
 ```
 
-For reproducible environments, replace `@next` with the exact release version you intend to pin. The package installs the
+For reproducible environments, append an exact published version to the package name. The package installs the
 `extrovert-mcp` and `extrovert` aliases over one entrypoint; there is no second package or transport
 implementation to keep in sync.
 
@@ -227,11 +239,11 @@ Only for an unpinned Claude Code stdio installation whose policy permits this
 helper, run from its project root:
 
 ```bash
-npx --yes --prefer-online @extrovert.dev/mcp@next setup --refresh --host claude --json
+npx --yes --prefer-online @extrovert.dev/mcp setup --refresh --host claude --json
 ```
 
-Refresh privately updates one supported local/user `npx` entry to the prerelease `@next`
-channel and puts `--prefer-online` before the package argument. It preserves every other
+Refresh privately updates one supported local/user `npx` entry, preserves its stable or preview
+channel, and puts `--prefer-online` before the package argument. It preserves every other
 argument, environment value and credential, and saves a private backup when changing the file.
 An entry already using both needs no write. Pins, custom launchers, project-scoped entries,
 busy files and ambiguous scopes return `manual_required`; inspect those configurations privately
@@ -390,14 +402,14 @@ pnpm run dev -- --http  # tsx watch, HTTP
 
 ## Host configuration
 
-Point any stdio-capable host at the prerelease package:
+Point any stdio-capable host at the default stable package:
 
 ```json
 {
   "mcpServers": {
     "extrovert": {
       "command": "npx",
-      "args": ["-y", "@extrovert.dev/mcp@next"]
+      "args": ["-y", "@extrovert.dev/mcp"]
     }
   }
 }
@@ -406,8 +418,8 @@ Point any stdio-capable host at the prerelease package:
 For Codex or Claude Code, register that same local entrypoint:
 
 ```bash
-npx -y @extrovert.dev/mcp@next setup --host codex
-npx -y @extrovert.dev/mcp@next setup --host claude
+npx -y @extrovert.dev/mcp setup --host codex
+npx -y @extrovert.dev/mcp setup --host claude
 ```
 
 > **Offline:** omit `EXTROVERT_API_KEY` and set `EXTROVERT_MOCK=1`; the packaged server uses

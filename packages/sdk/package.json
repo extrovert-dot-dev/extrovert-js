@@ -1,6 +1,6 @@
 {
   "name": "@extrovert.dev/sdk",
-  "version": "0.1.0-pre.44",
+  "version": "0.1.0",
   "description": "TypeScript SDK for the Extrovert agent-email API \u2014 a real mailbox for your agent, in one call.",
   "keywords": [
     "extrovert",
@@ -23,7 +23,7 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "next"
+    "tag": "latest"
   },
   "type": "module",
   "main": "./dist/index.cjs",

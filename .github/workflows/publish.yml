@@ -1,4 +1,4 @@
-name: Publish npm prerelease
+name: Publish npm release
 
 on:
   workflow_dispatch:
@@ -15,13 +15,37 @@ on:
         options:
           - next
           - beta
+          - latest
+      approve_stable:
+        description: Explicitly authorize moving latest to this stable version
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: npm-publication
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Validate both packages and channel before any publication
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ inputs.dist_tag }}
+          APPROVE_STABLE: ${{ inputs.approve_stable }}
+        run: node scripts/check-publish.mjs
   publish:
+    needs: preflight
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
@@ -47,4 +71,7 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: test "$(node -p "require('./package.json').version")" = "$EXPECTED_VERSION"
-      - run: npm publish --access public --tag "${{ inputs.dist_tag }}"
+      - name: Publish selected package
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: npm publish --access public --tag "$DIST_TAG"

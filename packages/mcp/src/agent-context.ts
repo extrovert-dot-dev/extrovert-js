@@ -8,7 +8,7 @@ const MAX_BYTES = 32_768;
 const TIMEOUT_MS = 5_000;
 
 const releaseSchema = z.object({
-  schema_version: z.literal(1), release_version: z.string().max(80), channel: z.literal("next"),
+  schema_version: z.literal(1), release_version: z.string().max(80), channel: z.enum(["latest", "next", "beta"]),
   skills: z.record(z.string().max(64), z.object({ version: z.string().max(80), sha256: z.string().regex(/^[a-f0-9]{64}$/), source: z.string().url() })),
 });
 export const agentContextSchema = releaseSchema.extend({
@@ -49,8 +49,7 @@ export async function buildAgentContext(config: ExtrovertConfig, fetcher: typeof
   let publishedAt: string | null = null;
   const publication = config.mock ? Promise.resolve() : (async () => {
     try {
-      const tags = z.object({ next: z.string().max(80) }).parse(await readPublicJSON("https://registry.npmjs.org/-/package/@extrovert.dev%2fmcp/dist-tags", fetcher, 2_000));
-      publishedVersion = tags.next;
+      publishedVersion = await readPublishedVersion(AGENT_RELEASE.channel, fetcher);
       publishedAt = new Date().toISOString();
     } catch { /* A served source release is not proof of npm publication. */ }
   })();
@@ -79,11 +78,20 @@ export async function buildAgentContext(config: ExtrovertConfig, fetcher: typeof
       "Use the existing account and profile first. Confirm whoami and the requested resource reach. Signup is only for a new account when enabled; never replace an existing identity to repair access.",
       "Interactive setup uses hosted MCP and explicit OAuth consent. Unattended workers use already authorized scoped credentials; signup requires a supplied human email and that human's verification. Do not fabricate an email or bypass verification.",
       "If verification mail is missing, check spam/junk and the destination address. Use the returned sender information or the current guide; do not guess a fixed sender.",
-      "A different local version is a refresh signal, not proof of incompatibility or permission to downgrade. published_cli_version comes from npm next; null means publication could not be checked. Preserve explicit pins and local edits; refresh only the Extrovert skills installed in their original scope when allowed.",
+      `A different local version is a refresh signal, not proof of incompatibility or permission to downgrade. published_cli_version comes from npm ${AGENT_RELEASE.channel}; null means publication could not be checked. Preserve explicit pins, preview choices and local edits; refresh only the Extrovert skills installed in their original scope when allowed.`,
       "Updating files does not reload instructions already in context or a running stdio process. Read the live guide for this task, then reload the skill or restart the host when needed. A release check never authorizes wider access, sending, or purchases.",
       "Queued email is still in progress. Follow the current review workflow through confirmed sent or an unsuccessful terminal outcome. Inspect existing state before retrying an ambiguous send.",
     ],
   };
+}
+
+export async function readPublishedVersion(channel: "latest" | "next" | "beta", fetcher: typeof fetch = fetch): Promise<string> {
+  const tags = z.record(z.string(), z.string().max(80)).parse(await readPublicJSON("https://registry.npmjs.org/-/package/@extrovert.dev%2fmcp/dist-tags", fetcher, 2_000));
+  const version = tags[channel];
+  if (!version || (channel === "latest" && !/^\d+\.\d+\.\d+(?:\+[\w.-]+)?$/.test(version))) {
+    throw new Error("Requested release channel is unavailable or is not stable");
+  }
+  return version;
 }
 
 /** Local stdio and CLI fetch the hosted release, never present their bundle as current. */

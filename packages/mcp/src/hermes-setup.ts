@@ -3,11 +3,12 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { isMap, parseDocument } from "yaml";
+import { mcpPackage, type ReleaseChannel } from "./release-channel.js";
 
 /** Hermes's add command prompts for tool selection even without a TTY and can
  * exit zero without saving. Write only our named entry, preserving the document;
  * leave authentication and real connection verification to the host. */
-export function setupHermes(env: NodeJS.ProcessEnv, credentialDirectory: string, transport: "stdio" | "hosted"): { existed: boolean; path: string; backup?: string; warning?: string } {
+export function setupHermes(env: NodeJS.ProcessEnv, credentialDirectory: string, transport: "stdio" | "hosted", channel?: ReleaseChannel): { existed: boolean; path: string; backup?: string; warning?: string } {
   const root = resolve(env.HERMES_HOME?.trim() || join(homedir(), ".hermes"));
   const path = join(root, "config.yaml");
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -34,7 +35,7 @@ export function setupHermes(env: NodeJS.ProcessEnv, credentialDirectory: string,
     }
     const entry = transport === "hosted"
       ? { url: "https://mcp.extrovert.dev/mcp", auth: "oauth", timeout: 90, enabled: true }
-      : { command: "npx", args: ["--yes", "--prefer-online", "@extrovert.dev/mcp@next"], env: { EXTROVERT_CONFIG_DIR: credentialDirectory }, timeout: 90, enabled: true };
+      : { command: "npx", args: ["--yes", "--prefer-online", mcpPackage(channel)], env: { EXTROVERT_CONFIG_DIR: credentialDirectory }, timeout: 90, enabled: true };
     document.setIn(["mcp_servers", "extrovert"], entry);
     writeFileSync(temporary, document.toString(), { flag: "wx", mode: 0o600 });
     if ((existsSync(path) ? readFileSync(path, "utf8") : "") !== original) throw new Error("Hermes config changed during setup. No changes were applied; retry.");

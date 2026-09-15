@@ -45,7 +45,7 @@ The SDK is published on npm under the `next` dist-tag so an unqualified install 
 for a stable release:
 
 ```bash
-npm install @extrovert.dev/sdk@next
+npm install @extrovert.dev/sdk
 ```
 
 For reproducible builds, pin the exact published version you have tested instead of a floating dist-tag.

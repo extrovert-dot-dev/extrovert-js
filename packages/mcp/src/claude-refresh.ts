@@ -4,8 +4,8 @@ import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdi
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isScalar, parseDocument } from "yaml";
+import { mcpPackage, type ReleaseChannel } from "./release-channel.js";
 
-const PACKAGE = "@extrovert.dev/mcp@next";
 const LIMIT = 1024 * 1024;
 type RecordValue = Record<string, unknown>;
 export interface ClaudeRefreshResult {
@@ -68,7 +68,7 @@ function parseConfig(source: string): { value: RecordValue; document: ReturnType
 /** Only local/user files are writable. Claude 2.1.263 shares a mkdir lock for
  * .claude.json, but not project .mcp.json. Never remove an existing lock or infer
  * successful runtime activation from a saved entry. */
-export function refreshClaude(env: NodeJS.ProcessEnv, cwd = process.cwd(), beforeCommit?: () => void): ClaudeRefreshResult {
+export function refreshClaude(env: NodeJS.ProcessEnv, cwd = process.cwd(), beforeCommit?: () => void, channel?: ReleaseChannel): ClaudeRefreshResult {
   const base = { host: "claude" as const, runtime_verified: false as const, configuration_changed: false };
   try {
     if (process.platform === "win32") refuse("unsupported_platform");
@@ -101,7 +101,10 @@ export function refreshClaude(env: NodeJS.ProcessEnv, cwd = process.cwd(), befor
     const args = entry.args;
     if (args.length > 256 || !args.every(arg => typeof arg === "string")) refuse("unsupported_launch");
     const index = args.findIndex(arg => !["-y", "--yes", "--prefer-online"].includes(arg));
-    if (index < 0 || !["@extrovert.dev/mcp", "@extrovert.dev/mcp@latest", PACKAGE].includes(args[index]!)) refuse("pinned_or_unsupported_package");
+    if (index < 0 || !["@extrovert.dev/mcp", "@extrovert.dev/mcp@latest", "@extrovert.dev/mcp@next", "@extrovert.dev/mcp@beta"].includes(args[index]!)) refuse("pinned_or_unsupported_package");
+    // Explicit pins still refuse above. An ordinary refresh never switches a
+    // customer between stable and preview, even when invoked by another version.
+    const PACKAGE = channel ? mcpPackage(channel) : args[index] === "@extrovert.dev/mcp@latest" ? mcpPackage() : args[index]!;
     const selector = parsed.document.getIn([...entryPath, "args", index], true);
     if (!isScalar(selector) || !selector.range) refuse("invalid_configuration");
     const [start, end] = selector.range;

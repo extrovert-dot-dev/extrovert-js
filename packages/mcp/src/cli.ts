@@ -13,6 +13,7 @@ import { waitForDomain } from "./domain-wait.js";
 import { formatWhoAmI } from "./identity-presentation.js";
 import { setupHermes } from "./hermes-setup.js";
 import { refreshClaude } from "./claude-refresh.js";
+import { mcpPackage, parseChannel, releaseChannel } from "./release-channel.js";
 import { inspectSkills, parseSkillInspection } from "./skill-status.js";
 import { Administration, type AdministrativeInput } from "./administration.js";
 import { createCredentialStore, credentialFingerprint, isPersistentAPICredential, type CredentialStore } from "./credentials.js";
@@ -20,7 +21,6 @@ import { createLocalCredentialProvider, logoutLocalCredential } from "./local-oa
 import { beginOAuthLogin, createLoopbackLogin, exchangeLoginCode, HOSTED_LOGIN_CALLBACK, loginAuthorizationUrl, OAuthLoginError, openLoginBrowser, parseCompletionCode, preferHeadlessLogin, revokeLoginTokens, type LoopbackLogin, type OAuthLoginRequest } from "./oauth-login.js";
 import type { Message, Review } from "./types.js";
 
-const MCP_PACKAGE = "@extrovert.dev/mcp@next";
 
 export const CLI_HELP = `extrovert - setup, authenticate, and use Extrovert without custom transport code
 
@@ -33,6 +33,8 @@ Usage:
                          --skills <comma-separated Extrovert names> [--json]
   extrovert setup [--host auto|codex|claude|hermes] [--transport stdio|hosted] [--json]
   extrovert setup --refresh --host claude [--json]
+    Optional: --channel latest|next|beta selects local stdio tooling, not hosted MCP.
+    New entries default to latest; refresh preserves the saved channel unless selected.
   extrovert auth login [--no-browser | --browser] [--json] [--reconnect]
   extrovert auth login --with-token
   extrovert auth complete [--json]
@@ -101,7 +103,7 @@ MCP transport:
   hosted OAuth when exactly one supported host is detected; Codex hosted setup
   provides its native interactive sign-in command. Existing entries stay intact.
   setup --refresh --host claude privately updates one supported local/user npx
-  entry to @next with --prefer-online. It preserves credentials and other arguments,
+  entry with --prefer-online while preserving its channel, credentials and other arguments,
   refuses pins and ambiguous configurations, and still requires an MCP restart.
   Refresh bypasses ordinary setup and accepts no --transport override. JSON returns
   restart_required (exit 0) or manual_required (exit 1); runtime_verified stays false.
@@ -163,7 +165,7 @@ export async function runCli(argv: string[], options: CliOptions = {}): Promise<
     switch (command) {
       case "--version":
       case "version":
-        writeResult(context, { version: SERVER_VERSION, package: "@extrovert.dev/mcp", channel: "next" }, hasFlag(argv, "--json"), value => value.version);
+        writeResult(context, { version: SERVER_VERSION, package: "@extrovert.dev/mcp", channel: releaseChannel(SERVER_VERSION) }, hasFlag(argv, "--json"), value => value.version);
         return 0;
       case "tool":
         return await reviewToolCommand(argv.slice(1), context);
@@ -257,13 +259,15 @@ async function administrativeCommand(args: string[], context: CliContext): Promi
 }
 
 function setupCommand(args: string[], context: CliContext): number {
+  const channel = parseChannel(option(args, "--channel"));
+  const MCP_PACKAGE = mcpPackage(channel);
   if (hasFlag(args, "--refresh")) {
     if (option(args, "--host") !== "claude" || option(args, "--transport") !== undefined) {
       throw new CliUsageError("Refresh requires --host claude without --transport; it preserves the existing stdio connection.");
     }
-    const result = refreshClaude(context.env);
+    const result = refreshClaude(context.env, undefined, undefined, channel);
     writeResult(context, result, hasFlag(args, "--json"), value => value.status === "restart_required"
-      ? `Extrovert's ${value.scope}-scope Claude configuration ${value.configuration_changed ? "was refreshed privately" : "already uses @next with --prefer-online"}. Restart Extrovert MCP in Claude, then check the live release and call whoami. The running connection has not been verified.${value.backup ? ` Private backup: ${value.backup}.` : ""}${value.cleanup_required ? " Configuration was saved, but temporary-file or lock cleanup needs private inspection before another refresh." : ""}`
+      ? `Extrovert's ${value.scope}-scope Claude configuration ${value.configuration_changed ? "was refreshed privately" : "already uses its selected channel with --prefer-online"}. Restart Extrovert MCP in Claude, then check the live release and call whoami. The running connection has not been verified.${value.backup ? ` Private backup: ${value.backup}.` : ""}${value.cleanup_required ? " Configuration was saved, but temporary-file or lock cleanup needs private inspection before another refresh." : ""}`
       : `No configuration was changed (${value.reason}). Review the existing Extrovert entry privately in Claude's MCP settings; preserve its scope, arguments and credentials. Do not copy credentials into commands or chat.`);
     return result.status === "restart_required" ? 0 : 1;
   }
@@ -297,7 +301,7 @@ function setupCommand(args: string[], context: CliContext): number {
     writeResult(context, result, hasFlag(args, "--json"), value => `Setup pending: host reload required. ${value.next_action.instruction}`);
   };
   if (host === "hermes") {
-    const result = setupHermes(context.env, context.store.paths.directory, transport);
+    const result = setupHermes(context.env, context.store.paths.directory, transport, channel);
     if (transport === "stdio") {
       const instruction = `${result.existed ? "Existing Hermes configuration was preserved." : "Extrovert is configured for this Hermes profile."} ${result.warning ?? ""} ${credentialAvailable ? "An agent credential is already available. Run extrovert doctor, then whoami." : "For the requested new account, run extrovert signup with the supplied human email and display name. For existing access use auth login or enrollment."} Hermes reloads changed MCP configuration while idle when its automatic reload is enabled. Continue setup through the packaged CLI in this active turn, including the activation watch and review recovery. For review tools, use extrovert tool describe <tool>, then extrovert tool call <tool> --input-stdin with its JSON arguments; do not ask for a full Hermes restart. Once native Extrovert tools appear, call MCP whoami to verify that connection separately. /reload-mcp is the native manual fallback if automatic reload is disabled.`;
       writeResult(context, { status: "cli_available_mcp_pending", host, configuration_changed: !result.existed,
