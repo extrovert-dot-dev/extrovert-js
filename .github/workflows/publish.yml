@@ -3,6 +3,12 @@ name: Publish npm release
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Publish packages or align next with the existing stable release
+        required: true
+        default: publish
+        type: choice
+        options: [publish, align-next]
       version:
         description: Exact package version in both package.json files
         required: true
@@ -44,7 +50,22 @@ jobs:
           DIST_TAG: ${{ inputs.dist_tag }}
           APPROVE_STABLE: ${{ inputs.approve_stable }}
         run: node scripts/check-publish.mjs
+  align-next:
+    if: inputs.operation == 'align-next'
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Align next using package-scoped trusted credentials
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: node scripts/align-next.mjs
   publish:
+    if: inputs.operation != 'align-next'
     needs: preflight
     runs-on: ubuntu-latest
     strategy:
