@@ -1669,6 +1669,7 @@ const submitRevision = defineTool({
       .min(0)
       .describe("The revision you composed against, from get_review's `revision` (PRIMARY CAS; 409 `stale` on mismatch)."),
     version: z.number().int().optional().describe("Optional row-version CAS (defense in depth)."),
+    recheck_through_seq: z.number().int().min(1).optional().describe("Highest rule/category recheck event sequence actually handled for this review. Completion is independent of acknowledgement; newer work remains pending."),
     to: z.array(z.string().min(1)).max(50).optional().describe("Replace To recipients. Omit to preserve; [] clears the group. Additional recipients require available quota."),
     cc: z.array(z.string().min(1)).max(50).optional().describe("Replace Cc recipients. Each recipient consumes quota."),
     bcc: z.array(z.string().min(1)).max(50).optional().describe("Replace Bcc recipients. Each recipient consumes quota."),
@@ -1704,6 +1705,7 @@ const submitRevision = defineTool({
     const review = await client.submitRevision({
       id: args.id,
       parent_revision: args.parent_revision,
+      recheck_through_seq: args.recheck_through_seq,
       expected_context_version: args.expected_context_version,
       version: args.version,
       to: args.to, cc: args.cc, bcc: args.bcc,
@@ -1772,6 +1774,13 @@ const restampReview = defineTool({
       .int()
       .optional()
       .describe("Optional: re-stamp the house-style axis to this version (<= the org's current house_style_version)."),
+    expected_version: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Row version from get_review. Supply it to prevent a restamp racing a human edit or approval."),
+    recheck_through_seq: z.number().int().min(1).optional().describe("Highest recheck event sequence actually handled. Requires current rules; acknowledgement alone cannot complete this work."),
     client_id: z
       .string()
       .min(1)
@@ -1784,7 +1793,9 @@ const restampReview = defineTool({
     const review = await client.restampReview({
       id: args.id,
       against_version: args.against_version,
+      recheck_through_seq: args.recheck_through_seq,
       house_style_version: args.house_style_version,
+      expected_version: args.expected_version,
       client_id: args.client_id,
     });
     return ok(`Re-stamped (no redraft).\n${renderReview(review)}`, review as unknown as Record<string, unknown>);
@@ -2291,12 +2302,7 @@ const listReviewEvents = defineTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   handler: async (args, { client }) => {
     const res = await client.listReviewEvents({ review_id: args.review_id, limit: args.limit });
-    const text = res.events.length ? res.events.map(renderReviewEvent).join("\n") : "No review events.";
-    return ok(`${res.events.length} review event(s).\n\n${text}`, {
-      events: res.events,
-      cursors: res.cursors ?? [],
-      ...(res.pending_reviews !== undefined ? { pending_reviews: res.pending_reviews } : {}),
-    });
+    return formatReviewEventsResult(res);
   },
 });
 
@@ -2328,10 +2334,12 @@ const waitForReviewEvent = defineTool({
 /** Does not acknowledge events or equate observer completion with sending. */
 export function formatReviewEventsResult(res: ReviewEventsResult, timedOut = false): ToolResult {
     const text = res.events.length ? res.events.map(renderReviewEvent).join("\n")
-      : timedOut ? `No review events (timed out). Wait completed at ${new Date().toISOString()}.` : "No review events.";
-    return ok(`${res.events.length} review event(s).\n\n${text}`, {
+      : timedOut && !res.review?.closed ? `No review events (timed out). Wait completed at ${new Date().toISOString()}.` : "No review events.";
+    const outcome = res.review ? `\nReview ${res.review.id}: ${res.review.state}, revision ${res.review.revision}, version ${res.review.version}${res.review.sent_message_id ? `; message ${res.review.sent_message_id}` : ""}.` : "";
+    return ok(`${res.events.length} review event(s).\n\n${text}${outcome}`, {
       events: res.events,
       cursors: res.cursors ?? [],
+      ...(res.review ? { review: res.review } : {}),
       ...(res.pending_reviews !== undefined ? { pending_reviews: res.pending_reviews } : {}),
     });
 }

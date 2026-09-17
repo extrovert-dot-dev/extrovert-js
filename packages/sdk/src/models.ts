@@ -866,6 +866,8 @@ export interface Review {
   category_name?: string;
   /** Scheduling is observable; this does not assert that a composer is online. */
   recheck_status?: "queued";
+  recheck_completed_through_seq?: number;
+  recheck_outstanding_seq?: number;
   recheck_reason?: string;
   review_path?: string;
   id: string;
@@ -996,6 +998,7 @@ export interface PostReviewChatRequest {
  * revision, else 409 STALE with NO mutation. version is OPTIONAL belt-and-suspenders.
  */
 export interface SubmitRevisionRequest {
+  recheck_through_seq?: number;
   /** Required for reply revisions: read the whole conversation before redrafting. */
   expected_context_version?: string;
   /** Replace a recipient group; omit to preserve, [] to clear. Quota adjusts atomically. */
@@ -1105,6 +1108,7 @@ export interface ReviewEventCursor {
 
 /** Drain result for list/wait: un-acked events in FIFO seq order + cursors. */
 export interface ReviewEventsResult {
+  review?: Pick<Review, "id" | "state" | "revision" | "version" | "closed" | "sent_message_id">;
   pending_reviews?: number;
   events: ReviewEvent[];
   cursors?: ReviewEventCursor[];
@@ -1258,10 +1262,13 @@ export interface ProposeGraduationRequest {
  * must not exceed the category's current rules-version.
  */
 export interface RestampReviewRequest {
+  recheck_through_seq?: number;
   /** The category rules-version the agent reviewed against (≤ the current version). */
   against_version: number;
   /** Optional: re-stamp the house-style axis to this version (≤ the current version). */
   house_style_version?: number;
+  /** Optional row-version CAS from get_review. */
+  expected_version?: number;
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   idempotency_key?: string;
 }

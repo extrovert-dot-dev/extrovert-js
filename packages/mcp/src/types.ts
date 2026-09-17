@@ -417,6 +417,8 @@ export interface Review {
   category_name?: string;
   /** Scheduling is observable; this does not assert that a composer is online. */
   recheck_status?: "queued";
+  recheck_completed_through_seq?: number;
+  recheck_outstanding_seq?: number;
   recheck_reason?: string;
   review_path?: string;
   id: string;
@@ -809,6 +811,7 @@ export interface AgentTask {
 
 /** Drain result for list/wait: un-acked events in FIFO seq order + cursors. */
 export interface ReviewEventsResult {
+  review?: Pick<Review, "id" | "state" | "revision" | "version" | "closed" | "sent_message_id">;
   pending_reviews?: number;
   events: ReviewEvent[];
   cursors?: ReviewEventCursor[];

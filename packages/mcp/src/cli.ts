@@ -301,7 +301,7 @@ function setupCommand(args: string[], context: CliContext): number {
       context.env.HERMES_HOME?.trim() ? "hermes" : undefined,
     ].filter((value): value is string => Boolean(value));
     if (detected.length !== 1) {
-      throw new CliUsageError(`${detected.length ? "Multiple agent hosts were detected" : "The current agent host could not be detected"}. Choose --host codex, --host claude, or --host hermes. For other hosts, connect https://mcp.extrovert.dev/mcp using the host's MCP settings. No configuration was changed.`);
+      throw new CliUsageError(`${detected.length ? "Multiple agent hosts were detected" : "The current agent host could not be detected"}. Choose --host codex, --host claude, or --host hermes. For other hosts, connect https://mcp.extrovert.dev/assistant/mcp using the host's MCP settings. No configuration was changed.`);
     }
     host = detected[0]!;
   }
@@ -363,14 +363,14 @@ function setupCommand(args: string[], context: CliContext): number {
     // Codex add can immediately start OAuth. Do not hide its login prompt inside
     // the installer's piped subprocess or wait indefinitely for a browser callback.
     if (hasFlag(args, "--json")) {
-      context.stdout.write(`${JSON.stringify({ status: "human_action_required", host, configuration_changed: false, mcp_runtime_verified: false, skill_reload_verified: false, authentication_verified: false, next_action: { actor: "human", action: "configure_host", retry_by_agent: false, instruction: "Run codex mcp add extrovert --url https://mcp.extrovert.dev/mcp in your terminal and sign in to your existing account. Reload Codex, then ask the agent to call the Extrovert MCP whoami tool." } }, null, 2)}\n`);
+      context.stdout.write(`${JSON.stringify({ status: "human_action_required", host, configuration_changed: false, mcp_runtime_verified: false, skill_reload_verified: false, authentication_verified: false, next_action: { actor: "human", action: "configure_host", retry_by_agent: false, instruction: "Run codex mcp add extrovert --url https://mcp.extrovert.dev/assistant/mcp in your terminal and sign in to your existing account. Reload Codex, then ask the agent to call the Extrovert MCP whoami tool." } }, null, 2)}\n`);
     } else {
-    context.stdout.write("Setup required: Extrovert has not been configured for Codex. Run this native command in an interactive terminal and complete its sign-in flow:\ncodex mcp add extrovert --url https://mcp.extrovert.dev/mcp\nSign in to your existing Extrovert account first. Create an account only if you do not have one. Then start or reload Codex and call whoami to verify access.\n");
+    context.stdout.write("Setup required: Extrovert has not been configured for Codex. Run this native command in an interactive terminal and complete its sign-in flow:\ncodex mcp add extrovert --url https://mcp.extrovert.dev/assistant/mcp\nSign in to your existing Extrovert account first. Create an account only if you do not have one. Then start or reload Codex and call whoami to verify access.\n");
     }
     return 1;
   }
   const addArgs = transport === "hosted"
-    ? ["mcp", "add", "--transport", "http", "--scope", "local", "extrovert", "https://mcp.extrovert.dev/mcp"]
+    ? ["mcp", "add", "--transport", "http", "--scope", "local", "extrovert", "https://mcp.extrovert.dev/assistant/mcp"]
     : host === "claude"
       ? ["mcp", "add", "extrovert", "--transport", "stdio", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE]
       : ["mcp", "add", "extrovert", "--env", `EXTROVERT_CONFIG_DIR=${context.store.paths.directory}`, "--", "npx", "-y", MCP_PACKAGE];
@@ -777,11 +777,11 @@ async function reviewCommand(args: string[], context: CliContext): Promise<numbe
     const result = await observeUntil(
       (wait_seconds, signal) => wait_seconds === 0 ? client.listReviewEvents({ review_id, limit })
         : client.waitForReviewEvent({ review_id, limit, wait_seconds }, signal),
-      value => value.events.length > 0 || value.pending_reviews === 0,
+      value => value.events.length > 0 || value.review?.closed === true || value.pending_reviews === 0,
       { timeoutSeconds },
     );
-    const waiting = result.events.length === 0 && result.pending_reviews !== 0;
-    writeResult(context, { ...result, observer_status: waiting ? "deadline_reached" : result.events.length ? "attention_available" : "no_pending_reviews" }, hasFlag(args, "--json"), value =>
+    const waiting = result.events.length === 0 && !result.review?.closed && result.pending_reviews !== 0;
+    writeResult(context, { ...result, observer_status: waiting ? "deadline_reached" : result.events.length ? "attention_available" : result.review?.closed ? "review_terminal" : "no_pending_reviews" }, hasFlag(args, "--json"), value =>
       `${formatReviewEventsResult(value).content.map(item => item.text).join("\n")}\n${waiting
         ? "Observer deadline reached; reviews and unhandled feedback are preserved. Resume with extrovert review watch."
         : "Observation finished, not proof of sending. Read and handle the returned events; acknowledge only after handling. Reconcile tracked reviews before reporting sent."}`);

@@ -1421,6 +1421,7 @@ export class FixtureStore {
     const recipients = {to: input.to ?? review.proposed_to, cc: input.cc ?? review.proposed_cc, bcc: input.bcc ?? review.proposed_bcc};
     const envelope = [...(recipients.to ?? []), ...(recipients.cc ?? []), ...(recipients.bcc ?? [])];
     if (envelope.length < 1 || envelope.length > 50) throw new Error("A draft needs 1–50 recipients");
+    this.completeRecheck(review, input.recheck_through_seq);
     review.proposed_to = [...(recipients.to ?? [])]; review.proposed_cc = [...(recipients.cc ?? [])]; review.proposed_bcc = [...(recipients.bcc ?? [])];
     review.revision += 1;
     review.version += 1;
@@ -1486,6 +1487,10 @@ export class FixtureStore {
     if (input.against_version < 0) {
       throw new ConflictError("against_version must be >= 0");
     }
+    if (input.expected_version !== undefined && input.expected_version !== review.version) {
+      throw new StaleError("expected_version is stale; re-read the review", review);
+    }
+    this.completeRecheck(review, input.recheck_through_seq);
     review.version += 1;
     review.updated_at = new Date().toISOString();
     this.commitReview(review);
@@ -2110,9 +2115,20 @@ export class FixtureStore {
     return ev;
   }
 
+  private completeRecheck(review: Review, seq?: number): void {
+    if (seq === undefined) return;
+    const rechecks = (this.reviewEvents.get(review.id) ?? []).filter(ev => ["rule_changed", "recheck_category", "propagate_general_rule"].includes(ev.reason));
+    if (!Number.isSafeInteger(seq) || seq < 1 || !rechecks.some(ev => ev.seq === seq)) throw new ConflictError("recheck_through_seq must identify an available recheck for this review");
+    review.recheck_completed_through_seq = Math.max(review.recheck_completed_through_seq ?? 0, seq);
+    review.recheck_outstanding_seq = Math.max(0, ...rechecks.filter(ev => ev.seq > review.recheck_completed_through_seq!).map(ev => ev.seq));
+    review.recheck_status = review.recheck_outstanding_seq ? "queued" : undefined;
+  }
+
   /** Drain the next un-acked review events (mock), FIFO per review + cursors. */
   listReviewEvents(input: ListReviewEventsInput = {}): ReviewEventsResult {
     const want = input.review_id?.trim();
+    const selected = want ? this.reviews.get(want) : undefined;
+    if (want && !selected) throw new NotFoundError(`Review not found: ${want}`);
     const events: ReviewEvent[] = [];
     const cursors: { review_id: string; last_acked_seq: number }[] = [];
     const touched = new Set<string>();
@@ -2130,7 +2146,9 @@ export class FixtureStore {
     for (const reviewId of new Set(limited.map(ev => ev.review_id).filter((id): id is string => !!id))) {
       cursors.push({ review_id: reviewId, last_acked_seq: this.reviewEventCursors.get(reviewId) ?? 0 });
     }
-    return { events: limited, cursors };
+    const terminal = (state: string) => ["sent", "auto_sent", "failed", "cancelled"].includes(state);
+    return { events: limited, cursors, pending_reviews: [...this.reviews.values()].filter(r => !terminal(r.state)).length,
+      ...(selected ? { review: { id: selected.id, state: selected.state, revision: selected.revision, version: selected.version, closed: terminal(selected.state), sent_message_id: selected.sent_message_id } } : {}) };
   }
 
   /**

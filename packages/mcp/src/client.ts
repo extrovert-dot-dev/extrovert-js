@@ -382,6 +382,7 @@ export interface PostReviewChatInput {
 
 /** Post a new agent draft under a parent_revision CAS (Review Loop M5, spec §5.2). */
 export interface SubmitRevisionInput {
+  recheck_through_seq?: number;
   expected_context_version?: string;
   /** Replace a recipient group; omit to preserve, [] to clear. Quota adjusts atomically. */
   to?: string[];
@@ -424,12 +425,15 @@ export interface SubmitRevisionInput {
  * the draft's composed_* rules-versions WITHOUT a new draft.
  */
 export interface RestampReviewInput {
+  recheck_through_seq?: number;
   /** Review id (rr_…). */
   id: string;
   /** The category rules-version the agent reviewed against (≤ the current version). */
   against_version: number;
   /** Optional: re-stamp the house-style axis to this version (≤ the current version). */
   house_style_version?: number;
+  /** Optional row-version CAS from the review read. */
+  expected_version?: number;
   /** Stable retry key, sent as Idempotency-Key and never in the JSON body. */
   client_id?: string;
 }
@@ -1223,6 +1227,7 @@ export class ExtrovertClient {
   async submitRevision(input: SubmitRevisionInput): Promise<Review> {
     if (this.store) return this.store.submitRevision(input);
     const body: Record<string, unknown> = { parent_revision: input.parent_revision };
+    if (input.recheck_through_seq !== undefined) body.recheck_through_seq = input.recheck_through_seq;
     for (const key of ["to", "cc", "bcc"] as const) if (input[key] !== undefined) body[key] = input[key];
     if (input.version !== undefined) body.version = input.version;
     if (input.subject !== undefined) body.subject = input.subject;
@@ -1271,7 +1276,9 @@ export class ExtrovertClient {
   async restampReview(input: RestampReviewInput): Promise<Review> {
     if (this.store) return this.store.restampReview(input);
     const body: Record<string, unknown> = { against_version: input.against_version };
+    if (input.recheck_through_seq !== undefined) body.recheck_through_seq = input.recheck_through_seq;
     if (input.house_style_version !== undefined) body.house_style_version = input.house_style_version;
+    if (input.expected_version !== undefined) body.expected_version = input.expected_version;
     return this.post<Review>(
       `/v1/reviews/${encodeURIComponent(input.id)}/restamp`,
       body,

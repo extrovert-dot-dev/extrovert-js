@@ -674,13 +674,13 @@ export class ReviewEvents {
   }
 
   /** Watch across empty heartbeats. Returns feedback or an outcome, never handles or acknowledges it. */
-  async watch(params: ListReviewEventsParams = {}, options: ObserverWaitOptions = {}): Promise<ReviewEventsResult & { observer_status: "attention_available" | "no_pending_reviews" | "deadline_reached" }> {
+  async watch(params: ListReviewEventsParams = {}, options: ObserverWaitOptions = {}): Promise<ReviewEventsResult & { observer_status: "attention_available" | "review_terminal" | "no_pending_reviews" | "deadline_reached" }> {
     const result = await observeUntil(
       (seconds, signal) => seconds === 0 ? this.list(params, signal) : this.wait({ ...params, wait_seconds: seconds }, signal),
-      value => value.events.length > 0 || value.pending_reviews === 0,
+      value => value.events.length > 0 || value.review?.closed === true || value.pending_reviews === 0,
       options,
     );
-    return { ...result, observer_status: result.events.length ? "attention_available" : result.pending_reviews === 0 ? "no_pending_reviews" : "deadline_reached" };
+    return { ...result, observer_status: result.events.length ? "attention_available" : result.review?.closed ? "review_terminal" : result.pending_reviews === 0 ? "no_pending_reviews" : "deadline_reached" };
   }
 
   /** Advance the per-review cursor(s) and/or mark broadcast nudges done. */

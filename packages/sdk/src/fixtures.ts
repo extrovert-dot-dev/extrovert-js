@@ -1645,6 +1645,7 @@ export class MockBackend {
     const recipients = {to: req.to ?? review.proposed_to, cc: req.cc ?? review.proposed_cc, bcc: req.bcc ?? review.proposed_bcc};
     const envelope = [...(recipients.to ?? []), ...(recipients.cc ?? []), ...(recipients.bcc ?? [])];
     if (envelope.length < 1 || envelope.length > 50) throw new ValidationError({status:400,code:"invalid",message:"A draft needs 1–50 recipients"});
+    this.completeRecheck(review, req.recheck_through_seq);
     review.proposed_to = [...(recipients.to ?? [])]; review.proposed_cc = [...(recipients.cc ?? [])]; review.proposed_bcc = [...(recipients.bcc ?? [])];
     review.revision += 1;
     review.version += 1;
@@ -1732,6 +1733,10 @@ export class MockBackend {
         message: "against_version must be >= 0",
       });
     }
+    if (req.expected_version !== undefined && req.expected_version !== review.version) {
+      throw reviewConflict("stale", review, "expected_version is stale; re-read the review");
+    }
+    this.completeRecheck(review, req.recheck_through_seq);
     review.version += 1;
     review.updated_at = now();
     this.state.reviews.set(reviewId, review);
@@ -2536,9 +2541,20 @@ export class MockBackend {
     return turn;
   }
 
+  private completeRecheck(review: Review, seq?: number): void {
+    if (seq === undefined) return;
+    const rechecks = (this.state.reviewEvents.get(review.id) ?? []).filter(ev => ["rule_changed", "recheck_category", "propagate_general_rule"].includes(ev.reason));
+    if (!Number.isSafeInteger(seq) || seq < 1 || !rechecks.some(ev => ev.seq === seq)) throw new ValidationError({ status: 400, code: "invalid", message: "recheck_through_seq must identify an available recheck for this review" });
+    review.recheck_completed_through_seq = Math.max(review.recheck_completed_through_seq ?? 0, seq);
+    review.recheck_outstanding_seq = Math.max(0, ...rechecks.filter(ev => ev.seq > review.recheck_completed_through_seq!).map(ev => ev.seq));
+    review.recheck_status = review.recheck_outstanding_seq ? "queued" : undefined;
+  }
+
   /** Drain the next un-acked review events (mock), FIFO per review + cursors. */
   listReviewEvents(params: ListReviewEventsParams = {}): ReviewEventsResult {
     const want = params.review_id?.trim();
+    const selected = want ? this.state.reviews.get(want) : undefined;
+    if (want && !selected) throw new ValidationError({ status: 404, code: "not_found", message: "Review not found" });
     const events: ReviewEvent[] = [];
     const touched = new Set<string>();
     for (const [reviewId, list] of this.state.reviewEvents) {
@@ -2557,7 +2573,9 @@ export class MockBackend {
       review_id: reviewId,
       last_acked_seq: this.state.reviewEventCursors.get(reviewId) ?? 0,
     }));
-    return { events: limited, cursors };
+    const terminal = (state: string) => ["sent", "auto_sent", "failed", "cancelled"].includes(state);
+    return { events: limited, cursors, pending_reviews: [...this.state.reviews.values()].filter(r => !terminal(r.state)).length,
+      ...(selected ? { review: { id: selected.id, state: selected.state, revision: selected.revision, version: selected.version, closed: terminal(selected.state), sent_message_id: selected.sent_message_id } } : {}) };
   }
 
   /**

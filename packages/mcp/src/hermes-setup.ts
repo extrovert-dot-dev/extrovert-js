@@ -34,7 +34,7 @@ export function setupHermes(env: NodeJS.ProcessEnv, credentialDirectory: string,
       return { existed: true, path, warning };
     }
     const entry = transport === "hosted"
-      ? { url: "https://mcp.extrovert.dev/mcp", auth: "oauth", timeout: 90, enabled: true }
+      ? { url: "https://mcp.extrovert.dev/assistant/mcp", auth: "oauth", timeout: 90, enabled: true }
       : { command: "npx", args: ["--yes", "--prefer-online", mcpPackage(channel)], env: { EXTROVERT_CONFIG_DIR: credentialDirectory }, timeout: 90, enabled: true };
     document.setIn(["mcp_servers", "extrovert"], entry);
     writeFileSync(temporary, document.toString(), { flag: "wx", mode: 0o600 });

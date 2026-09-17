@@ -33,7 +33,7 @@ export class AgentTaskFixtures {
     if (row.task.status === "working") {
       const result = row.input.kind === "activation" ? this.backend.activationStatus()
         : this.backend.listReviewEvents({ review_id: row.input.review_id, limit: row.input.limit });
-      const ready = "state" in result ? result.state !== "pending" : result.events.length > 0 || result.pending_reviews === 0;
+      const ready = "state" in result ? result.state !== "pending" : result.events.length > 0 || result.review?.closed === true || result.pending_reviews === 0;
       if (ready) Object.assign(row.task, { status: "completed", result: structuredClone(result), last_updated_at: new Date().toISOString() });
     }
     return structuredClone(row.task);
