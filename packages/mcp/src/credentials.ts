@@ -67,6 +67,7 @@ export interface StoredCredential {
 }
 
 export interface PendingSignup {
+ gift_code?:string;source?:string;referrer?:string;
   activation_method?: "incoming_email";
   version: typeof CURRENT_VERSION;
   agent_key: string;
@@ -204,6 +205,7 @@ export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): Cre
         address: requiredString(input.address, "signup inbox"),
         otp_expires_at: requiredString(input.otp_expires_at, "OTP expiry"),
         activation_method: input.activation_method,
+ gift_code:input.gift_code,source:input.source,referrer:input.referrer,
         api_base_url: normalizeBaseUrl(input.api_base_url),
         saved_at: new Date().toISOString(),
       };
@@ -306,6 +308,7 @@ function readPendingSignup(path: string): PendingSignup | undefined {
     activation_method: record.activation_method === "incoming_email" ? "incoming_email" : undefined,
     api_base_url: normalizeBaseUrl(requiredRecordString(record, "api_base_url", path)),
     saved_at: requiredRecordString(record, "saved_at", path),
+ gift_code:typeof record.gift_code==="string"?record.gift_code:undefined,source:typeof record.source==="string"?record.source:undefined,referrer:typeof record.referrer==="string"?record.referrer:undefined,
   };
 }
 

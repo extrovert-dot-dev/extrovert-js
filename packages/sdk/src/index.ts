@@ -273,6 +273,7 @@ export type {
   StreamEvent,
   StreamOptions,
   // self-signup + auth introspection
+  GiftSummary, SignupAttribution,
   SignUpRequest,
   SignUpResponse, InboxActivation,
   VerifyRequest,
@@ -309,3 +310,5 @@ export type { InternalEmailReview, HumanEmailReview } from "./models.js";
 export { ensureSendIdempotencyKey } from "./send-idempotency.js";
 
 export * from "./support.js";
+
+export type { GiftIntentRequest, GiftIntentContext, GiftIntentResult } from "./models.js";

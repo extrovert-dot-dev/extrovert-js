@@ -783,6 +783,7 @@ export class MockBackend {
     }
     this.state.signupByEmail.set(email, { customerId, agentId, address, otp, verified: false, displayName: normalizeFriendlyName(req.display_name ?? "") || fixtureDefaultName(address.split("@")[0]!) });
     return {
+      ...(req.gift_code ? {gift:{status:"pending_human_claim" as const}} : {}),
       customer_id: customerId,
       agent_id: agentId,
       agent_key: `pk_agent_${agentId.slice(4)}_${rid("sk").slice(3)}`,

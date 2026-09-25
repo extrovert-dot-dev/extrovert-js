@@ -1,3 +1,4 @@
+import type { SignupAttribution } from "./types.js";
 import { FeedbackResource, SupportResource, type SupportRequest } from "./support.js";
 import { SupportFixtures } from "./support-fixtures.js";
 import { createRequire } from "node:module";
@@ -648,7 +649,7 @@ export interface ExtrovertClientOptions {
    */
   beforeSignup?: () => void;
   /** Persist a limited reservation separately so another local process can resume it. */
-  onPendingSignup?: (result: SignUpResult, apiBaseUrl: string) => void;
+  onPendingSignup?: (result: SignUpResult, apiBaseUrl: string, attribution:SignupAttribution) => void;
   onDurableAgentKey?: (
     agentKey: string,
     apiBaseUrl: string,
@@ -814,7 +815,7 @@ export class ExtrovertClient {
   // ---- self-signup + auth (Slice E) -------------------------------------
 
   /** Grab a free account: `POST /v1/agent/sign-up` (unauthenticated). */
-  async signUp(input: { human_email: string; username?: string; display_name?: string }): Promise<SignUpResult> {
+  async signUp(input: { human_email: string; username?: string; display_name?: string } & SignupAttribution): Promise<SignUpResult> {
     this.options.beforeSignup?.();
     if (this.store) {
       const res = this.store.signUp(input);
@@ -822,13 +823,14 @@ export class ExtrovertClient {
       return res;
     }
     const res = await this.post<SignUpResult>("/v1/agent/sign-up", {
+ ...input,source:input.source??"extrovert-mcp",
       human_email: input.human_email,
       username: input.username,
       display_name: input.display_name,
     });
     this.setSessionKey(res.agent_key);
     if (this.options.onPendingSignup) {
-      this.options.onPendingSignup(res, this.config.apiBaseUrl);
+      this.options.onPendingSignup(res, this.config.apiBaseUrl, {...input,source:input.source??"extrovert-mcp"});
       if (this.options.credentialProvider) this.sessionKeyOverride = false;
     }
     return res;

@@ -35,8 +35,8 @@ export async function runStdio(): Promise<void> {
       if ((process.env.EXTROVERT_API_KEY ?? "").trim() || credentialStore.load()) throw new Error("This profile already has Extrovert access. Verify whoami; use a separate profile for an intended new account.");
       if (credentialStore.loadPendingSignup()) throw new Error("Signup is already pending in this profile. Resume check_activation and verify_signup; do not create another account.");
     },
-    onPendingSignup: config.mock ? undefined : (result, apiBaseUrl) => {
-      credentialStore.savePendingSignup({ agent_key: result.agent_key,
+    onPendingSignup: config.mock ? undefined : (result, apiBaseUrl, attribution) => {
+      credentialStore.savePendingSignup({ ...attribution, agent_key: result.agent_key,
         human_email: result.human_email ?? result.otp_sent_to ?? "",
         address: result.address, activation_method: result.activation_method,
         otp_expires_at: result.activation_expires_at ?? result.otp_expires_at ?? "",

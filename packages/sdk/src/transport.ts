@@ -1,3 +1,4 @@
+import type { GiftIntentRequest, GiftIntentContext, GiftIntentResult } from "./models.js";
 import { SDK_VERSION } from "./http.js";
 import type { SupportRequest } from "./support.js";
 import { SupportFixtures } from "./support-fixtures.js";
@@ -129,6 +130,8 @@ export interface Transport {
   cancelAgentTask(id: string, signal?: AbortSignal): Promise<AgentTask>;
   administrativeRequest(request: AdministrativeRequest): Promise<unknown>;
   enroll(req: EnrollRequest, signal?: AbortSignal): Promise<EnrollResponse>;
+  createGiftIntent(req:GiftIntentRequest,signal?:AbortSignal):Promise<GiftIntentResult>;
+  resolveGiftIntent(resume_token:string,signal?:AbortSignal):Promise<GiftIntentContext>;
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse>;
   activationStatus(signal?: AbortSignal, waitSeconds?: number): Promise<InboxActivation>;
   correctActivationEmail(human_email: string, revision: number, signal?: AbortSignal): Promise<InboxActivation>;
@@ -422,6 +425,8 @@ export class HttpTransport implements Transport {
     return this.call({ method: "POST", path: "/v1/enroll", body: req, idempotencyKey: req.client_id, signal });
   }
 
+  createGiftIntent(req:GiftIntentRequest,signal?:AbortSignal):Promise<GiftIntentResult>{return this.call({method:"POST",path:"/v1/gift-intents",body:req,signal});}
+  resolveGiftIntent(resume_token:string,signal?:AbortSignal):Promise<GiftIntentContext>{return this.call({method:"POST",path:"/v1/gift-intents/resolve",body:{resume_token},signal});}
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse> {
     return this.call({ method: "POST", path: "/v1/agent/sign-up", body: req, signal });
   }
@@ -1252,6 +1257,13 @@ export class MockTransport implements Transport {
   async enroll(req: EnrollRequest): Promise<EnrollResponse> {
     return this.backend.enroll(req);
   }
+  private giftIntents=new Map<string,GiftIntentContext>();
+  async createGiftIntent(req:GiftIntentRequest):Promise<GiftIntentResult>{
+   const token=`mock-gift-${this.giftIntents.size+1}`;const now=Date.now();
+   const value:GiftIntentContext={intent:{id:token,human_email:req.human_email,gift_code:req.gift_code,outcome:"invalid",created_at:new Date(now).toISOString(),expires_at:new Date(now+30*86400000).toISOString()},offer:null};
+   this.giftIntents.set(token,value);return {...value,resume_token:token};
+  }
+  async resolveGiftIntent(token:string):Promise<GiftIntentContext>{const value=this.giftIntents.get(token);if(!value)throw new NotFoundError({status:404,code:"not_found",message:"Gift intent not found"});return value;}
   async signUp(req: SignUpRequest): Promise<SignUpResponse> {
     return this.backend.signUp(req);
   }
