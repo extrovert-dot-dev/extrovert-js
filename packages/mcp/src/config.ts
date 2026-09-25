@@ -87,4 +87,4 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ExtrovertConfi
 }
 
 export const SERVER_NAME = "extrovert";
-export const SERVER_VERSION = "0.1.7";
+export const SERVER_VERSION = "0.1.8";
