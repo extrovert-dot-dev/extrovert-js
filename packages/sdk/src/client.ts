@@ -1,3 +1,4 @@
+import type { GiftIntentRequest, GiftIntentContext, GiftIntentResult } from "./models.js";
 import { FeedbackResource, SupportResource } from "./support.js";
 import { Administration } from "./administration.js";
 import { AgentTasks } from "./agent-tasks.js";
@@ -224,8 +225,12 @@ export class ExtrovertClient {
    * When free signup is paused, this throws an `ApiError` with status 403 and
    * code `signup_disabled` without creating account state.
    */
+  /** Saves unverified contact; does not reserve capacity or activate a plan. */
+  createGiftIntent(req:GiftIntentRequest,signal?:AbortSignal):Promise<GiftIntentResult>{return this.transport.createGiftIntent({...req,source:req.source??"extrovert-ts"},signal);}
+  resolveGiftIntent(resume_token:string,signal?:AbortSignal):Promise<GiftIntentContext>{return this.transport.resolveGiftIntent(resume_token,signal);}
+
   signUp(req: SignUpRequest, signal?: AbortSignal): Promise<SignUpResponse> {
-    return this.transport.signUp(req, signal);
+    return this.transport.signUp({...req,source:req.source??"extrovert-ts"}, signal);
   }
 
   /**

@@ -2092,7 +2092,7 @@ export interface StreamOptions {
 // ---------------------------------------------------------------------------
 
 /** Request body for the unauthenticated `POST /v1/agent/sign-up`. */
-export interface SignUpRequest {
+export interface SignUpRequest extends SignupAttribution {
   /** Friendly From name; same validation/defaults as inbox creation. */
   display_name?: string;
   /** Human email that activates the inbox using the returned verification method. */
@@ -2117,6 +2117,7 @@ export interface InboxActivation {
 }
 
 export interface SignUpResponse {
+ gift?:GiftSummary;
   activation_method?: "incoming_email";
   human_email?: string;
   activation_expires_at?: string;
@@ -2282,3 +2283,14 @@ export interface MergeCategoriesResult {
   review_requests_repointed: number;
   writing_rules_repointed: number;
 }
+
+export interface GiftSummary {gift_code?:string;redeem_before?:string;status:"pending_human_claim"|"invalid"|"scheduled"|"expired"|"disabled"|"archived"|"exhausted"|"pending"|"failed"|"successful";campaign_id?:string;claim_id?:string;ends_at?:string}
+export interface SignupAttribution {gift_code?:string;source?:string;referrer?:string;agent_client?:{name?:string;version?:string}}
+
+/** Contact is unverified. Store resume tokens privately; possession grants form access only. */
+export interface GiftIntentRequest extends SignupAttribution { human_email:string; gift_code:string }
+export interface GiftIntentContext {
+ intent:{id:string;human_email?:string;gift_code?:string;outcome:string;campaign_id?:string;created_at:string;expires_at:string};
+ offer:{campaign_id:string;name:string;plan_tier:"startup";duration_days:30;opens_at:string;redeem_before:string}|null;
+}
+export interface GiftIntentResult extends GiftIntentContext {resume_token:string}

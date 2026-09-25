@@ -79,6 +79,7 @@ import type {
 } from "./types.js";
 
 interface ToolContext {
+ agentClient?:()=>{name:string;version:string}|undefined;
   client: ExtrovertClient;
   config: ExtrovertConfig;
   signal?: AbortSignal;
@@ -739,6 +740,9 @@ const signUp = defineTool({
     "Keep the issued key: repeating signup does not extend the reservation. Existing human accounts enroll agents through their console. " +
     "During migration, a legacy response may instead report an emailed OTP. Follow the returned activation method.",
   inputSchema: {
+    gift_code:z.string().max(64).optional().describe("Optional gift code. Startup activates only when the verified human claims this existing workspace; never create another account to retry a gift."),
+    source:z.string().max(128).optional().describe("Optional truthful integration attribution; defaults to extrovert-mcp."),
+    referrer:z.string().max(512).optional().describe("Optional explicitly supplied discovery channel or campaign reference."),
     human_email: emailAddress.describe("The human email that will activate this inbox."),
     display_name: z.string().max(512).optional().describe("The sender name humans see, for example Coleman. Separate from the email username. Omit for the validated Agent {username} default; up to 60 Unicode characters after normalization."),
     username: z
@@ -749,9 +753,10 @@ const signUp = defineTool({
       .describe("Desired local part on free.extrovertmail.com. It must normalize to at least 5 characters and cannot use a reserved name. Omit for an auto-generated handle."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  handler: async (args, { client }) => {
-    const res: SignUpResult = await client.signUp({ human_email: args.human_email, username: args.username, display_name: args.display_name });
+  handler: async (args, { client,agentClient }) => {
+    const res: SignUpResult = await client.signUp({gift_code:args.gift_code,source:args.source??"extrovert-mcp",referrer:args.referrer,agent_client:agentClient?.(), human_email: args.human_email, username: args.username, display_name: args.display_name });
     const text = [
+ ...(res.gift?[`Gift: ${res.gift.status}. A verified human must connect this existing workspace and claim the gift. No card is required. Email activation alone does not activate Startup; do not create another account to retry.`]:[]),
       res.activation_method === "incoming_email" ? activationHandoff(args.human_email, res.address) : `Account created. A verification code was sent to ${res.otp_sent_to}. If it is missing, confirm that address and check spam/junk for the Extrovert verification email.`,
       `inbox: ${res.address}`,
       ...(res.activation_method === "incoming_email" ? [`Tell the human the activation instructions now, then call check_activation {"wait_seconds":55}. While this session is active, repeat pending waits for up to five minutes. A timeout preserves the reservation; resume with the same key.`] : []),
@@ -3777,6 +3782,7 @@ export function cliReviewTool(name: string): RegisterableTool {
 
 /** Register every Extrovert tool onto an MCP server instance. */
 export function registerTools(server: McpServer, ctx: ToolContext): void {
+ ctx.agentClient=()=>server.server.getClientVersion();
   const profile=ctx.profile??"full";
   const catalog=ALL_TOOLS.filter(t=>profileAllowsTool(profile,t.name)).map(t=>t.describe(profile));
   ctx.client.setExecutingRuntime({source:"mcp",transport:ctx.transport??"stdio",profile,profile_version:profile==="assistant"?ASSISTANT_RELEASE.release_version:SERVER_VERSION,catalog_digest:createHash("sha256").update(JSON.stringify(catalog)).digest("hex")});

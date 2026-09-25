@@ -973,6 +973,7 @@ export interface InboxActivation {
 }
 
 export interface SignUpResult {
+ gift?:GiftSummary;
   activation_method?: "incoming_email";
   human_email?: string;
   activation_expires_at?: string;
@@ -1614,3 +1615,6 @@ export interface MergeCategoriesResult {
   review_requests_repointed: number;
   writing_rules_repointed: number;
 }
+
+export interface GiftSummary {gift_code?:string;redeem_before?:string;status:"pending_human_claim"|"invalid"|"scheduled"|"expired"|"disabled"|"archived"|"exhausted"|"pending"|"failed"|"successful";campaign_id?:string;claim_id?:string;ends_at?:string}
+export interface SignupAttribution {gift_code?:string;source?:string;referrer?:string;agent_client?:{name?:string;version?:string}}

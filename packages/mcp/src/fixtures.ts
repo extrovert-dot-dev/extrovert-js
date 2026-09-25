@@ -1,3 +1,4 @@
+import type { SignupAttribution } from "./types.js";
 import type { MergeCategoriesRequest, MergeCategoriesResult } from "./types.js";
 import type { InboxActivation } from "./types.js";
 import type { ListWebhooksParams } from "./types.js";
@@ -493,7 +494,7 @@ export class FixtureStore {
 
   // ---- self-signup + auth (Slice E) -------------------------------------
 
-  signUp(input: { human_email: string; username?: string; display_name?: string }): SignUpResult {
+  signUp(input: { human_email: string; username?: string; display_name?: string } & SignupAttribution): SignUpResult {
     const email = input.human_email.trim().toLowerCase();
     const existing = this.signups.get(email);
     const customerId = existing?.customerId ?? nextId("cus");
@@ -509,6 +510,7 @@ export class FixtureStore {
     this.signups.set(email, { customerId, agentId, address, otp, verified: false, displayName: normalizeFriendlyName(input.display_name ?? "") || fixtureDefaultName(address.split("@")[0]!) });
     const keyPrefix = "pk_agent_" + nextId("").split("_")[1];
     return {
+ ...(input.gift_code?{gift:{status:"pending_human_claim" as const}}:{}),
       customer_id: customerId,
       agent_id: agentId,
       agent_key: `${keyPrefix}_${Math.random().toString(36).slice(2)}`,

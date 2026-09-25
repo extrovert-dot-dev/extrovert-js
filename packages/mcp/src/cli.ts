@@ -51,7 +51,7 @@ Usage:
   extrovert domain wait <domain> [--timeout-seconds <0-50>] [--json]
   extrovert domain recheck <domain> [--json]
   extrovert domain connect <domain> [--scope project] [--json]
-  extrovert signup --human-email <email> [--username <name>] [--display-name <name>]
+  extrovert signup --human-email <email> [--username <name>] [--display-name <name>] [--gift-code <code>] [--source <integration>] [--referrer <channel>]
   extrovert verify [--otp <code>] [--wait-seconds <0..86400>]
   extrovert whoami [--json]
   extrovert auth whoami [--json]
@@ -655,8 +655,11 @@ async function signupCommand(args: string[], context: CliContext): Promise<numbe
   const apiBaseUrl = context.env.EXTROVERT_API_BASE_URL;
   const config = loadConfig({ ...context.env, EXTROVERT_API_KEY: "", ...(apiBaseUrl ? { EXTROVERT_API_BASE_URL: apiBaseUrl } : {}) });
   const client = new ExtrovertClient(config);
-  const result = await client.signUp({ human_email: humanEmail, username, display_name: option(args, "--display-name") });
+  const attribution={gift_code:option(args,"--gift-code"),source:option(args,"--source")??"extrovert-cli",referrer:option(args,"--referrer")};
+  const result = await client.signUp({ ...attribution,human_email: humanEmail, username, display_name: option(args, "--display-name") });
+  if(result.gift)context.stdout.write(`Gift: ${result.gift.status}. Have the verified human connect this existing workspace and claim the gift. No card required. Email activation does not activate Startup. Do not create another account to retry.\n`);
   context.store.savePendingSignup({
+    ...attribution,
     agent_key: result.agent_key,
     human_email: humanEmail,
     address: result.address,
